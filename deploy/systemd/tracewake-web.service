@@ -1,0 +1,18 @@
+[Unit]
+Description=lab.etadventures.com — FastAPI + Jinja2 + HTMX
+After=network.target
+
+[Service]
+User=conductor
+Group=conductor
+WorkingDirectory=/srv/orchestration/lab/webapp
+ExecStart=/srv/orchestration/lab/webapp/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8100
+Restart=on-failure
+RestartSec=3
+# hardening: read-only system, writable nowhere it doesn't need
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

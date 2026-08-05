@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}lab.etadventures.com{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand mono" href="/">lab</a>
+  <span class="navlinks">
+    <a href="/adr">decisions</a>
+    <a href="/single-user-factory/site/index.html">lessons</a>
+  </span>
+</nav>
+<div class="wrap">
+{% block content %}{% endblock %}
+</div>
+</body>
+</html>

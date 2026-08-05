@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ adr.title }} — decisions{% endblock %}
+{% block content %}
+
+<p class="crumb"><a href="/adr">← all decisions</a></p>
+
+<article class="adr">
+  <div class="adr-head">
+    <span class="adr-num mono">ADR {{ "%04d"|format(adr.number) }}</span>
+    {% if adr.status %}<span class="badge badge-{{ adr.status.split()[0] }}">{{ adr.status }}</span>{% endif %}
+  </div>
+  {{ adr.html | safe }}
+</article>
+
+<p class="crumb"><a href="/adr">← all decisions</a> ·
+   <a href="/single-user-factory/docs/adr/{{ adr.slug }}.md">raw</a></p>
+
+{% endblock %}

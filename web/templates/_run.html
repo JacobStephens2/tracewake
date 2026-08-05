@@ -1,0 +1,8 @@
+{# Fragment returned to HTMX from POST /demo/run. Rendered by Jinja2 on the
+   server and swapped into #run-panel. This is the whole idea: the server
+   returns HTML, not JSON. #}
+<ol class="stages">
+  {% for name, detail in stages %}
+  <li style="--i: {{ loop.index0 }}"><b>{{ name }}</b> — <span>{{ detail }}</span></li>
+  {% endfor %}
+</ol>

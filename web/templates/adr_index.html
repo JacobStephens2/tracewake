@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}decisions — lab.etadventures.com{% endblock %}
+{% block content %}
+
+<header>
+  <p class="eyebrow">architecture decision records</p>
+  <h1>Decisions</h1>
+  <p class="lede">Each record is one decision: the context, what was chosen, and
+  why — in the minimal ADR format. Numbered and append-only.</p>
+</header>
+
+<section>
+  {% if adrs %}
+  <ul class="adr-list">
+    {% for adr in adrs %}
+    <li>
+      <a href="/adr/{{ adr.slug }}">
+        <span class="adr-num mono">{{ "%04d"|format(adr.number) }}</span>
+        <span class="adr-title">{{ adr.title }}</span>
+        {% if adr.status %}<span class="badge badge-{{ adr.status.split()[0] }}">{{ adr.status }}</span>{% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">No decisions recorded yet.</p>
+  {% endif %}
+</section>
+
+{% endblock %}
