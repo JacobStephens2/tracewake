@@ -7,9 +7,11 @@ We are not deferring it for the Loop's host. The advice was priced against
 `eta-factory`, where OpenTofu and Ansible arrived bundled with a CI pipeline
 (`infrastructure.yml`) and a governance gate, and it was that bundle that was
 slow. In `orchestration` the bundle does not exist: the repo has **no
-`.github/workflows/` directory at all**, and `terraform/` and `ansible/` are
-already established, so declaring one more DigitalOcean droplet costs an entry in
-a layout that is already there and zero CI time.
+`.github/workflows/` directory at all**, and `tofu/` and `ansible/` are already
+established, so declaring one more DigitalOcean droplet costs an entry in a
+layout that is already there and zero CI time. The droplet belongs in
+`tofu/hosts/`, the stack ADR 0002 gives to droplets and the Route 53 records that
+address them.
 
 ## Consequences
 
@@ -31,3 +33,9 @@ Provisioning runs from an agent session launched through `vaulted-agent`, which
 resolves the DigitalOcean credential at launch. No new credential is created and
 none is added to the Loop's box, which holds only its model credential, its
 scoped GitHub PAT, and its dedicated signing key.
+
+Ansible reuse is narrower than the tofu reuse. `ansible/site.yml` targets a
+single `orchestration` group over `connection: local` with a Rocky-specific role
+stack - `packages` is dnf-bound, `selinux_labels` has no Ubuntu meaning - so the
+Loop's box needs its own play, its own inventory group reached over SSH, and its
+own small role set rather than the existing roles.
