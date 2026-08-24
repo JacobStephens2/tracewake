@@ -1,0 +1,92 @@
+# `sbx` ships only from Docker's own apt repository - it is not in noble/universe
+# like bats and shellcheck are - so the repository comes first.
+# `curl` rather than `ansible.builtin.get_url`, which is what this should be and
+# cannot be here: the orchestration VM runs ansible-core 2.14 on Python 3.9, and
+# that release's HTTP modules call `HTTPSConnection(cert_file=...)`, a keyword
+# Python 3.12 removed. The Loop's box IS Python 3.12 (Ubuntu 24.04), so get_url
+# fails on it with `unexpected keyword argument 'cert_file'` before it reaches
+# the network. Fixing that means upgrading ansible on the orchestration VM,
+# which is a change to the box that configures the whole fleet - out of scope
+# for this ticket and not worth risking for one file download. Revisit when
+# ansible-core here reaches 2.16.
+#
+# `creates:` is the idempotence, and its limit is worth stating: the file is
+# fetched once and never refreshed, so a key rotation at Docker's end leaves a
+# stale key here. That fails loudly at the next `apt update` rather than
+# silently, and the fix is to delete the file and re-apply.
+- name: Docker's apt signing key
+  ansible.builtin.command:
+    cmd: >-
+      curl -fsSL {{ loop_execution_boundary_apt_key_url }}
+      -o {{ loop_execution_boundary_apt_key_path }}
+    creates: "{{ loop_execution_boundary_apt_key_path }}"
+
+- name: The signing key is readable by apt
+  ansible.builtin.file:
+    path: "{{ loop_execution_boundary_apt_key_path }}"
+    mode: "0644"       # a+r, as the vendor's install script sets it: apt reads it unprivileged
+    owner: root
+    group: root
+
+- name: Docker's apt repository
+  ansible.builtin.apt_repository:
+    repo: "{{ loop_execution_boundary_apt_repo }}"
+    filename: docker   # /etc/apt/sources.list.d/docker.sources, replacing nothing else
+    state: present
+    update_cache: true
+
+# `install_recommends: false` is a deliberate departure from this play's other
+# apt tasks, and the reason is measured rather than assumed. `docker-sbx` hard-
+# depends on `gnome-keyring` (it stores the Docker OAuth token in a keyring, not
+# a file), which drags in GTK 3 and 4. With recommends that is 115 packages -
+# GStreamer, mesa Vulkan drivers, librsvg, three icon themes - on a box whose
+# entire design property is holding as little as possible. Without them it is
+# 69. The one recommend with a security argument, `apparmor`, is already present
+# on the stock Ubuntu image, so nothing is given up:
+#
+#   # apt-get install -s docker-sbx=...            0 upgraded, 115 newly installed
+#   # apt-get install -s --no-install-recommends   0 upgraded,  69 newly installed
+#   # dpkg -l apparmor                             ii  4.0.1really4.0.1-0ubuntu0.24.04.7
+#
+# The version is pinned in defaults/, so this task is also what moves the pin:
+# apt installs the named version whether that is an upgrade or a downgrade.
+- name: Install the Execution Boundary at its pinned version
+  ansible.builtin.apt:
+    name: "docker-sbx={{ loop_execution_boundary_sbx_version }}"
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+# The pin above only decides what gets installed; this is what keeps it. Without
+# a hold, `apt upgrade` - unattended-upgrades included - walks the box forward to
+# whatever 0.x is current and the boundary changes underneath a Run with no
+# commit anywhere recording it.
+- name: Hold the pinned version against an unattended upgrade
+  ansible.builtin.dpkg_selections:
+    name: docker-sbx
+    selection: hold
+
+# #77 deliberately left this out, because whether the boundary needs it was
+# #78's observation to make rather than this play's guess. It does: `sbx` boots a
+# microVM through /dev/kvm, which is `root:kvm 0660`, and a Run executes as the
+# unprivileged `loop` account. Group membership is the vendor's documented
+# prerequisite ("User account in the kvm group") and is the whole of what `loop`
+# gains - it is still not in sudo, and /dev/kvm is not a path to the host.
+- name: The Loop's account can open /dev/kvm
+  ansible.builtin.user:
+    name: loop
+    groups: kvm
+    append: true
+
+# Presence of a package is not presence of a working boundary. Ask the binary
+# its version as the account a Run uses, which also proves the group membership
+# above resolved. Not a proof that a sandbox *boots* - that needs `sbx login`,
+# which is a browser step no play can take (see lab/single-user-factory/wizards/loop-sbx-login.sh).
+#
+# Skipped under --check, like every command task in this play. Proof is an apply.
+- name: The boundary runs as the Loop's account
+  ansible.builtin.command: sbx version
+  become: true
+  become_user: loop
+  changed_when: false

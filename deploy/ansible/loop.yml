@@ -7,17 +7,17 @@
 # SELinux fcontexts, and stand up Caddy, the status dashboard and the fleet's
 # agent CLIs. None of that has an Ubuntu meaning, and none of it belongs on a
 # box whose entire purpose is to hold as little as possible (spec issue #73).
-# So this play has its own inventory group, reached over SSH, and its own three
-# roles - which is Single-User Factory ADR 0006's "its own small role set".
+# So this play has its own inventory group, reached over SSH, and its own small
+# role set - which is what Single-User Factory ADR 0006 asks for.
 #
 # NOT covered here, deliberately, because each is its own ticket:
-#   - the Execution Boundary (`sbx`), its pinned version and the browser login
-#     it needs (#78) - including whatever access the boundary turns out to want
-#     on /dev/kvm, which is #78's observation to make, not this play's guess
 #   - the Loop's three credentials and the signing key generated on the box (#81)
 #   - the Loop scripts themselves and their Termination Contract (#79)
 # This play stops at: the box has the packages the Loop's own test suite needs,
-# and an unprivileged account for a Run to execute as.
+# an unprivileged account for a Run to execute as, and the Execution Boundary
+# installed at a pinned version. It does NOT log the boundary in - `sbx login`
+# opens a browser, which is one of the spec's two human-only steps, and it is a
+# runnable walkthrough instead: `lab/single-user-factory/wizards/loop-sbx-login.sh`.
 - name: Configure the Loop's box
   hosts: loop
   gather_facts: true
@@ -34,9 +34,11 @@
           {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
           The orchestration roles are the Rocky ones - see site.yml.
 
-  # loop_account precedes loop_shell_suite so that role can prove the suite runs
-  # as the account a Run uses, rather than only as the root that installed it.
+  # loop_account precedes the two roles below it so each can prove its tool runs
+  # as the account a Run uses, rather than only as the root that installed it -
+  # and, for the boundary, so there is an account to put in the `kvm` group.
   roles:
     - loop_base        # apt base package set (git, curl, jq, ca-certificates)
     - loop_account     # the unprivileged `loop` user a Run executes as
     - loop_shell_suite # bats + shellcheck, what the Loop's suite is written against
+    - loop_execution_boundary # `sbx`, pinned - the hypervisor microVM an Iteration runs inside

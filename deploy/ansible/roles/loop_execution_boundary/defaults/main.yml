@@ -1,0 +1,21 @@
+# The Execution Boundary: Docker Sandboxes (`sbx`), one hypervisor microVM per
+# Iteration. Single-User Factory ADR 0003 makes this the one subsystem
+# Attendedness re-earns - nobody is watching a Run, so the boundary is the only
+# control still standing.
+#
+# Pinned, not `latest`. `sbx` is a 0.x vendor tool shipping several releases a
+# month (0.24 through 0.39 are all in the same apt suite), and a boundary that
+# silently changes version between Runs is a boundary whose properties nobody
+# has observed. Moving the pin is a one-line, reviewable commit; the apt hold in
+# tasks/main.yml is what stops an unattended `apt upgrade` moving it instead.
+loop_execution_boundary_sbx_version: 0.39.0-1~ubuntu.24.04~noble
+
+# Docker's own apt repository, added the way `get.docker.com REPO_ONLY=1 sh`
+# adds it - the same keyring path, the same one-line source - but as declared
+# tasks rather than a piped shell script, so a re-apply is a comparison instead
+# of a re-run.
+loop_execution_boundary_apt_key_url: https://download.docker.com/linux/ubuntu/gpg
+loop_execution_boundary_apt_key_path: /etc/apt/keyrings/docker.asc
+loop_execution_boundary_apt_repo: >-
+  deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+  https://download.docker.com/linux/ubuntu noble stable
