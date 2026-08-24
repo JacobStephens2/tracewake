@@ -305,6 +305,26 @@ cd /srv/orchestration/lab/single-user-factory/wizards && ./loop-sbx-login.sh
 ```
 
 Moving the pin is one line in
-`ansible/roles/loop_execution_boundary/defaults/main.yml`; the apt hold does not
-have to be lifted by hand, because the install task names the version and apt
-honours a named version over a hold.
+`ansible/roles/loop_execution_boundary/defaults/main.yml`, and the apt hold does
+not have to be lifted by hand - but only because the install task carries
+`allow_downgrade` and `allow_change_held_packages`. It did not, at first, and
+the play failed twice on the way to learning it:
+
+```
+E: Packages were downgraded and -y was used without --allow-downgrades.
+E: Held packages were changed and -y was used without --allow-change-held-packages.
+```
+
+apt refuses both by default and ansible passes neither. Verified by moving the
+pin to 0.38.0 and back:
+
+```
+loopbox : ok=14  changed=2   # 0.39.0 -> 0.38.0, sbx version: v0.38.0
+loopbox : ok=14  changed=2   # 0.38.0 -> 0.39.0, sbx version: v0.39.0
+loopbox : ok=14  changed=0   # and clean again
+```
+
+Overriding the hold in that one task is the point rather than a loophole: the
+hold exists to stop an unattended `apt upgrade` moving the boundary with no
+commit recording it, and that task is the commit. It is re-asserted immediately
+afterwards - `apt-mark showhold` still returns `docker-sbx`.

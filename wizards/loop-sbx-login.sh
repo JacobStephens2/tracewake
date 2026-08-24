@@ -224,10 +224,18 @@ on_loop() {
     "su - loop -s /bin/bash -c $(printf '%q' "$1")"
 }
 
-banner "The Loop's Execution Boundary — sign in"
+# Same shape, for the one command that has to be fed on stdin. Separate rather
+# than a flag on on_loop because ssh's stdin is the difference, and a helper
+# that sometimes consumes the caller's stdin is a trap.
+on_loop_stdin() {
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "root@${LOOP_HOST}" \
+    "su - loop -s /bin/bash -c $(printf '%q' "$1")"
+}
+
+banner "The Loop's Execution Boundary - sign in"
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
-stage "Preflight — the box, the boundary, the hypervisor"
+stage "Preflight - the box, the boundary, the hypervisor"
 say "Nothing here needs you yet. Checking what ansible already left on the box."
 printf '\n'
 
@@ -252,7 +260,7 @@ printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$SBX_VERSION"
 if on_loop 'test -r /dev/kvm && test -w /dev/kvm'; then
   printf '  %s✓%s /dev/kvm is readable and writable as loop\n' "$GREEN" "$RESET"
 else
-  warn "loop cannot open /dev/kvm — the boundary cannot start a microVM."
+  warn "loop cannot open /dev/kvm - the boundary cannot start a microVM."
   note "Expected: loop in the kvm group. Re-run ansible-playbook loop.yml."
   exit 1
 fi
@@ -278,7 +286,7 @@ printf '\n'
 pause "Press Enter to go and make the token."
 
 # ── 2 ─────────────────────────────────────────────────────────────────────
-stage "Docker — create a personal access token"
+stage "Docker - create a personal access token"
 say "This is the one step only you can take: it happens in a browser, signed in"
 say "as you. The token is what stands in for that browser on a headless box."
 printf '\n'
@@ -286,10 +294,10 @@ open_url "https://app.docker.com/settings/personal-access-tokens"
 step "If that did not open: app.docker.com → your avatar → Account settings →"
 step "  Personal access tokens."
 step "Select 'Generate new token'."
-step "Description: loop.etadventures.com — sbx"
+step "Description: loop.etadventures.com - sbx"
 step "Expiration: your call. A short one means re-running this wizard, which is"
 step "  cheap; the boundary stops working when it lapses, loudly."
-step "Access permissions: 'Read-only' is enough — sbx pulls images and proves an"
+step "Access permissions: 'Read-only' is enough - sbx pulls images and proves an"
 step "  identity, it does not push. Stage 3 fails loudly if that turns out wrong."
 step "Generate, then copy the token. Docker shows it exactly once."
 printf '\n'
@@ -302,7 +310,7 @@ if [[ -z "$DOCKER_USERNAME" || -z "$DOCKER_PAT" ]]; then
 fi
 
 # ── 3 ─────────────────────────────────────────────────────────────────────
-stage "The box — sign in"
+stage "The box - sign in"
 say "Sending the token over SSH into sbx's stdin. It is not echoed, not logged,"
 say "and not written to any file on this machine."
 printf '\n'
@@ -310,9 +318,8 @@ printf '\n'
 # --password-stdin, never on the command line: an argument would be visible in
 # `ps` on the box for the life of the call. The same reason CLAUDE.md gives for
 # MYSQL_PWD over `mysql -p<pass>`.
-if printf '%s' "$DOCKER_PAT" | ssh -o BatchMode=yes -o ConnectTimeout=10 \
-     "root@${LOOP_HOST}" \
-     "su - loop -s /bin/bash -c $(printf '%q' "sbx login --username ${DOCKER_USERNAME} --password-stdin")"
+if printf '%s' "$DOCKER_PAT" |
+     on_loop_stdin "sbx login --username ${DOCKER_USERNAME} --password-stdin"
 then
   printf '  %s✓%s signed in as %s\n' "$GREEN" "$RESET" "$DOCKER_USERNAME"
 else
@@ -327,18 +334,25 @@ unset DOCKER_PAT
 
 printf '\n'
 say "Confirming the sign-in with a command that needs it:"
-if on_loop 'sbx policy ls' >/dev/null 2>&1; then
-  printf '  %s✓%s sbx policy ls answers — the boundary holds an identity\n' "$GREEN" "$RESET"
+# `sbx diagnose`, NOT `sbx policy ls`. The obvious check is the wrong one: on a
+# fresh box sbx checks policy initialization BEFORE authentication, so
+# `sbx policy ls` fails with "global network policy has not been initialized"
+# even after a perfectly good login - and stage 4 is where that gets fixed.
+# Using it here would abort the wizard one stage before the thing it complains
+# about gets set up. diagnose reports the two independently.
+if on_loop 'sbx diagnose' 2>/dev/null |
+     sed 's/\x1b\[[0-9;]*m//g' | grep -q 'Authentication.*authenticated'; then
+  printf '  %s✓%s sbx diagnose reports authenticated\n' "$GREEN" "$RESET"
 else
-  warn "signed in, but sbx policy ls still refuses. Look at it by hand:"
-  note "  ssh root@${LOOP_HOST} 'su - loop -c \"sbx policy ls\"'"
+  warn "sbx login returned success, but diagnose does not report authenticated."
+  note "  ssh root@${LOOP_HOST} 'su - loop -c \"sbx diagnose\"'"
   exit 1
 fi
 printf '\n'
 pause "Press Enter to read the egress policy."
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
-stage "Egress — read the default posture, do not assume it"
+stage "Egress - read the default posture, do not assume it"
 say "Docker's own security page warns its defaults 'include broad wildcards'"
 say "and names *.googleapis.com as one. It never publishes the list, so the only"
 say "honest way to know what this boundary lets out is to ask this boundary."
@@ -358,12 +372,13 @@ if ! on_loop 'sbx policy ls' >/dev/null 2>&1; then
   printf '\n'
 fi
 
-POSTURE_FILE="${POSTURE_FILE:-$PWD/sbx-default-policy-$(date -u +%Y%m%dT%H%M%SZ).txt}"
+NOTES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../notes" 2>/dev/null && pwd || printf %s "${TMPDIR:-/tmp}")"
+POSTURE_FILE="${POSTURE_FILE:-${NOTES_DIR}/loop-sbx-${POLICY_PROFILE:-current}-policy-$(date -u +%Y-%m-%d).txt}"
 on_loop 'sbx policy ls' | tee "$POSTURE_FILE"
 printf '\n'
 printf '  %s✓ saved%s %s\n' "$GREEN" "$RESET" "$POSTURE_FILE"
-note "Copy it into lab/single-user-factory/notes/ if this is a fresh box —"
-note "the recorded posture is only as current as the sbx version that printed it."
+note "Commit it if this is a fresh box: the recorded posture is only as current"
+note "as the sbx version and profile that printed it."
 printf '\n'
 warn "Read it before a Run: every domain above is somewhere an unattended agent"
 warn "can send a repository. Narrow it with 'sbx policy rm'."
@@ -371,7 +386,7 @@ printf '\n'
 pause "Press Enter to boot a microVM and prove the boundary is real."
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
-stage "Proof — a command inside the microVM"
+stage "Proof - a command inside the microVM"
 say "Signing in proves an identity, not a boundary. This boots an agent-less"
 say "sandbox and asks the guest what kernel it is running, then compares."
 note "First run pulls an image; give it a couple of minutes."
@@ -384,20 +399,27 @@ if ! on_loop "mkdir -p /home/loop/proof && sbx create --name ${PROOF_SANDBOX} sh
 fi
 
 printf '\n'
-say "host:"
+# systemd-detect-virt is printed for both sides and is deliberately NOT the
+# test: it answers `kvm` on the host, which is a DigitalOcean droplet, and
+# `none` in the guest, which exposes no DMI for it to read. It reads backwards.
+# The kernel release and the boot_id are the honest comparison.
+say "host (uname -r, boot_id, systemd-detect-virt):"
 on_loop 'uname -r; cat /proc/sys/kernel/random/boot_id; systemd-detect-virt || true' | sed 's/^/    /'
 printf '\n'
-say "inside the sandbox:"
+say "inside the sandbox (the same three):"
 on_loop "sbx exec ${PROOF_SANDBOX} sh -c 'uname -r; cat /proc/sys/kernel/random/boot_id; cat /sys/class/dmi/id/product_name 2>/dev/null || true'" | sed 's/^/    /'
 printf '\n'
 warn "A different kernel release and a different boot_id is the assertion: the"
 warn "guest is not sharing this host's kernel. Same kernel would mean a"
 warn "container, and the boundary would not be what ADR 0003 relies on."
+note "Ignore systemd-detect-virt here - it reads backwards, kvm on the host and"
+note "none in the guest, because the microVM exposes no DMI. It is printed only"
+note "so nobody later mistakes it for the check."
 printf '\n'
 
 if confirm "Remove the proof sandbox now?"; then
   on_loop "sbx rm --force ${PROOF_SANDBOX} && rm -rf /home/loop/proof" || \
-    warn "could not remove ${PROOF_SANDBOX} — clean it up with 'sbx rm'."
+    warn "could not remove ${PROOF_SANDBOX} - clean it up with 'sbx rm'."
 else
   SKIPPED+=("remove the proof sandbox: ssh root@${LOOP_HOST} 'su - loop -c \"sbx rm -f ${PROOF_SANDBOX}\"'")
 fi

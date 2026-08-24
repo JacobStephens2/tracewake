@@ -22,12 +22,10 @@ loop_execution_boundary_sbx_version: 0.39.0-1~ubuntu.24.04~noble
 # The full statement, and the evidence under it, is in
 # lab/single-user-factory/notes/loop-execution-boundary-evidence.md.
 
-# Docker's own apt repository, added the way `get.docker.com REPO_ONLY=1 sh`
-# adds it - the same keyring path, the same one-line source - but as declared
-# tasks rather than a piped shell script, so a re-apply is a comparison instead
-# of a re-run.
-loop_execution_boundary_apt_key_url: https://download.docker.com/linux/ubuntu/gpg
+# The keyring path, because three tasks name it and the repository line embeds
+# it - a second literal would drift silently the day one of them moved. The
+# repository URL and the `deb` line itself are inline in tasks/main.yml, not
+# here: loop_account states the convention this role follows, that a variable
+# with one setting is a knob nobody turns. The version above is the one real
+# knob in this role.
 loop_execution_boundary_apt_key_path: /etc/apt/keyrings/docker.asc
-loop_execution_boundary_apt_repo: >-
-  deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-  https://download.docker.com/linux/ubuntu noble stable

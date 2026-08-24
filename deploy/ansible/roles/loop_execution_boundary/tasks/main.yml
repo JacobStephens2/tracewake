@@ -17,7 +17,7 @@
 - name: Docker's apt signing key
   ansible.builtin.command:
     cmd: >-
-      curl -fsSL {{ loop_execution_boundary_apt_key_url }}
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg
       -o {{ loop_execution_boundary_apt_key_path }}
     creates: "{{ loop_execution_boundary_apt_key_path }}"
 
@@ -28,9 +28,16 @@
     owner: root
     group: root
 
+# The same one-line source `get.docker.com REPO_ONLY=1 sh` writes, and the same
+# keyring path - but as a declared task rather than a piped shell script, so a
+# re-apply is a comparison instead of a re-run. `signed-by` is templated from
+# the variable above rather than repeating the literal, so the key task and this
+# one cannot disagree about where the key is.
 - name: Docker's apt repository
   ansible.builtin.apt_repository:
-    repo: "{{ loop_execution_boundary_apt_repo }}"
+    repo: >-
+      deb [arch=amd64 signed-by={{ loop_execution_boundary_apt_key_path }}]
+      https://download.docker.com/linux/ubuntu noble stable
     filename: docker   # /etc/apt/sources.list.d/docker.sources, replacing nothing else
     state: present
     update_cache: true
@@ -48,13 +55,23 @@
 #   # apt-get install -s --no-install-recommends   0 upgraded,  69 newly installed
 #   # dpkg -l apparmor                             ii  4.0.1really4.0.1-0ubuntu0.24.04.7
 #
-# The version is pinned in defaults/, so this task is also what moves the pin:
-# apt installs the named version whether that is an upgrade or a downgrade.
+# This task is also what MOVES the pin, and the two allow_* flags are what let
+# it. They were added after watching the play fail without them, twice:
+#
+#   E: Packages were downgraded and -y was used without --allow-downgrades.
+#   E: Held packages were changed and -y was used without --allow-change-held-packages.
+#
+# apt refuses both by default and ansible passes neither. Overriding the hold
+# here is exactly right rather than a loophole: the hold exists to stop an
+# unattended `apt upgrade` moving the boundary with no commit recording it, and
+# this task is the commit. The hold is re-asserted immediately below.
 - name: Install the Execution Boundary at its pinned version
   ansible.builtin.apt:
     name: "docker-sbx={{ loop_execution_boundary_sbx_version }}"
     state: present
     install_recommends: false
+    allow_downgrade: true              # see the pin-move note below
+    allow_change_held_packages: true
     update_cache: true
     cache_valid_time: 3600
 
