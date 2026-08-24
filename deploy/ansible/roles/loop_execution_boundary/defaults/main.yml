@@ -30,27 +30,106 @@ loop_execution_boundary_sbx_version: 0.39.0-1~ubuntu.24.04~noble
 # below are the two real knobs in this role; this is neither.
 loop_execution_boundary_apt_key_path: /etc/apt/keyrings/docker.asc
 
+# Where `sbx policy reset` is told to put its output, for the reason the reset
+# task explains at length: the daemon it spawns inherits that destination, and
+# if the destination is ansible's pipe the play hangs. Named here rather than
+# inline because every other path in this role is named here, and a literal
+# buried in a `shell:` argument is the one nobody finds when it needs moving.
+loop_execution_boundary_policy_reset_log: /tmp/sbx-policy-reset.log
+
 # The egress profile the boundary comes up on. `sbx` has no implicit default -
 # on a box where nothing has chosen, `sbx policy ls` answers `global network
 # policy has not been initialized` and a sandbox refuses to boot - so a daemon
 # started by a unit at boot with nothing naming a profile is a boundary that is
 # up and unusable. This is what names it.
 #
-# `balanced` is the vendor's middle setting and is NOT the right posture: it is
-# 193 allowed hosts, 44 of them wildcards, and the evidence note records
-# repositories reaching S3, GCS and githubusercontent from inside a sandbox. It
-# is here because it is what the box already runs and because the narrowing -
-# `deny-all` plus an explicit allowlist - belongs to the egress ticket, which
-# will know which hosts the agent actually needs. Changing this line is how that
-# ticket lands, and `sbx policy reset` is what lets it: `policy init` is
-# one-time per the CLI's own help.
-loop_execution_boundary_policy_profile: balanced
+# `deny-all` since #100. It was `balanced` until then, deliberately: #78 wrote
+# down the posture an operator gets by reflex rather than one tuned first, and
+# that posture is 193 allowed hosts in six rules, 44 of them wildcards, through
+# which a repository reaches S3, GCS and a public gist. `deny-all` plus the
+# explicit allowlist below is what spec #73's user story 26 - "egress restricted
+# to what the agent actually needs" - actually asks for.
+#
+# What `deny-all` does NOT narrow, stated here because the name oversells it: it
+# is the NETWORK posture only. The filesystem rules survive it untouched -
+# `default-fs-read-allow-all` and `default-fs-write-allow-all`, both `allow **`,
+# are still there after an init. Inside the guest the agent still reads and
+# writes anything; the microVM is what bounds that, not the policy.
+loop_execution_boundary_policy_profile: deny-all
 
-# Two derived values, here rather than repeated inline, because each is named in
-# more than one task and a second copy is a second place to be wrong. Both are
-# evaluated where they are used, not where they are written: the first needs the
-# uid fact that tasks/main.yml reads, the second needs the command that task
-# registers.
+# Which agent's host set to allow alongside the common one. ADR 0004 makes the
+# agent a variable rather than a decision, and this is the egress half of that:
+# swapping to Grok (#84) is a change to this line plus a re-apply, not a rebuild
+# - which is spec #73's user story 31.
+loop_execution_boundary_agent: claude
+
+# The allowlist, and the reason each entry is on it. Every host here was
+# observed being reached from inside the boundary rather than reasoned about;
+# the dump, the probes and the hosts deliberately left OFF are in
+# lab/single-user-factory/notes/loop-execution-boundary-evidence.md, section
+# "Narrowing to deny-all (issue #100)".
+#
+# `need` is not decoration. An allowlist whose entries carry no reason is one
+# nobody can ever shorten, because removing a host means guessing what it was
+# for. Adding a host here means writing what breaks without it.
+#
+# Ports are explicit. `sbx policy allow network github.com` would default to
+# :443, but the rule it writes is then indistinguishable in a dump from one that
+# meant something else, and this file is the only place the intent is recorded.
+loop_execution_boundary_egress_common:
+  - host: github.com:443
+    need: >-
+      git clone, fetch and push over HTTPS. The Iteration's whole repository
+      interaction. Observed sufficient on its own: a shallow clone of a public
+      repository completes with only this host allowed.
+  - host: api.github.com:443
+    need: >-
+      `gh pr create`. The draft pull request is the Run's only external effect
+      (Proposal-Only Output), so this is the one host the Run is FOR.
+
+# Per-agent, keyed by loop_execution_boundary_agent. Keeping the two sets apart
+# in the data - rather than in a comment on one merged list - is what makes the
+# agent swap a configuration change: nothing has to be worked out by hand about
+# which of the allowed hosts belonged to the agent that left.
+loop_execution_boundary_egress_by_agent:
+  # Empty, and that is a finding rather than an omission. `sbx`'s own `claude`
+  # kit attaches a per-sandbox allow rule - `api.anthropic.com`,
+  # `platform.claude.com`, `downloads.claude.ai`, `claude.com`,
+  # `mcp-proxy.anthropic.com`, `bridge.claudeusercontent.com` - to every sandbox
+  # `sbx create claude` makes, and that rule SURVIVES `policy init deny-all`:
+  # scope `sandbox:<name>`, source `kit`, `editable: false`. Verified by probing
+  # after the init - `api.anthropic.com` answered 404, the service, while
+  # everything else in this file's "left off" list answered 403, the proxy.
+  #
+  # So Claude Code's inference hosts are the vendor's to declare and are already
+  # narrower than anything written here would be. Duplicating them at global
+  # scope would widen the boundary for EVERY sandbox, including a `shell` one,
+  # to no benefit.
+  claude: []
+
+  # Grok Build has no kit - `sbx create` offers claude, codex, copilot, cursor,
+  # docker-agent, droid, gemini, kiro, opencode and shell - so nothing declares
+  # its hosts for it and they have to live here. ADR 0004 priced this in.
+  #
+  # Not yet verified against a Run; #84 is what does that. These come from the
+  # shipped `grok` 1.0.5 binary on the orchestration VM rather than from a
+  # vendor page, which is why the two that are here are here and the other four
+  # it names are not - see the note's "left off" list.
+  grok:
+    - host: cli-chat-proxy.grok.com:443
+      need: >-
+        Inference on the subscription. The binary's default
+        `GROK_CLI_CHAT_PROXY_BASE_URL` is https://cli-chat-proxy.grok.com/v1.
+    - host: auth.x.ai:443
+      need: >-
+        The OIDC issuer in ~/.grok/auth.json. Grok's subscription credential is
+        an auto-refreshing OAuth token, so this is needed for the refresh
+        during a Run, not only at login.
+
+# Four derived values, here rather than repeated inline, because each is named
+# in more than one task and a second copy is a second place to be wrong. All are
+# evaluated where they are used, not where they are written: they need the uid
+# fact and the command output that tasks/main.yml produces.
 #
 # The environment a `systemctl --user` task needs. XDG_RUNTIME_DIR alone is not
 # enough - see the task's own comment for what failure that produces.
@@ -65,3 +144,84 @@ loop_execution_boundary_policy_uninitialized: >-
   {{ 'has not been initialized' in
      (loop_execution_boundary_policy_state.stdout | default('') +
       loop_execution_boundary_policy_state.stderr | default('')) }}
+
+# The allowlist the box should be holding: the common set plus the current
+# agent's, as bare `host:port` strings in a stable order. Sorted because the
+# comparison below is between two lists and order is not part of the posture -
+# without it, adding a host to the top of `_common` would read as drift.
+loop_execution_boundary_egress_desired: >-
+  {{ (loop_execution_boundary_egress_common +
+      loop_execution_boundary_egress_by_agent[loop_execution_boundary_agent])
+     | map(attribute='host') | sort }}
+
+# The allowlist the box IS holding, read back from the daemon.
+#
+# `scope == 'global'` is the load-bearing filter and the reason this is not
+# simply every network allow rule. A kit rule - the six Anthropic hosts `sbx`
+# attaches to a `claude` sandbox - is also `layer: local`, but its scope is
+# `sandbox:<name>` and it is `editable: false`. Counting it here would make the
+# comparison below permanently unequal and the role would reset the policy store
+# on every apply, once per sandbox that happens to exist.
+#
+# `resource_type == 'network'` drops the two filesystem rules, which `deny-all`
+# does not touch and this role does not manage.
+#
+# The uninitialized branch is not defensive padding: on a box where nothing has
+# chosen a profile, `sbx policy ls --json` prints the `has not been initialized`
+# message rather than JSON, and `from_json` would fail on it. An uninitialized
+# box holds no allowlist, so the honest answer is the empty one.
+loop_execution_boundary_egress_observed: >-
+  {{ [] if (loop_execution_boundary_policy_uninitialized | bool) else
+     ((loop_execution_boundary_policy_state.stdout | default('{}', true) | from_json).rules | default([]))
+     | selectattr('scope', 'eq', 'global')
+     | selectattr('resource_type', 'eq', 'network')
+     | selectattr('decision', 'eq', 'allow')
+     | map(attribute='resources') | flatten | sort }}
+
+# The three things the reconcile actually turns on, derived once. The tasks
+# below used to repeat `observed != desired` and `not uninitialized` inline on
+# five `when:` clauses, which is the second-place-to-be-wrong this file's own
+# comment above warns against.
+#
+# The distinction they draw is the important one, and it is not cosmetic: an
+# ADDITION does not need a reset and a REMOVAL does.
+
+# On the box and not declared. Non-empty means something has to be taken away,
+# and `sbx policy rm` per rule is not a road this role wants to be on - the
+# rules carry generated UUIDs and `balanced` writes 193 of them. So a removal
+# means clearing the store and re-choosing, which stops the daemon and every
+# sandbox it holds.
+loop_execution_boundary_egress_extra: >-
+  {{ loop_execution_boundary_egress_observed
+     | difference(loop_execution_boundary_egress_desired) }}
+
+# Declared and not on the box. Non-empty means something has to be ADDED, and
+# `sbx policy allow network` does that on a live daemon with nothing stopped.
+# This is the common case after a Run finds a host it needed, and it must not
+# cost an operator their running sandboxes.
+loop_execution_boundary_egress_missing: >-
+  {{ loop_execution_boundary_egress_desired
+     | difference(loop_execution_boundary_egress_observed) }}
+
+loop_execution_boundary_policy_needs_reset: >-
+  {{ (not (loop_execution_boundary_policy_uninitialized | bool))
+     and (loop_execution_boundary_egress_extra | length > 0) }}
+
+# A box where nothing has chosen a profile needs an init even when the declared
+# allowlist is empty - `deny-all` with no allow rules is a legitimate posture,
+# and a box with no posture at all refuses to boot a sandbox. Keying this off
+# the drift comparison alone got that wrong: with both lists empty there is no
+# drift, so nothing fired and the box was left unconfigured, which is the exact
+# state the init exists to prevent.
+loop_execution_boundary_policy_needs_init: >-
+  {{ (loop_execution_boundary_policy_uninitialized | bool)
+     or (loop_execution_boundary_policy_needs_reset | bool) }}
+
+# What to hand `sbx policy allow network`. After a reset the store is empty, so
+# it is the whole declared list; otherwise it is only what is missing, because
+# `sbx policy allow` writes a NEW rule per resource every time it is called and
+# re-allowing a host already allowed would leave two rules for it.
+loop_execution_boundary_egress_to_allow: >-
+  {{ loop_execution_boundary_egress_desired
+     if (loop_execution_boundary_policy_needs_reset | bool)
+     else loop_execution_boundary_egress_missing }}

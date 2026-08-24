@@ -368,31 +368,34 @@ say "Docker's own security page warns its defaults 'include broad wildcards'"
 say "and names *.googleapis.com as one. It never publishes the list, so the only"
 say "honest way to know what this boundary lets out is to ask this boundary."
 printf '\n'
-# On a fresh box there is no policy at all - sbx has no implicit default, it
-# refuses until one of three named profiles is chosen. That is worth seeing
-# rather than being chosen for you, so this asks.
+# This used to ask which profile to initialize, defaulting to `balanced`. It no
+# longer offers the choice, because since #100 there is no choice to make here:
+# the profile and its allowlist are declared in
+# ansible/roles/loop_execution_boundary/defaults/main.yml and reconciled by the
+# play. A wizard that also chose one would be a second place the posture is
+# decided, and the two would disagree the first time either moved.
 if ! on_loop 'sbx policy ls' >/dev/null 2>&1; then
   warn "no global network policy is initialized on this box yet."
-  say "sbx offers three: deny-all, balanced, allow-all. 'balanced' is the"
-  say "vendor's middle setting and the one whose wildcards their own security"
-  say "page warns about; 'deny-all' is the posture the Loop should end up on,"
-  say "once #79 knows which hosts the agent actually needs."
-  ask POLICY_PROFILE "Which profile? [balanced]"
-  POLICY_PROFILE="${POLICY_PROFILE:-balanced}"
-  on_loop "sbx policy init ${POLICY_PROFILE}"
+  say "That is not a question for this walkthrough. The posture is declared -"
+  say "'deny-all' plus an explicit allowlist - and the play is what applies it:"
   printf '\n'
+  note "  cd /srv/orchestration/ansible && ansible-playbook loop.yml"
+  printf '\n'
+  say "Run that, then run this walkthrough again from the start."
+  exit 1
 fi
 
 NOTES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../notes" 2>/dev/null && pwd || printf %s "${TMPDIR:-/tmp}")"
-POSTURE_FILE="${POSTURE_FILE:-${NOTES_DIR}/loop-sbx-${POLICY_PROFILE:-current}-policy-$(date -u +%Y-%m-%d).txt}"
-on_loop 'sbx policy ls' | tee "$POSTURE_FILE"
+POSTURE_FILE="${POSTURE_FILE:-${NOTES_DIR}/loop-sbx-policy-$(date -u +%Y-%m-%d).txt}"
+on_loop 'sbx policy ls --wide' | tee "$POSTURE_FILE"
 printf '\n'
 printf '  %s✓ saved%s %s\n' "$GREEN" "$RESET" "$POSTURE_FILE"
 note "Commit it if this is a fresh box: the recorded posture is only as current"
 note "as the sbx version and profile that printed it."
 printf '\n'
 warn "Read it before a Run: every domain above is somewhere an unattended agent"
-warn "can send a repository. Narrow it with 'sbx policy rm'."
+warn "can send a repository. Widening it is a commit to the role's defaults, not"
+warn "an 'sbx policy allow' typed on the box - the next apply would undo that."
 printf '\n'
 pause "Press Enter to boot a microVM and prove the boundary is real."
 

@@ -121,8 +121,12 @@ Iteration, which is strictly more often than Run start.
 - **Nothing seeds the Plan** (#82); `run.sh` refuses to start without one.
 - **Nothing pushes or opens a pull request** (#83).
 
-Also still open from #78, recorded on the ticket and not addressed here:
-`sandboxd` does not survive a reboot, and the box's egress posture is `balanced`
-- 193 allowed hosts - which is wide enough to exfiltrate a repository through.
-Neither is in this ticket's acceptance criteria; both must be settled before a
-Run is genuinely left alone.
+Two things were still open from #78 when this was written, recorded on the
+ticket and not addressed here: `sandboxd` was thought not to survive a reboot,
+and the box's egress posture was `balanced` - 193 allowed hosts, wide enough to
+exfiltrate a repository through. Neither was in this ticket's acceptance
+criteria, and both had to be settled before a Run could genuinely be left alone.
+
+Both since have been. #99 found the reboot premise was wrong and supervised the
+daemon anyway; #100 moved the box to `deny-all` plus a two-host allowlist. See
+`loop-execution-boundary-evidence.md`.
