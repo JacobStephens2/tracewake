@@ -703,6 +703,46 @@ Comparing resources rather than rule names is deliberate: `sbx policy allow
 network a,b` writes one rule per resource with a fresh UUID each time, so rule
 ids are not something a comparison can stand on.
 
+**An addition does not reset; only a removal does.** The first version of this
+reconcile treated any difference the same way, so adding one host after a Run
+failed on it would have cleared the policy store, stopped the daemon and killed
+whatever sandbox was running - to add a rule `sbx policy allow` can add on a
+live daemon. That is the wrong price for the commonest change there will be. The
+role now splits the comparison:
+
+| what differs | what the role does |
+|---|---|
+| a declared host is **missing** from the box | `sbx policy allow network <the missing ones>`, nothing stopped |
+| the box holds a host that is **not declared** | reset, daemon stop, unit restart, re-init, re-allow the whole list |
+| nothing | nothing |
+
+A removal has to go the expensive way because `sbx policy rm` works per rule,
+the rules carry generated UUIDs, and `balanced` writes 193 of them. All three
+paths were run against the box, and the daemon's PID is the evidence for the
+cheap one:
+
+```
+# an addition: one host removed from the box by hand, then applied
+"on the box: 1 host(s), 0 not declared"
+"declared but absent: ['api.github.com:443']"
+"hosts are only being ADDED, on a live daemon, nothing stopped"
+loopbox : ok=26  changed=1        MainPID 11286 before, 11286 after
+
+# a removal: `sbx policy allow network pastebin.com:443` typed on the box, then applied
+"on the box: 3 host(s), 1 not declared"
+"a host has to be REMOVED, so the policy store is cleared and re-chosen ..."
+loopbox : ok=30  changed=5        MainPID 11286 before, 15652 after
+$ sbx policy check network pastebin.com
+Denied: pastebin.com:443   Reason: no matching allow rule (default deny)
+
+# and nothing to do
+loopbox : ok=25  changed=0  skipped=5
+```
+
+The middle one is also the answer to hand-editing: a host typed onto the box
+survives until the next apply and no longer. The role's defaults are where a
+host is added.
+
 `--check` is honest about it, which took one deliberate exception. Every command
 task in this play is skipped under `--check` - proof is an apply - and skipping
 the READ made the dry run lie: with no output to parse, the posture came back

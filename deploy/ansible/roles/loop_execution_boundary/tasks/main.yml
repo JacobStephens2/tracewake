@@ -240,6 +240,22 @@
 # "has anything been chosen" moves a REBUILT box and does nothing whatever to
 # this one, and a `deny-all` posture that only arrives on a rebuild is not the
 # posture.
+# The one lookup in this role that would fail as a traceback rather than a
+# message. `loop_execution_boundary_egress_by_agent[...]` on a key that is not
+# there is an undefined-variable error naming the expression, not the mistake.
+# Everything else in this role fails loudly and says what is wrong; this makes
+# that lookup do the same, and it runs first so nothing evaluates the map before
+# it.
+- name: The declared agent has a host set
+  ansible.builtin.assert:
+    that: loop_execution_boundary_agent in loop_execution_boundary_egress_by_agent
+    fail_msg: >-
+      loop_execution_boundary_agent is '{{ loop_execution_boundary_agent }}',
+      which has no entry in loop_execution_boundary_egress_by_agent
+      ({{ loop_execution_boundary_egress_by_agent.keys() | list | join(', ') }}).
+      Declare its hosts there, each with a `need:` saying what breaks without it,
+      before pointing the role at it.
+
 - name: Read the boundary's current egress posture
   ansible.builtin.command: sbx policy ls --json
   become: true
@@ -277,12 +293,19 @@
       - "declared: {{ loop_execution_boundary_egress_desired }}"
       - >-
         on the box: {{ loop_execution_boundary_egress_observed | length }} host(s),
-        {{ (loop_execution_boundary_egress_observed
-            | difference(loop_execution_boundary_egress_desired)) | length }} not declared
+        {{ loop_execution_boundary_egress_extra | length }} not declared
+      - "declared but absent: {{ loop_execution_boundary_egress_missing }}"
+      # Which of the three paths this apply is taking, in words, because the
+      # difference between them is the difference between an interrupted Run
+      # and an uninterrupted one. Each branch is one physical line: a Jinja
+      # string literal split across lines keeps the newline, and `>-` does not
+      # fold what is inside the quotes.
       - >-
-        declared but absent:
-        {{ loop_execution_boundary_egress_desired
-           | difference(loop_execution_boundary_egress_observed) }}
+        {{ 'a host has to be REMOVED, so the policy store is cleared and re-chosen - this stops the daemon and every sandbox it holds'
+           if (loop_execution_boundary_policy_needs_reset | bool)
+           else ('hosts are only being ADDED, on a live daemon, nothing stopped'
+                 if (loop_execution_boundary_egress_to_allow | length > 0)
+                 else 'nothing to do') }}
   changed_when: false
 
 # `sbx policy init` refuses to run twice, so moving an already-initialized box
@@ -313,12 +336,10 @@
 - name: Clear the policy store so the profile can be re-chosen
   ansible.builtin.shell: >-
     sbx policy reset --force
-    </dev/null >/tmp/sbx-policy-reset.log 2>&1
+    </dev/null >{{ loop_execution_boundary_policy_reset_log }} 2>&1
   become: true
   become_user: loop
-  when:
-    - not (loop_execution_boundary_policy_uninitialized | bool)
-    - loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  when: loop_execution_boundary_policy_needs_reset | bool
   changed_when: true
 
 # The task above leaves an UNSUPERVISED daemon behind, and this is what takes it
@@ -344,9 +365,7 @@
   ansible.builtin.command: sbx daemon stop
   become: true
   become_user: loop
-  when:
-    - not (loop_execution_boundary_policy_uninitialized | bool)
-    - loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  when: loop_execution_boundary_policy_needs_reset | bool
   changed_when: true
   # Tolerant on purpose, and only here: if nothing is running there is nothing
   # to take back and the next task starts the supervised one regardless. This is
@@ -362,7 +381,7 @@
   become: true
   become_user: loop
   environment: "{{ loop_execution_boundary_user_manager_env }}"
-  when: loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  when: loop_execution_boundary_policy_needs_reset | bool
 
 # Deny by default. On a rebuilt box this is the only one of these tasks that
 # fires, because nothing has been chosen and the reset has nothing to clear.
@@ -370,7 +389,7 @@
   ansible.builtin.command: "sbx policy init {{ loop_execution_boundary_policy_profile }}"
   become: true
   become_user: loop
-  when: loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  when: loop_execution_boundary_policy_needs_init | bool
   changed_when: true
 
 # And then the allowlist, in one command rather than one per host: `sbx policy
@@ -378,16 +397,19 @@
 # resource either way, so the rule ids are not something to depend on. That is
 # why the comparison above is over the resources and not over rule names.
 #
-# Skipped, correctly, if the declared list is empty - a `deny-all` box with no
-# allowlist is a legitimate posture and `sbx policy allow network ""` is not a
+# What it is handed is the whole declared list after a reset and only the
+# MISSING hosts otherwise - see the derivation in defaults. That is what makes
+# adding a host cheap: no reset, no daemon stop, nothing interrupted, on a box
+# whose posture is already narrow.
+#
+# Skipped, correctly, when there is nothing to add. A `deny-all` box with no
+# allowlist is a legitimate posture, and `sbx policy allow network ""` is not a
 # command.
 - name: Allow exactly the hosts the agent needs
   ansible.builtin.command: >-
     sbx policy allow network
-    {{ loop_execution_boundary_egress_desired | join(',') }}
+    {{ loop_execution_boundary_egress_to_allow | join(',') }}
   become: true
   become_user: loop
-  when:
-    - loop_execution_boundary_egress_desired | length > 0
-    - loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  when: loop_execution_boundary_egress_to_allow | length > 0
   changed_when: true

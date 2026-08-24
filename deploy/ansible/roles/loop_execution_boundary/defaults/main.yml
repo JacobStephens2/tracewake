@@ -30,6 +30,13 @@ loop_execution_boundary_sbx_version: 0.39.0-1~ubuntu.24.04~noble
 # below are the two real knobs in this role; this is neither.
 loop_execution_boundary_apt_key_path: /etc/apt/keyrings/docker.asc
 
+# Where `sbx policy reset` is told to put its output, for the reason the reset
+# task explains at length: the daemon it spawns inherits that destination, and
+# if the destination is ansible's pipe the play hangs. Named here rather than
+# inline because every other path in this role is named here, and a literal
+# buried in a `shell:` argument is the one nobody finds when it needs moving.
+loop_execution_boundary_policy_reset_log: /tmp/sbx-policy-reset.log
+
 # The egress profile the boundary comes up on. `sbx` has no implicit default -
 # on a box where nothing has chosen, `sbx policy ls` answers `global network
 # policy has not been initialized` and a sandbox refuses to boot - so a daemon
@@ -170,3 +177,51 @@ loop_execution_boundary_egress_observed: >-
      | selectattr('resource_type', 'eq', 'network')
      | selectattr('decision', 'eq', 'allow')
      | map(attribute='resources') | flatten | sort }}
+
+# The three things the reconcile actually turns on, derived once. The tasks
+# below used to repeat `observed != desired` and `not uninitialized` inline on
+# five `when:` clauses, which is the second-place-to-be-wrong this file's own
+# comment above warns against.
+#
+# The distinction they draw is the important one, and it is not cosmetic: an
+# ADDITION does not need a reset and a REMOVAL does.
+
+# On the box and not declared. Non-empty means something has to be taken away,
+# and `sbx policy rm` per rule is not a road this role wants to be on - the
+# rules carry generated UUIDs and `balanced` writes 193 of them. So a removal
+# means clearing the store and re-choosing, which stops the daemon and every
+# sandbox it holds.
+loop_execution_boundary_egress_extra: >-
+  {{ loop_execution_boundary_egress_observed
+     | difference(loop_execution_boundary_egress_desired) }}
+
+# Declared and not on the box. Non-empty means something has to be ADDED, and
+# `sbx policy allow network` does that on a live daemon with nothing stopped.
+# This is the common case after a Run finds a host it needed, and it must not
+# cost an operator their running sandboxes.
+loop_execution_boundary_egress_missing: >-
+  {{ loop_execution_boundary_egress_desired
+     | difference(loop_execution_boundary_egress_observed) }}
+
+loop_execution_boundary_policy_needs_reset: >-
+  {{ (not (loop_execution_boundary_policy_uninitialized | bool))
+     and (loop_execution_boundary_egress_extra | length > 0) }}
+
+# A box where nothing has chosen a profile needs an init even when the declared
+# allowlist is empty - `deny-all` with no allow rules is a legitimate posture,
+# and a box with no posture at all refuses to boot a sandbox. Keying this off
+# the drift comparison alone got that wrong: with both lists empty there is no
+# drift, so nothing fired and the box was left unconfigured, which is the exact
+# state the init exists to prevent.
+loop_execution_boundary_policy_needs_init: >-
+  {{ (loop_execution_boundary_policy_uninitialized | bool)
+     or (loop_execution_boundary_policy_needs_reset | bool) }}
+
+# What to hand `sbx policy allow network`. After a reset the store is empty, so
+# it is the whole declared list; otherwise it is only what is missing, because
+# `sbx policy allow` writes a NEW rule per resource every time it is called and
+# re-allowing a host already allowed would leave two rules for it.
+loop_execution_boundary_egress_to_allow: >-
+  {{ loop_execution_boundary_egress_desired
+     if (loop_execution_boundary_policy_needs_reset | bool)
+     else loop_execution_boundary_egress_missing }}
