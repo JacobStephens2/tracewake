@@ -3,20 +3,34 @@
 # explicit allowlist. Companion to loop-sbx-balanced-policy-2026-08-24.txt, which
 # is the 193-host posture this replaces.
 #
-# Two things to read here rather than count:
+# `local-policy` holds TWO network allow rules - github.com:443 and
+# api.github.com:443 - and that is the whole global allowlist. It also still
+# holds `filesystem read: 1 allow` and `filesystem write: 1 allow`, both `**`:
+# `deny-all` is the NETWORK posture and does not touch the filesystem.
 #
-#   1. `local-policy` holds TWO network allow rules - github.com:443 and
-#      api.github.com:443 - and that is the whole global allowlist. It also still
-#      holds `filesystem read: 1 allow` and `filesystem write: 1 allow`, both
-#      `**`: `deny-all` is the network posture and does not touch the filesystem.
+# == The global posture, with no sandbox on the box ==
+
+POLICY         SOURCE   APPLIES TO   SUMMARY
+local-policy   local    all          network: 2 allow; filesystem read: 1 allow; filesystem write: 1 allow
+
+SOURCE   APPLIES TO   POLICY   POLICY_ID      RULE   RULE_ID                                TYPE               DECISION   RESOURCES
+local    all          -        local-policy   -      default-fs-read-allow-all              filesystem:read    allow      **
+                                                                                                                          
+local    all          -        local-policy   -      default-fs-write-allow-all             filesystem:write   allow      **
+                                                                                                                          
+local    all          -        local-policy   -      d86f8a4c-9165-4e3b-b357-859c700ff330   network            allow      api.github.com:443
+                                                                                                                          
+local    all          -        local-policy   -      f527adae-1bca-4678-a7cb-d93860b97fa4   network            allow      github.com:443
+
+# == The same posture while #100's probing rig existed ==
 #
-#   2. The `kit` policies are NOT ours. `sbx` attaches them per sandbox from the
-#      agent template - six Anthropic hosts to a `claude` sandbox, openrouter.ai
-#      to a `shell` one - and they survive `sbx policy init deny-all`,
-#      `editable: false`. Choosing a template chooses hosts.
-#
-# The three `egressprobe*` sandboxes are the probing rig for #100, not part of
-# the posture. See loop-execution-boundary-evidence.md, "Narrowing to `deny-all`".
+# Kept because it is where the central finding of #100 is visible, and it is not
+# visible above: `sbx` attaches a `kit` policy PER SANDBOX from the agent
+# template - six Anthropic hosts to a `claude` sandbox, openrouter.ai to a
+# `shell` one - and those rules survive `sbx policy init deny-all`,
+# `editable: false`. Choosing a template chooses hosts. The three `egressprobe*`
+# sandboxes were the rig for #100 and have since been removed, which is why they
+# are absent above and present below.
 
 POLICY                                 SOURCE   APPLIES TO             SUMMARY
 972093a5-4b04-4622-98a8-5e7ae8145c58   kit      sandbox:egressprobe2   network: 6 allow

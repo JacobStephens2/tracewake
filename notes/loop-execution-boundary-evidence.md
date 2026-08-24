@@ -536,12 +536,14 @@ Full dump, alongside the `balanced` one it replaces:
 [`loop-sbx-deny-all-policy-2026-08-24.txt`](loop-sbx-deny-all-policy-2026-08-24.txt).
 
 ```
-POLICY                                 SOURCE   APPLIES TO             SUMMARY
-1078ac0d-dac8-49fc-afac-e860a2c0138b   kit      sandbox:egressprobe3   network: 1 allow
-cf7e6a2d-90ad-4d5e-95ca-bee082a50992   kit      sandbox:egressprobe2   network: 6 allow
-d6e681b8-8b03-4439-8cf1-fab45e2414a8   kit      sandbox:egressprobe    network: 6 allow
-local-policy                           local    all                    network: 2 allow; filesystem read: 1 allow; filesystem write: 1 allow
+POLICY         SOURCE   APPLIES TO   SUMMARY
+local-policy   local    all          network: 2 allow; filesystem read: 1 allow; filesystem write: 1 allow
 ```
+
+Three `egressprobe*` sandboxes did the probing below and have been removed, so
+the box holds none. While they existed the same command listed a `kit` policy
+per sandbox alongside `local-policy` - which is the next section, and the reason
+the dump file keeps both listings.
 
 ### The allowlist, and what each entry is for
 
