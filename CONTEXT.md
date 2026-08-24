@@ -5,6 +5,11 @@ the unattended loop that resolves its requests. Sibling to
 [ETA Factory](../../eta-factory/CONTEXT.md), which is company-governed and
 defends a different threat model.
 
+The evidence behind the loop terms and the trust and boundary terms is
+[the Ralph research](research/2026-08-24-ralph-loop-and-isolation.md), a
+source-cited investigation of both published Ralph sources, Docker Sandboxes,
+`sandcastle`, ETA's preview slots, and the ETA Factory's Firecracker workers.
+
 ## The loop
 
 **Ralph**:

@@ -8,9 +8,11 @@ is to record *what to strip and why*, drawn from building the heavy one.
 
 ## Layout
 
-- `notes/` — design thinking, source markdown. `notes/lessons.md` is the
+- `notes/` - design thinking, source markdown. `notes/lessons.md` is the
   synthesis these notes started from.
-- `site/` — hand-authored HTML, served at `lab.etadventures.com/single-user-factory/`.
+- `docs/adr/` - the decisions, numbered. ADRs 0003-0006 govern the Loop.
+- `research/` - the source-cited investigations the notes and ADRs rest on.
+- `site/` - hand-authored HTML, served at `lab.etadventures.com/single-user-factory/`.
   Write HTML here directly; markdown in `notes/` is source, not served-rendered.
 
 ## The one idea everything hangs on
