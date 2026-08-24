@@ -1,0 +1,16 @@
+# The unit file changing has to reach the running daemon. Without this a
+# re-apply rewrites /etc/systemd/user/sandboxd.service, reports `changed`, and
+# leaves the previous definition running - which reads as convergent and is not.
+#
+# It interrupts whatever the boundary is holding. That is the accepted cost of
+# an apply, and the reason not to run one against a box mid-Run; it is not a
+# reason to leave the unit and the daemon disagreeing.
+- name: Restart the boundary's daemon
+  ansible.builtin.systemd:
+    name: sandboxd.service
+    scope: user
+    state: restarted
+    daemon_reload: true
+  become: true
+  become_user: loop
+  environment: "{{ loop_execution_boundary_user_manager_env }}"
