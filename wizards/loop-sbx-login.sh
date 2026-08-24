@@ -257,6 +257,23 @@ else
   exit 1
 fi
 
+# sandboxd is a per-user daemon under ~loop/.local/state, started on demand and
+# NOT a systemd unit - so it does not survive a reboot of the box. Starting it
+# here is part of the walkthrough for that reason, not an incidental detail.
+if on_loop 'sbx daemon status' >/dev/null 2>&1; then
+  printf '  %s✓%s sandboxd is running\n' "$GREEN" "$RESET"
+else
+  say "sandboxd is not running; starting it detached."
+  on_loop 'sbx daemon start --detach' >/dev/null 2>&1 || true
+  if on_loop 'sbx daemon status' >/dev/null 2>&1; then
+    printf '  %s✓%s sandboxd started\n' "$GREEN" "$RESET"
+  else
+    warn "sandboxd would not start. Read it on the box:"
+    note "  ssh root@${LOOP_HOST} 'su - loop -c \"sbx daemon status; sbx diagnose\"'"
+    exit 1
+  fi
+fi
+
 printf '\n'
 pause "Press Enter to go and make the token."
 
@@ -326,6 +343,21 @@ say "Docker's own security page warns its defaults 'include broad wildcards'"
 say "and names *.googleapis.com as one. It never publishes the list, so the only"
 say "honest way to know what this boundary lets out is to ask this boundary."
 printf '\n'
+# On a fresh box there is no policy at all - sbx has no implicit default, it
+# refuses until one of three named profiles is chosen. That is worth seeing
+# rather than being chosen for you, so this asks.
+if ! on_loop 'sbx policy ls' >/dev/null 2>&1; then
+  warn "no global network policy is initialized on this box yet."
+  say "sbx offers three: deny-all, balanced, allow-all. 'balanced' is the"
+  say "vendor's middle setting and the one whose wildcards their own security"
+  say "page warns about; 'deny-all' is the posture the Loop should end up on,"
+  say "once #79 knows which hosts the agent actually needs."
+  ask POLICY_PROFILE "Which profile? [balanced]"
+  POLICY_PROFILE="${POLICY_PROFILE:-balanced}"
+  on_loop "sbx policy init ${POLICY_PROFILE}"
+  printf '\n'
+fi
+
 POSTURE_FILE="${POSTURE_FILE:-$PWD/sbx-default-policy-$(date -u +%Y%m%dT%H%M%SZ).txt}"
 on_loop 'sbx policy ls' | tee "$POSTURE_FILE"
 printf '\n'
