@@ -1,0 +1,25 @@
+# Configure the Loop's box (loop.etadventures.com). Dry-run first:
+#   ansible-playbook loop.yml --check --diff
+#   ansible-playbook loop.yml            # apply
+#
+# Separate from site.yml, not a variant of it. site.yml configures the
+# orchestration VM: one local Rocky 9 host whose roles install dnf repos, set
+# SELinux fcontexts, and stand up Caddy, the status dashboard and the fleet's
+# agent CLIs. None of that has an Ubuntu meaning, and none of it belongs on a
+# box whose entire purpose is to hold as little as possible (spec issue #73).
+# So this play has its own inventory group, reached over SSH, and its own three
+# roles - which is Single-User Factory ADR 0006's "its own small role set".
+#
+# NOT covered here, deliberately, because each is its own ticket:
+#   - the Execution Boundary (`sbx`) and the browser login it needs (#78)
+#   - the Loop's three credentials and the signing key generated on the box (#81)
+#   - the Loop scripts themselves and their Termination Contract (#79)
+# This play stops at: the box has the packages the Loop's own test suite needs,
+# and an unprivileged account for a Run to execute as.
+- name: Configure the Loop's box
+  hosts: loop
+  gather_facts: true
+  roles:
+    - loop_base       # apt base package set (git, curl, jq, ca-certificates)
+    - loop_shell_suite # bats + shellcheck, what the Loop's suite is written against
+    - loop_account    # the unprivileged `loop` user a Run executes as

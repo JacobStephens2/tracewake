@@ -1,0 +1,15 @@
+- name: Install the shell test harness and linter
+  ansible.builtin.apt:
+    name: "{{ loop_shell_suite_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Presence of the package is not presence of a working command - the suite has
+# to be runnable on the box "in seconds without a model or a network", so assert
+# the two binaries actually execute. `changed_when: false` because asking a
+# program its version changes nothing.
+- name: Both tools run
+  ansible.builtin.command: "{{ item }} --version"
+  loop: [bats, shellcheck]
+  changed_when: false

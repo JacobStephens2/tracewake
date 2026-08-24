@@ -1,0 +1,9 @@
+# Deliberately short. Every package here is one the Loop itself uses; the box
+# holds nothing else so that a compromise of it yields nothing else. Anything a
+# later ticket needs (`sbx`, `gh`, an agent CLI) is installed by that ticket's
+# own role, not pre-installed here on the guess that it will be wanted.
+loop_base_packages:
+  - git              # a Run's record is its git history: one commit per Iteration
+  - curl
+  - ca-certificates  # present on the stock image; named so a rebuild cannot omit it
+  - jq               # the Progress Log and the check script's report are read with it

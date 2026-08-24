@@ -1,0 +1,8 @@
+# The Loop is a shell loop (spec issue #73: process exit between Iterations is
+# what resets context), so its suite is a shell suite. Both packages come from
+# Ubuntu noble/universe - bats 1.10.0, shellcheck 0.9.0 - rather than from a
+# vendored checkout or a pinned tarball: neither is a component the Loop ships,
+# and an apt package is the version an operator gets by reflex on a rebuild.
+loop_shell_suite_packages:
+  - bats        # the test harness: `run` plus $status/$output is the whole idiom here
+  - shellcheck  # the linter that gates the Loop's scripts
