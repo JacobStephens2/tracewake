@@ -46,6 +46,9 @@ fi
 count=$((count + 1))
 printf '%s\n' "${count}" >"${state}"
 printf '%s\n' "${max_turns}" >>"${state}.turns"
+# The prompt the Loop handed this Iteration, kept so a test can assert what the
+# Loop asked for rather than what this fake happens to do about it.
+cp -- "${prompt_file}" "${state}.prompt"
 
 index=$((count - 1))
 if ((index >= ${#behaviours[@]})); then
@@ -57,6 +60,15 @@ behaviour="${behaviours[index]}"
 # a fresh process handed the Plan by file rather than a carried-over context.
 printf 'fake-agent: iteration %d, behaviour %s, turns %s, prompt %d bytes\n' \
     "${count}" "${behaviour}" "${max_turns}" "$(wc -c <"${prompt_file}")"
+
+# The three committing behaviours differ only in their commit message, so the
+# work itself lives in one place.
+do_work() {
+    printf 'work from iteration %d\n' "${count}" >>work.txt
+    log_work
+    git add -A
+    git commit --quiet --message "$1"
+}
 
 log_work() {
     cat >>PROGRESS.md <<ENTRY
@@ -70,21 +82,15 @@ ENTRY
 
 case "${behaviour}" in
     commit)
-        printf 'work from iteration %d\n' "${count}" >>work.txt
-        log_work
-        git add -A
-        git commit --quiet --message "Agent: task ${count}"
+        do_work "Agent: task ${count}"
         ;;
     noop) ;;
     dirty)
         printf 'uncommitted from iteration %d\n' "${count}" >>work.txt
         ;;
     promise)
-        printf 'work from iteration %d\n' "${count}" >>work.txt
-        log_work
         printf '\n%s\n' "${promise}" >>PROGRESS.md
-        git add -A
-        git commit --quiet --message "Agent: task ${count}, and the work is done"
+        do_work "Agent: task ${count}, and the work is done"
         ;;
     promise-noop)
         printf '%s\n' "${promise}"
@@ -98,10 +104,7 @@ case "${behaviour}" in
         ;;
     slow:*)
         sleep "${behaviour#slow:}"
-        printf 'work from iteration %d\n' "${count}" >>work.txt
-        log_work
-        git add -A
-        git commit --quiet --message "Agent: task ${count}, slowly"
+        do_work "Agent: task ${count}, slowly"
         ;;
     *)
         printf 'fake-agent: unknown behaviour %s\n' "${behaviour}" >&2

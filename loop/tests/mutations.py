@@ -47,6 +47,18 @@ MUTATIONS = {
         "iteration <= LOOP_MAX_ITERATIONS",
         "iteration <= LOOP_MAX_ITERATIONS + 2",
     ),
+    # The Iteration is no longer asked for decisions and blockers, only for a
+    # list of what it did - which is what makes a Progress Log unreadable as a
+    # narrative and lets a later Iteration relitigate a settled choice.
+    "prompt-decisions": (
+        "what\n   you did, what you DECIDED and why, and anything BLOCKED.",
+        "what\n   you did.",
+    ),
+    # The Plan and Progress Log paths stop coming from the Contract.
+    "hardcoded-state-paths": (
+        'progress_log="${repo}/${LOOP_PROGRESS_LOG_PATH}"',
+        'progress_log="${repo}/PROGRESS.md"',
+    ),
     # The agent is given a turn bound the Contract did not declare.
     "turn-bound": (
         '"${LOOP_AGENT_COMMAND}" "${prompt_file}" "${LOOP_MAX_TURNS}"',

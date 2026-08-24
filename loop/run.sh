@@ -107,6 +107,14 @@ done
 
 progress_log="${repo}/${LOOP_PROGRESS_LOG_PATH}"
 
+# The prompt and the agent's output are scratch files per Iteration. A Run is
+# started by a wrapper or a cron entry, so it can be signalled; without this the
+# two files from the Iteration in flight are left behind every time.
+prompt_file=""
+output_file=""
+cleanup_scratch() { rm -f -- "${prompt_file}" "${output_file}"; }
+trap cleanup_scratch EXIT INT TERM
+
 now() { date +%s; }
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -116,7 +124,7 @@ stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # into a commit the Loop authored would hide it.
 commit_bookkeeping() {
     local message="$1"
-    git -C "${repo}" add -- "${LOOP_PROGRESS_LOG_PATH}" "${LOOP_PLAN_PATH}" 2>/dev/null || true
+    git -C "${repo}" add -A -- "${LOOP_PROGRESS_LOG_PATH}" "${LOOP_PLAN_PATH}"
     if git -C "${repo}" diff --cached --quiet; then
         return 0
     fi
@@ -207,6 +215,7 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
     head_before="$(git -C "${repo}" rev-parse HEAD)"
     log_lines_before="$(wc -l <"${progress_log}")"
     iteration_started="$(stamp)"
+    iteration_started_at="$(now)"
 
     # The fresh process is the mechanism. `timeout` owns the Iteration's wall
     # clock; the turn bound is the agent's own, passed as its second argument.
@@ -220,8 +229,12 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
     head_after="$(git -C "${repo}" rev-parse HEAD)"
     iterations_run=$((iterations_run + 1))
 
+    # 124 and 137 are what `timeout` exits with, but they are also exit codes an
+    # agent may choose for itself. Reaching the wall clock is what makes it a
+    # kill, so the elapsed time has to agree before the Run reports one.
     killed=false
-    if ((agent_rc == 124 || agent_rc == 137)); then
+    if ((agent_rc == 124 || agent_rc == 137)) &&
+        (($(now) - iteration_started_at >= iteration_timeout)); then
         killed=true
     fi
 
@@ -277,7 +290,9 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
     } >>"${progress_log}"
 
     commit_bookkeeping "Loop: Iteration ${iteration} record"
-    rm -f "${prompt_file}" "${output_file}"
+    cleanup_scratch
+    prompt_file=""
+    output_file=""
 
     if ${promise}; then
         promise_count=$((promise_count + 1))
@@ -323,6 +338,7 @@ esac
 fault_summary="none"
 if ((${#faults[@]} > 0)); then
     fault_summary="$(printf '%s ' "${faults[@]}")"
+    fault_summary="${fault_summary% }"
 fi
 
 {
@@ -331,7 +347,7 @@ fi
     printf -- '- Iterations: %d (committed %d, no-op %d, killed %d)\n' \
         "${iterations_run}" "${committed_count}" "${noop_count}" "${killed_count}"
     printf -- '- Completion Promises recorded: %d\n' "${promise_count}"
-    printf -- '- Faults: %s\n' "${fault_summary% }"
+    printf -- '- Faults: %s\n' "${fault_summary}"
     printf -- '- Exit code: %d\n\n' "${exit_code}"
 } >>"${progress_log}"
 
@@ -342,6 +358,6 @@ commit_bookkeeping "Loop: Run ended (${ended_by})"
 printf 'LOOP_RUN_ENDED_BY=%s\n' "${ended_by}"
 printf 'LOOP_RUN_EXIT=%d\n' "${exit_code}"
 printf 'LOOP_RUN_ITERATIONS=%d\n' "${iterations_run}"
-printf 'LOOP_RUN_FAULTS=%s\n' "${fault_summary% }"
+printf 'LOOP_RUN_FAULTS=%s\n' "${fault_summary}"
 
 exit "${exit_code}"

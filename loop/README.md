@@ -17,6 +17,7 @@ run.sh --repo <path> [--task-ref <text>]
 | `agents/claude.sh` | The agent as one substitutable command (ADR 0004). |
 | `tests/loop.bats` | The offline suite. No model, no network, no spend. |
 | `tests/fake-agent.sh` | The scripted agent the suite drives the real Run through. |
+| `tests/mutation-check.sh` | Breaks each bound and confirms the suite notices. |
 
 ## The Termination Contract
 
@@ -64,13 +65,15 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Twenty tests, under twenty seconds, no model and no network. Every one drives
+Twenty-three tests, under twenty seconds, no model and no network. Every one drives
 `run.sh` unmodified and asserts only what a Run externally produces - exit code,
 reported bound, Progress Log contents, git history. None names an internal
 function or depends on the order of steps inside the loop.
 
-The suite has been mutation-checked: eight deliberate breaks of the Contract,
-each confirmed to turn a test red. The evidence is in
+`tests/mutation-check.sh` breaks each bound in turn and confirms the suite goes
+red - ten deliberate breaks, ten caught. It names exact lines of `run.sh`, so a
+reorganisation of the Loop will make it stop applying; it says so and fails
+rather than reporting a false pass. The evidence is in
 `../notes/loop-termination-contract-evidence.md`.
 
 `shellcheck -x run.sh contract.sh agents/*.sh tests/*.sh` gates the scripts.

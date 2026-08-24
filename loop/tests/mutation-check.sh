@@ -36,6 +36,8 @@ mutations=(
     head-after-bookkeeping
     iteration-cap
     turn-bound
+    prompt-decisions
+    hardcoded-state-paths
 )
 
 survivors=0

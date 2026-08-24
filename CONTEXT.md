@@ -50,6 +50,13 @@ single Iteration within it. It is the sole cost control when the agent
 authenticates against a subscription rather than a metered credential.
 _Avoid_: exit condition, iteration cap
 
+**Bound**:
+One condition of the Termination Contract. There are five, and a Run names the
+one that ended it: `iteration-cap`, `run-clock`, `consecutive-noops`,
+`agent-failed`. So "iteration cap" is the right name for one bound and the wrong
+name for the whole Contract, which is what the entry above is guarding.
+_Avoid_: limit, guardrail, timeout
+
 **No-op Iteration**:
 An Iteration after which `HEAD` is unchanged. Consecutive No-op Iterations are the
 project's non-progress signal; neither published Ralph source has one.

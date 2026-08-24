@@ -20,19 +20,19 @@ not needed and was not touched.
 
 ## The suite
 
-Twenty tests, `bats tests/loop.bats`, 17.7 seconds wall clock. bats 1.10.0 -
+Twenty-three tests, `bats tests/loop.bats`, under twenty seconds wall clock. bats 1.10.0 -
 the same version `ansible/roles/loop_shell_suite` installs on the Loop's box
 from Ubuntu noble - fetched to the orchestration VM for this work because the
 orchestration VM has `shellcheck` (0.11.0) but no bats.
 
-All twenty assert only what a Run externally produces: its exit code, the bound
+All twenty-three assert only what a Run externally produces: its exit code, the bound
 it names on stdout, the Progress Log's contents, and the git history. None names
 an internal function of `run.sh` or depends on the order of steps inside it.
 
 ## The mutation check, and what it found
 
 `tests/mutation-check.sh` breaks one bound at a time and runs the whole suite
-against the broken copy. Eight mutations, all caught:
+against the broken copy. Ten mutations, all caught:
 
 | Mutation | Tests turned red |
 | --- | --- |
@@ -41,11 +41,13 @@ against the broken copy. Eight mutations, all caught:
 | Iteration wall clock removed | 1 |
 | Completion Promise ends the Run | 2 |
 | agent's non-zero exit ignored | 1 |
-| head compared after the Loop's own commit | 16 |
-| iteration cap off by two | 7 |
+| head compared after the Loop's own commit | 17 |
+| iteration cap off by two | 8 |
 | turn bound not passed to the agent | 2 |
+| Iterations no longer asked for decisions and blockers | 1 |
+| the Plan and Progress Log paths hardcoded | 1 |
 
-Three minutes twenty-eight seconds for the whole check.
+Four minutes forty-two seconds for the whole check.
 
 Two of these are worth reading rather than counting. **`head-after-bookkeeping`**
 turning sixteen tests red is the shape of the design: No-op detection is the one
@@ -56,6 +58,32 @@ Run hang rather than fail, and a hung suite reports nothing. That is now fixed i
 the harness rather than in the Loop: `run_the_loop` puts a sixty-second ceiling,
 unrelated to any Contract value, above the Run. Without it, the bound that exists
 to stop a hang was itself verified by hanging.
+
+## What the review round changed
+
+Three things a review found that the suite had not:
+
+**A test that asserted a property of the fake, not of the Loop.** "The Progress
+Log records decisions and blockers" was checked by grepping the log for
+`Decided:` and `Blocked:` - strings `tests/fake-agent.sh` writes. Deleting the
+instruction from the Loop's prompt would have left the test green. It now asserts
+the prompt the Loop hands each Iteration, which is the Loop's own output at the
+agent seam, and a `prompt-decisions` mutation exists to keep it honest.
+
+**An agent that legitimately exits 124 was reported as killed.** 124 and 137 are
+what `timeout` exits with, and also codes an agent may pick for itself. The
+elapsed time now has to agree before a Run reports a kill - otherwise the Run
+names the wrong bound and exits 5 where it should exit 4.
+
+**Two scratch files leaked on a signal.** The prompt and the agent's output were
+removed on the normal path only, and a Run is started by a wrapper or a cron
+entry, so it can be signalled. There is a trap now.
+
+Also from that round: `git add --` on a path the agent deleted failed, and the
+failure was being swallowed by `|| true`; `git add -A --` handles a deletion, so
+the failure no longer has to be hidden. And three Contract values that were
+overridable but unexercised - the Plan path, the Progress Log path, and how much
+of a faulting agent's output is quoted - now have a test behind two of them.
 
 ## Departures from the ticket worth knowing about
 

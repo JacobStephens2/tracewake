@@ -208,15 +208,38 @@ setup() {
     [[ "$(progress_log)" == *"Task: tourbot#648"* ]]
 }
 
-@test "the Progress Log records decisions and blockers, not only completed tasks" {
+@test "every Iteration is asked for decisions and blockers, not only completed tasks" {
     export FAKE_AGENT_BEHAVIOURS="commit"
 
     run_the_loop
     [ "$status" -eq 0 ]
 
+    # Asserted on the prompt the Loop hands the agent, not on what the fake
+    # writes. The Progress Log's narrative comes from the agent, so a test that
+    # only read the log would be asserting a property of the fake - it would
+    # still pass with the instruction deleted from run.sh.
+    prompt="$(cat "${FAKE_AGENT_STATE}.prompt")"
+    [[ "$prompt" == *"DECIDED"* ]]
+    [[ "$prompt" == *"BLOCKED"* ]]
+    [[ "$prompt" == *"PROGRESS.md"* ]]
+
+    # And the log does end up carrying them.
     log="$(progress_log)"
     [[ "$log" == *"Decided:"* ]]
     [[ "$log" == *"Blocked:"* ]]
+}
+
+@test "every Iteration is told the Plan is where the task is, and to do one thing" {
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    prompt="$(cat "${FAKE_AGENT_STATE}.prompt")"
+    [[ "$prompt" == *"PLAN.md"* ]]
+    [[ "$prompt" == *"ONE task"* ]]
+    # The Promise is asked for as evidence, and explicitly not as an exit.
+    [[ "$prompt" == *"does not end the Run"* ]]
 }
 
 @test "the Plan and the Progress Log are committed" {
@@ -273,4 +296,37 @@ setup() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"LOOP_MAX_ITERATIONS must be a positive integer"* ]]
     [ "$(agent_invocations)" -eq 0 ]
+}
+
+# --- The state the Run reads and writes ------------------------------------
+
+@test "the Plan and Progress Log paths are the Contract's, not hardcoded" {
+    export LOOP_PLAN_PATH="docs/plan.md"
+    export LOOP_PROGRESS_LOG_PATH="docs/progress.md"
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="noop"
+
+    mkdir -p "${REPO}/docs"
+    git -C "${REPO}" mv PLAN.md docs/plan.md
+    git -C "${REPO}" mv PROGRESS.md docs/progress.md
+    git -C "${REPO}" commit --quiet --message "Move the Run's state"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+    [[ "$(cat "${REPO}/docs/progress.md")" == *"Ended by: iteration-cap"* ]]
+    [ ! -e "${REPO}/PROGRESS.md" ]
+}
+
+# --- The agent adapter -----------------------------------------------------
+
+@test "a metered API key in the environment fails the agent instead of switching billing" {
+    # The guard runs before the agent is exec'd, so this needs no agent
+    # installed. Claude Code prefers ANTHROPIC_API_KEY over the subscription
+    # login, and there is no per-Run spend ceiling behind it to catch the
+    # switch - the Termination Contract is the whole cost control.
+    run env ANTHROPIC_API_KEY=sk-not-a-real-key \
+        "${LOOP_SRC}/agents/claude.sh" "${BATS_TEST_TMPDIR}/prompt" 40
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ANTHROPIC_API_KEY is set"* ]]
+    [[ "$output" == *"metered"* ]]
 }
