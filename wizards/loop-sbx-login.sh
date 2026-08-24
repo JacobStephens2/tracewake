@@ -265,14 +265,25 @@ else
   exit 1
 fi
 
-# sandboxd is a per-user daemon under ~loop/.local/state, started on demand and
-# NOT a systemd unit - so it does not survive a reboot of the box. Starting it
-# here is part of the walkthrough for that reason, not an incidental detail.
+# sandboxd is a per-user daemon under ~loop/.local/state. Since #99 it is also a
+# systemd USER unit (sandboxd.service, with lingering), so on a box the ansible
+# play has touched it is already running by the time this wizard gets here and
+# this block does nothing. It stays for the box where the play has not run yet.
+#
+# The unit is tried first because a --detach daemon is one systemd does not own,
+# and it leaves the unit a no-op until the next reboot (`sbx daemon start` exits
+# 0 on an already-running socket). The --detach fallback is still there on
+# purpose: on a box with no unit it is the only way to get a boundary, and the
+# wizard's job is to finish the sign-in. Running the play afterwards, or
+# rebooting, puts the daemon back under the unit.
 if on_loop 'sbx daemon status' >/dev/null 2>&1; then
   printf '  %s✓%s sandboxd is running\n' "$GREEN" "$RESET"
 else
-  say "sandboxd is not running; starting it detached."
-  on_loop 'sbx daemon start --detach' >/dev/null 2>&1 || true
+  say "sandboxd is not running; starting it."
+  # `su -` gives no login session, so neither variable systemctl --user needs is
+  # set and it fails with `Failed to connect to bus: No medium found`. Set both.
+  on_loop 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus; systemctl --user start sandboxd.service' >/dev/null 2>&1 \
+    || on_loop 'sbx daemon start --detach' >/dev/null 2>&1 || true
   if on_loop 'sbx daemon status' >/dev/null 2>&1; then
     printf '  %s✓%s sandboxd started\n' "$GREEN" "$RESET"
   else

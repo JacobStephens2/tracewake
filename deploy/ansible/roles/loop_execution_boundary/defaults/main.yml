@@ -26,6 +26,42 @@ loop_execution_boundary_sbx_version: 0.39.0-1~ubuntu.24.04~noble
 # it - a second literal would drift silently the day one of them moved. The
 # repository URL and the `deb` line itself are inline in tasks/main.yml, not
 # here: loop_account states the convention this role follows, that a variable
-# with one setting is a knob nobody turns. The version above is the one real
-# knob in this role.
+# with one setting is a knob nobody turns. The version above and the profile
+# below are the two real knobs in this role; this is neither.
 loop_execution_boundary_apt_key_path: /etc/apt/keyrings/docker.asc
+
+# The egress profile the boundary comes up on. `sbx` has no implicit default -
+# on a box where nothing has chosen, `sbx policy ls` answers `global network
+# policy has not been initialized` and a sandbox refuses to boot - so a daemon
+# started by a unit at boot with nothing naming a profile is a boundary that is
+# up and unusable. This is what names it.
+#
+# `balanced` is the vendor's middle setting and is NOT the right posture: it is
+# 193 allowed hosts, 44 of them wildcards, and the evidence note records
+# repositories reaching S3, GCS and githubusercontent from inside a sandbox. It
+# is here because it is what the box already runs and because the narrowing -
+# `deny-all` plus an explicit allowlist - belongs to the egress ticket, which
+# will know which hosts the agent actually needs. Changing this line is how that
+# ticket lands, and `sbx policy reset` is what lets it: `policy init` is
+# one-time per the CLI's own help.
+loop_execution_boundary_policy_profile: balanced
+
+# Two derived values, here rather than repeated inline, because each is named in
+# more than one task and a second copy is a second place to be wrong. Both are
+# evaluated where they are used, not where they are written: the first needs the
+# uid fact that tasks/main.yml reads, the second needs the command that task
+# registers.
+#
+# The environment a `systemctl --user` task needs. XDG_RUNTIME_DIR alone is not
+# enough - see the task's own comment for what failure that produces.
+loop_execution_boundary_user_manager_env:
+  XDG_RUNTIME_DIR: "{{ loop_execution_boundary_runtime_dir }}"
+  DBUS_SESSION_BUS_ADDRESS: "unix:path={{ loop_execution_boundary_runtime_dir }}/bus"
+
+# `sbx policy ls` on a box where nothing has chosen a profile answers `global
+# network policy has not been initialized`, on stderr or stdout depending on the
+# path it takes. Both are checked so the guard does not turn on which one.
+loop_execution_boundary_policy_uninitialized: >-
+  {{ 'has not been initialized' in
+     (loop_execution_boundary_policy_state.stdout | default('') +
+      loop_execution_boundary_policy_state.stderr | default('')) }}

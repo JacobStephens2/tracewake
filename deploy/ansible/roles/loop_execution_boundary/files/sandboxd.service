@@ -1,0 +1,82 @@
+# The Execution Boundary's daemon, supervised. Installed by ansible role
+# `loop_execution_boundary` (issue #99).
+#
+# `docker-sbx` ships no unit of its own - `dpkg -L docker-sbx | grep systemd` is
+# empty - so until this file, nothing owned `sandboxd`: it ran wherever it
+# happened to be started, and nothing restarted it if it died.
+#
+# What this unit is NOT for, because the ticket's premise turned out to be
+# wrong and inheriting it would be worse than not writing it down: a reboot
+# does NOT leave the boundary unusable. The CLI starts the daemon itself. On a
+# freshly rebooted box with no unit at all, `sbx policy ls` printed
+# `Starting sandboxd daemon...` and answered; the Docker sign-in and the
+# `balanced` policy both survived, and a microVM booted (guest kernel 7.0.12
+# against the host's 6.8.0-124-generic). The evidence is in
+# lab/single-user-factory/notes/loop-execution-boundary-evidence.md.
+#
+# What it IS for is the part auto-start does not cover: SUPERVISION. Auto-start
+# fires when a command is typed, so it repairs a dead daemon only at the next
+# invocation - and an Iteration is one long `sbx exec`, during which nothing
+# would bring `sandboxd` back. `Restart=on-failure` does. It also puts the
+# daemon in a known cgroup with journal logs and a stable environment, rather
+# than in whatever process tree happened to invoke `sbx` first, and it moves
+# daemon startup and the policy fetch off the Run's first command. ADR 0003
+# makes the boundary the one control Attendedness re-earns; supervising it is
+# the cheapest way to stop it being the one control that quietly is not there.
+#
+# A USER unit, not a system one, because `sandboxd` is a per-user daemon: its
+# socket, its state and its Docker session all live under ~loop
+# (~/.local/state/sandboxes, ~/.config/com.docker.sandboxes). Running it as root
+# would be a second boundary owner with a different state directory, and a Run
+# executes as `loop`. `loginctl enable-linger loop` is what starts loop's user
+# manager at boot without a login; the role declares that too.
+#
+# At boot rather than on first use, now that both are genuinely available.
+# Idling a daemon on a box that runs one Run at a time is a real cost - a
+# containerd supervisor and its shim - and it buys a boundary whose state at
+# the moment a Run begins is the same every time, supervised from before the
+# Run rather than from inside it.
+[Unit]
+Description=Docker Sandboxes daemon (sbx) - the Loop's Execution Boundary
+Documentation=https://docs.docker.com/ai/sandboxes/
+
+# The enablement symlink is root-owned, in /etc/systemd/user/default.target.wants
+# - so that a Run cannot disable its own boundary, which it could if the symlink
+# lived in ~loop where `systemctl --user enable` puts it. The cost of that choice
+# is that the unit is then wanted by EVERY user manager on the box, and the first
+# reboot after making it proved the point: root's manager started a second
+# `sbx daemon start`, with its own state directory under /root, exactly the
+# second boundary owner the note below warns about.
+#
+# ConditionUser is what makes the root-owned symlink safe. Any manager that is
+# not loop's skips the unit and logs that it did, rather than starting a daemon
+# nobody asked for.
+ConditionUser=loop
+
+[Service]
+# Foreground: `sbx daemon start` without `--detach` IS the daemon, so systemd
+# supervises the real process rather than a launcher that exits - after a boot,
+# `systemctl --user status sandboxd` shows `Main PID: <pid> (sbx)` with the
+# daemon in this unit's own cgroup.
+#
+# The one case where that is not true, and it is worth knowing before reading a
+# green `systemctl` as proof: if a daemon is ALREADY running when the unit
+# starts, `sbx daemon start` prints `Daemon is already running` and exits 0.
+# systemd sees a clean exit, the unit goes `inactive (dead)`, and the daemon it
+# did not start keeps running unsupervised. `Restart=on-failure` does not fire,
+# correctly - exit 0 is not a failure. At boot nothing has run first, so this is
+# only reachable by hand-starting a daemon and then starting the unit; the way
+# back is to stop the stray daemon and `systemctl --user restart sandboxd`.
+#
+# No ordering against the network: `network-online.target` has no meaning in the
+# user manager, and the daemon already retries its policy fetch on its own (the
+# `background policy fetch failed ... consecutiveFailures` line in daemon.log is
+# that retry loop, not a fatal).
+Type=exec
+ExecStart=/usr/bin/sbx daemon start
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=default.target

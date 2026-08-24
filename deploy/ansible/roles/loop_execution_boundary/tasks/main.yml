@@ -44,12 +44,16 @@
 
 # `install_recommends: false` is a deliberate departure from this play's other
 # apt tasks, and the reason is measured rather than assumed. `docker-sbx` hard-
-# depends on `gnome-keyring` (it stores the Docker OAuth token in a keyring, not
-# a file), which drags in GTK 3 and 4. With recommends that is 115 packages -
-# GStreamer, mesa Vulkan drivers, librsvg, three icon themes - on a box whose
-# entire design property is holding as little as possible. Without them it is
-# 69. The one recommend with a security argument, `apparmor`, is already present
-# on the stock Ubuntu image, so nothing is given up:
+# depends on `gnome-keyring`, which drags in GTK 3 and 4. (It does not actually
+# USE it here: on this headless box no keyring daemon is running, and `sbx`
+# keeps the Docker session in encrypted files under
+# ~loop/.config/com.docker.sandboxes instead - which is why the sign-in survives
+# a reboot. The dependency is still hard, so it is still installed.) With
+# recommends that is 115 packages - GStreamer, mesa Vulkan drivers, librsvg,
+# three icon themes - on a box whose design property is holding as little as
+# possible. Without them it is 69. The one recommend with a security argument,
+# `apparmor`, is already present on the stock Ubuntu image, so nothing is given
+# up:
 #
 #   # apt-get install -s docker-sbx=...            0 upgraded, 115 newly installed
 #   # apt-get install -s --no-install-recommends   0 upgraded,  69 newly installed
@@ -107,3 +111,142 @@
   become: true
   become_user: loop
   changed_when: false
+
+# Everything above installs the boundary. Everything below is what supervises it
+# across a reboot, which is a separate property and was missing: `docker-sbx`
+# ships no unit (`dpkg -L docker-sbx | grep -i systemd` is empty), so nothing
+# owned `sandboxd`. Issue #99.
+#
+# Read the header of files/sandboxd.service before changing any of this. It
+# carries the argument and the evidence for it - in particular the thing that is
+# easy to get wrong here, that the boundary does NOT need rescuing after a
+# reboot.
+
+# `loop` is uid 1000 on this box today only because it was the first account
+# created. Derived rather than hardcoded, and held in one fact rather than
+# repeated: the two variables below name the same runtime directory, and a
+# second copy of the expression is a second place to be wrong.
+- name: Read the Loop account's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: loop
+
+- name: Name the Loop account's user-manager runtime directory
+  ansible.builtin.set_fact:
+    loop_execution_boundary_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd['loop'][1] }}"
+
+# /etc/systemd/user, not ~loop/.config/systemd/user: the unit is ansible's to
+# own, and a file under the account a Run executes as is a file that Run can
+# rewrite.
+#
+# A change here has to reach the running daemon, or a re-apply reports `changed`
+# and leaves the old definition in place - convergent on paper, not on the box.
+# The handler restarts it, and the cost is worth stating plainly: an apply that
+# edits this unit interrupts whatever the boundary is holding. Applies are an
+# operator action, so that is the right trade, but do not run one against a box
+# mid-Run.
+- name: The daemon is a unit rather than a remembered command
+  ansible.builtin.copy:
+    src: sandboxd.service
+    dest: /etc/systemd/user/sandboxd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the boundary's daemon
+
+# Without lingering, loop's user manager exists only while loop is logged in -
+# and nobody logs in to this box. `enable-linger` is what starts it at boot, and
+# it is the half of this ticket a unit file alone does not buy.
+#
+# `creates:` on the marker file systemd itself writes, rather than a shell
+# conditional: `loginctl enable-linger` is idempotent, but a task that reports
+# `changed` on every run is a task nobody reads.
+- name: The Loop's user manager runs without a login
+  ansible.builtin.command:
+    cmd: loginctl enable-linger loop
+    creates: /var/lib/systemd/linger/loop
+
+# Enablement as a root-owned symlink, NOT `enabled: true` on the systemd task.
+# They are not equivalent: `systemctl --user enable` writes the wants symlink
+# into ~loop/.config/systemd/user/, under the account a Run executes as - so a
+# Run could disable its own boundary and the next boot would come up without it.
+# That would have made the comment on the copy task above only half true. This
+# symlink is root's, in root's directory, and `loop` cannot remove it.
+- name: The system-wide wants directory for user units exists
+  ansible.builtin.file:
+    path: /etc/systemd/user/default.target.wants
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  # Not shipped by the distribution - `/etc/systemd/user` exists, this does not -
+  # and `file: state=link` does not create a parent, so declaring it is the
+  # difference between the link task working and failing with ENOENT.
+
+- name: The unit is wanted at boot, by a link the Loop cannot remove
+  ansible.builtin.file:
+    path: /etc/systemd/user/default.target.wants/sandboxd.service
+    src: /etc/systemd/user/sandboxd.service
+    state: link
+    owner: root
+    group: root
+  # `force: false` is the default and is wanted: this should fail rather than
+  # clobber, if something else ever owns that path.
+
+- name: No second enablement under the Loop's own home
+  ansible.builtin.file:
+    path: /home/loop/.config/systemd/user/default.target.wants/sandboxd.service
+    state: absent
+
+# Started, and therefore proven to parse and run, on every apply - rather than
+# only asserted to be enabled. `systemctl is-enabled` would have passed for
+# `certbot-renew.timer` on the orchestration VM for the whole time it was never
+# running, and an expired certificate is how anyone found out.
+#
+# `scope: user` has to reach loop's user manager, and an ansible task is not a
+# login session, so neither variable a login would have set is set. Without both
+# the module fails at `daemon-reload` with `Failed to connect to bus: Operation
+# not permitted` - which is what root asking for loop's bus looks like under
+# `become`. XDG_RUNTIME_DIR alone is not enough: `systemctl --user` reads
+# DBUS_SESSION_BUS_ADDRESS and does not derive it. Lingering above is what makes
+# both exist when nobody is logged in, so the order of these tasks is load-
+# bearing.
+- name: The boundary's daemon is running
+  ansible.builtin.systemd:
+    name: sandboxd.service
+    scope: user
+    state: started
+    daemon_reload: true
+  become: true
+  become_user: loop
+  environment: "{{ loop_execution_boundary_user_manager_env }}"
+
+# A daemon that is up but has no egress profile is up and unusable: `sbx` has no
+# implicit default and refuses to boot a sandbox until one is chosen. The choice
+# survives a reboot - it is a sqlite database under ~loop/.cache - so on this box
+# this finds it already made and does nothing. It is here because the unit above
+# is what creates the case it guards: on a REBUILT box the daemon now starts
+# itself at boot, with nobody there to notice it came up unconfigured.
+#
+# `sbx policy init` is one-time per the CLI's own help, so this is guarded on the
+# daemon's own answer. The guard fails loudly rather than assuming: any exit
+# from `sbx policy ls` that is neither success nor the uninitialized message -
+# a daemon that is not up, a reworded message on the next pinned version - stops
+# the play instead of silently skipping the init and leaving the box with no
+# profile, which is the exact state this is here to prevent.
+- name: Ask the boundary whether an egress profile has been chosen
+  ansible.builtin.command: sbx policy ls
+  become: true
+  become_user: loop
+  register: loop_execution_boundary_policy_state
+  changed_when: false
+  failed_when: >-
+    loop_execution_boundary_policy_state.rc != 0 and
+    not loop_execution_boundary_policy_uninitialized
+
+- name: Choose the egress profile if nothing has
+  ansible.builtin.command: "sbx policy init {{ loop_execution_boundary_policy_profile }}"
+  become: true
+  become_user: loop
+  when: loop_execution_boundary_policy_uninitialized
+  changed_when: true
