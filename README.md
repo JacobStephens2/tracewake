@@ -8,6 +8,9 @@ is to record *what to strip and why*, drawn from building the heavy one.
 
 ## Layout
 
+- `loop/` - the Loop itself: the Termination Contract, one Run, the agent
+  adapter, and an offline suite that drives all of it through a scripted fake.
+  Start at `loop/README.md`.
 - `notes/` - design thinking, source markdown. `notes/lessons.md` is the
   synthesis these notes started from.
 - `docs/adr/` - the decisions, numbered. ADRs 0003-0006 govern the Loop.
