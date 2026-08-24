@@ -1,7 +1,7 @@
 # The Loop's Execution Boundary: standing-it-up evidence
 
 `sbx` (Docker Sandboxes) v0.39.0 on `loop.etadventures.com`, 2026-08-24
-(issues #78 and #99, spec issue #73).
+(issues #78, #99 and #100, spec issue #73).
 ADR 0003 makes this the one subsystem Attendedness
 re-earns: nobody is watching a Run, so the boundary is the only control left
 standing.
@@ -143,9 +143,10 @@ is script-rendered. Running the tool answers better than the page would have:
 `global network policy has not been initialized` and names three profiles -
 `deny-all`, `balanced`, `allow-all`. One has to be chosen, by
 `sbx policy init <profile>` or `sbx daemon start --policy <profile>`. This box
-is on **`balanced`**, the vendor's middle setting, chosen so that the posture
-written down here is the one an operator gets by reflex rather than one tuned
-first.
+was put on **`balanced`**, the vendor's middle setting, chosen so that the
+posture written down here is the one an operator gets by reflex rather than one
+tuned first. It is on `deny-all` now - see the #100 section below - and the rest
+of this section describes what it was moved off.
 
 `balanced` is **193 allowed hosts in six rules**, plus filesystem read and
 write `allow **` inside the guest. Full dump:
@@ -190,11 +191,15 @@ So: **`balanced` is a boundary against a runaway agent, not against a
 motivated one.** It stops `rm -rf ~` and it stops an arbitrary callback host.
 It does not stop an agent that writes a repository into an S3 bucket or a
 public gist. Spec #73's user story 26 - "egress restricted to what the agent
-actually needs" - is not satisfied by `balanced` and is not satisfied by this
-ticket. The narrowing belongs to #79/#80, which will know which hosts the agent
-actually needs; `deny-all` plus explicit `sbx policy allow` is the shape, and
-it should become a declared ansible task rather than a remembered command once
-that list exists.
+actually needs" - is not satisfied by `balanced` and was not satisfied by this
+ticket.
+
+**Everything in this section is now history.** The box is no longer on
+`balanced`: #100 moved it to `deny-all` plus a two-host allowlist, and the
+three object stores above are blocked. This section is kept as written because
+it is what the posture an operator gets by reflex actually looks like, and
+because the narrowing is only legible against it. The current posture is in
+"Narrowing to `deny-all` (issue #100)" below.
 
 ## What the boundary guarantees, per agent
 
@@ -240,8 +245,10 @@ sandbox actually picks up proxy-injected xAI credentials end-to-end is
 unverified, and #80 must verify it rather than assume it in either direction.
 What is certain is the fallback: `sbx create --env` / `--env-file` puts the
 value **inside the VM**, where the agent can read it, print it, or send it to
-any of the 193 allowed hosts. Any configuration that reaches for `--env` has
-given up the credential-isolation property, whichever agent it is running.
+any allowed host. Any configuration that reaches for `--env` has given up the
+credential-isolation property, whichever agent it is running. #100 shortened
+that list from 193 hosts to two, which makes the leak much harder to aim - it
+does not make the property come back.
 
 Two further observations for #81:
 
@@ -284,8 +291,10 @@ record why it does not count. It should not be quietly left at "exactly three".
 
 - **That a Run is safe to leave alone.** The boundary is one bound of five;
   the Termination Contract is the other four and does not exist yet (#79).
-- **That the egress posture is right.** It is `balanced`, observed and written
-  down. It is demonstrably wide enough to exfiltrate a repository through.
+- ~~**That the egress posture is right.**~~ Was `balanced` and demonstrably
+  wide enough to exfiltrate a repository through. Narrowed on #100, below, to
+  `deny-all` plus two hosts. What is still not established is that a **Run**
+  completes under the narrow posture - nothing has run one.
 - ~~**That `sandboxd` survives a reboot.**~~ Settled on #99, below: the daemon
   does not survive, the boundary does, and it is now supervised by a user unit
   either way.
@@ -503,8 +512,10 @@ a state directory on the way past.
   revisit if `sbx` ever grows a foreground flag that fails on a live socket.
 - **The egress profile lives in `~/.cache`.** See above. The role re-chooses it
   when it is absent, which covers deletion between applies but not deletion
-  between a Run's start and its first sandbox. Owner: the egress ticket, which
-  is already changing this posture from `balanced` to a narrow allowlist.
+  between a Run's start and its first sandbox. Unchanged by #100, which
+  narrowed what the profile CONTAINS without moving where it lives. Owner:
+  open; the failure direction is a sandbox that refuses to boot, so it has not
+  earned a ticket.
 - **Nothing alerts if the unit fails.** `Restart=on-failure` retries forever
   with no notification, and this box has no equivalent of the orchestration
   VM's `notify-unit-failure@.service`. A boundary that is restart-looping is
@@ -512,14 +523,306 @@ a state directory on the way past.
   Termination Contract ticket, which is where the Run's own failure signalling
   belongs.
 
+## Narrowing to `deny-all` (issue #100)
+
+`loop.etadventures.com`, 2026-08-24. The box is on **`deny-all` plus a
+two-host allowlist**, declared in `loop_execution_boundary` and applied by
+`ansible-playbook loop.yml`. `balanced`, and the 193 hosts recorded above, are
+gone from the box and from the role's defaults - #99 had made the profile an
+ansible variable, so leaving it at `balanced` would have re-chosen it on the
+next rebuild.
+
+Full dump, alongside the `balanced` one it replaces:
+[`loop-sbx-deny-all-policy-2026-08-24.txt`](loop-sbx-deny-all-policy-2026-08-24.txt).
+
+```
+POLICY                                 SOURCE   APPLIES TO             SUMMARY
+1078ac0d-dac8-49fc-afac-e860a2c0138b   kit      sandbox:egressprobe3   network: 1 allow
+cf7e6a2d-90ad-4d5e-95ca-bee082a50992   kit      sandbox:egressprobe2   network: 6 allow
+d6e681b8-8b03-4439-8cf1-fab45e2414a8   kit      sandbox:egressprobe    network: 6 allow
+local-policy                           local    all                    network: 2 allow; filesystem read: 1 allow; filesystem write: 1 allow
+```
+
+### The allowlist, and what each entry is for
+
+| host | what needs it |
+|---|---|
+| `github.com:443` | git clone, fetch and push over HTTPS - the Iteration's whole repository interaction |
+| `api.github.com:443` | `gh pr create`. The draft pull request is the Run's only external effect, so this is the host the Run is FOR |
+
+That is the entire global allowlist. Two hosts.
+
+### The Claude Code host set is the vendor's, not ours
+
+The finding that made the list this short: **`sbx`'s `claude` kit attaches its
+own per-sandbox allow rule, and it survives `policy init deny-all`.** Every
+sandbox `sbx create claude` makes gets six Anthropic hosts, scoped to that
+sandbox, `editable: false`:
+
+```
+kit   sandbox:egressprobe   network   allow   api.anthropic.com:443
+                                              bridge.claudeusercontent.com:443
+                                              claude.com:443
+                                              downloads.claude.ai:443
+                                              mcp-proxy.anthropic.com:443
+                                              platform.claude.com:443
+```
+
+So the agent's inference hosts never enter the global policy, and the
+authorizer says so in both directions:
+
+```
+$ sbx policy check network api.anthropic.com
+Denied: api.anthropic.com:443
+$ sbx policy check network --sandbox egressprobe api.anthropic.com
+Allowed: api.anthropic.com:443
+```
+
+Duplicating those six globally would widen the boundary for every sandbox,
+including one running no agent at all, and buy nothing. `loop_execution_boundary`
+therefore declares `claude: []` - an empty per-agent set, which is a finding
+rather than an omission.
+
+Grok Build has no kit (`sbx create` offers claude, codex, copilot, cursor,
+docker-agent, droid, gemini, kiro, opencode, shell), so its hosts have to be
+declared, which is the cost ADR 0004 already priced in. They live in the same
+variable keyed by agent:
+
+```yaml
+loop_execution_boundary_agent: claude
+loop_execution_boundary_egress_by_agent:
+  claude: []
+  grok:
+    - host: cli-chat-proxy.grok.com:443
+    - host: auth.x.ai:443
+```
+
+Swapping is one variable and a re-apply. Demonstrated rather than asserted -
+see "The agent swap, run" below.
+
+The Grok hosts come from the shipped `grok` 1.0.5 binary on the orchestration
+VM rather than a vendor page: `GROK_CLI_CHAT_PROXY_BASE_URL` defaults to
+`https://cli-chat-proxy.grok.com/v1`, and `auth.x.ai` is the `oidc_issuer` in
+`~/.grok/auth.json`, needed for the token refresh during a Run and not only at
+login. **They are not verified against a Run.** #84 is what does that.
+
+### How the list was derived
+
+`sbx policy log` is the instrument, and it is the reason this list is observed
+rather than guessed. The daemon records every host a sandbox reached, whether
+the proxy allowed or blocked it, and which rule decided:
+
+```
+$ sbx policy log --json
+BLOCKED  pastebin.com:443  egressprobe  no applicable policies for op(action=net:connect:tcp, ...)
+ALLOWED  github.com:443    egressprobe  forward-bypass
+```
+
+A sandbox was created, an Iteration's work was exercised inside it - a clone, a
+push attempt, a `gh` API call - and the log was read back. That is a narrower
+exercise than #83's Run and it is what was available before #83 exists; the
+ordering in the ticket is unchanged, and the first Run is still what proves the
+list is not missing something.
+
+### Hosts deliberately left off, with the reason
+
+An allowlist is only shortenable if it says why each host is on it. The
+same applies in reverse:
+
+| left off | why |
+|---|---|
+| `archive.ubuntu.com:80`, `security.ubuntu.com:80`, `download.docker.com:443` | **Every** sandbox reaches for these at boot, and `sbx`'s own `boot-probe` VM does too. Under `deny-all` all three are blocked and the sandbox creates, starts and runs anyway. Best-effort, not required |
+| `codeload.github.com:443`, `objects.githubusercontent.com:443` | Tarballs and release assets. A shallow clone of a public repository completes with `github.com:443` alone, verified. `**.githubusercontent.com` is also the wildcard a gist was reached through under `balanced` |
+| `statsig.anthropic.com:443` | Claude Code feature flags. Not in the kit set, and it does not resolve from this box even when allowed - under `balanced` the log recorded it as `<dial failed>` |
+| `api.x.ai:443` | Grok's metered API path. ADR 0004 forbids it: a bare `XAI_API_KEY` silently moves billing off the subscription |
+| `x.ai:443` | The `grok` changelog fetch. Cosmetic, and `GROK_CHANGELOG_OFFLINE` turns it off |
+
+One that is on the box without being declared anywhere: the `shell` kit
+attaches `openrouter.ai` to a `shell` sandbox, the way the `claude` kit
+attaches Anthropic's hosts. Choosing a template chooses hosts.
+
+### Re-probed after narrowing
+
+The same probes as the `balanced` section above, from inside a sandbox, before
+and after. A 3xx/4xx from the service is the host answering; a flat `403` is
+the proxy refusing.
+
+| host | under `balanced` | under `deny-all` + allowlist |
+|---|---|---|
+| `s3.amazonaws.com` | 307 | **403** |
+| `storage.googleapis.com` | 400 | **403** |
+| `gist.githubusercontent.com` | 301 | **403** |
+| `codeload.github.com` | 301 | **403** |
+| `objects.githubusercontent.com` | 404 | **403** |
+| `statsig.anthropic.com` | allowed (`<dial failed>`) | **403** |
+| `example.com` | 403 | 403 |
+| `pastebin.com` | 403 | 403 |
+| `api.github.com` | 200 | 200 |
+| `api.anthropic.com` | 404 | 404 (via the kit rule) |
+| `github.com` | reached | reached |
+
+And the work still works:
+
+```
+$ sbx exec egressprobe sh -c "git clone --depth 1 -q https://github.com/octocat/Hello-World /tmp/hw && git -C /tmp/hw log --oneline -1"
+7fd1a60 Merge pull request #6 from Spaceghost/patch-1
+```
+
+### What `deny-all` does not narrow
+
+The name oversells it. `deny-all` is the **network** posture. The filesystem
+rules survive an init untouched:
+
+```
+local   all   default-fs-read-allow-all    filesystem:read    allow   **
+local   all   default-fs-write-allow-all   filesystem:write   allow   **
+```
+
+Inside the guest the agent still reads and writes anything. The microVM is what
+bounds that, not the policy, and that has not changed since #78.
+
+### Re-profiling had to be the role's job, not a hand step
+
+`sbx policy init` is one-time per the CLI's own help, so a role guarded on
+"has anything been chosen" moves a rebuilt box and does nothing whatever to a
+running one - and a `deny-all` posture that only arrives on a rebuild is not the
+posture. The role now reconciles instead: it reads `sbx policy ls --json`,
+compares the global network allow resources against the declared list, and only
+if they differ does it reset, restart, re-init and re-allow.
+
+Applied against a box on `balanced`, then again:
+
+```
+loopbox : ok=29  changed=5   # balanced -> deny-all + 2 hosts
+loopbox : ok=24  changed=0   skipped=5
+```
+
+Comparing resources rather than rule names is deliberate: `sbx policy allow
+network a,b` writes one rule per resource with a fresh UUID each time, so rule
+ids are not something a comparison can stand on.
+
+`--check` is honest about it, which took one deliberate exception. Every command
+task in this play is skipped under `--check` - proof is an apply - and skipping
+the READ made the dry run lie: with no output to parse, the posture came back
+empty and a box holding exactly the declared allowlist was reported as holding
+none of it and about to be reset.
+
+```
+"on the box: 0 host(s), 0 not declared"                       # before
+"declared but absent: ['api.github.com:443', 'github.com:443']"
+loopbox : ok=22  changed=1
+
+"on the box: 2 host(s), 0 not declared"                       # with check_mode: false
+"declared but absent: []"
+loopbox : ok=22  changed=0
+```
+
+So the read carries `check_mode: false`. It only reads, and a dry run that
+reports a reset that is not going to happen is worse than no dry run.
+
+### Three things `sbx policy reset` does that a green `systemctl` hides
+
+All three were found by running it, and the role carries the fix for each.
+
+**1. Reset stops the daemon cleanly, so the unit goes inactive.** `Restart=on-failure`
+correctly does not fire - exit 0 is not a failure:
+
+```
+$ sbx policy reset --force
+✓ Daemon stopped successfully
+$ systemctl --user is-active sandboxd
+inactive          # Result=success, ExecMainStatus=0
+```
+
+**2. The CLI then auto-starts a replacement in the wrong cgroup, and restarting
+the unit does not reclaim it.** This is the hazard the header of
+`files/sandboxd.service` names, reached by an ordinary apply rather than by
+hand-starting anything:
+
+```
+$ ps -eo pid,user,cgroup,args | grep sbx
+4104 loop 0::/user.slice/user-0.slice /usr/bin/sbx daemon start   # root's slice, not the unit's
+$ systemctl --user restart sandboxd
+$ journalctl _SYSTEMD_USER_UNIT=sandboxd.service -n1
+sbx[4222]: Daemon is already running at /home/loop/.local/state/...
+```
+
+The unit stays inactive and the stray daemon keeps running. The role therefore
+runs `sbx daemon stop` between the reset and the restart, and the supervised
+daemon comes back in `user-1000.slice` where it belongs.
+
+**3. That auto-started daemon hangs an ansible `command` task forever.** It is
+a child of `reset`, it inherits the task's stdout, and ansible waits on a pipe
+that never closes:
+
+```
+6986  09:16  sbx policy reset --force     <- still "running" after nine minutes
+6997  09:16  /usr/bin/sbx daemon start    <- its child, holding the pipe open
+```
+
+The reset task is `shell` with `</dev/null >/tmp/sbx-policy-reset.log 2>&1` for
+exactly this reason. Every other `sbx` command in the role runs with a daemon
+already up, so none of them spawns anything - which is why the task that READS
+the policy must stay after the task that guarantees the daemon is running.
+
+### The agent swap, run
+
+Not asserted from the shape of the variable. `loop.yml` applied with the agent
+overridden, then applied back:
+
+```
+$ ansible-playbook loop.yml -e loop_execution_boundary_agent=grok
+loopbox : ok=29  changed=5   # declared but absent: ['auth.x.ai:443', 'cli-chat-proxy.grok.com:443']
+$ ansible-playbook loop.yml
+loopbox : ok=29  changed=5   # and back to the two-host list
+```
+
+### Where the posture lives, and how it fails
+
+`~loop/.cache/sandboxes/sandboxes/policykit/governor.db`, sqlite. It survives a
+reboot (verified on #99) and not a rebuild, and `~/.cache` is by convention the
+directory anything is free to delete.
+
+That is worth stating and is not worth alarm: a boundary whose policy store is
+gone refuses to boot a sandbox rather than quietly widening. The failure lands
+as a Run that does not start, which is the right direction to fail. Re-applying
+the play puts it back.
+
+### The ordering, written down
+
+**No Run is left unattended until a narrowed egress posture is in place.** That
+was the sequence #100 depended on and it is recorded here so it is not lost:
+#83's first Run is attended, so it may run on whatever posture exists; this
+ticket narrows before anything runs with nobody watching.
+
+As of 2026-08-24 the narrowing has landed, so the condition is satisfied and no
+Run has yet run under it - which is the next paragraph rather than a
+contradiction.
+
+### What this does not establish
+
+- **That a Run completes under the narrowed policy.** Nothing has run one. The
+  list is derived from a sandbox exercised by hand, not from #83, and #83
+  remains where the list gets its real test. If a Run finds a missing host, the
+  fix is a line in `loop_execution_boundary_egress_common` with a `need:`
+  saying what broke without it, and a re-apply.
+- **That the Grok set is right.** It is read off the shipped binary, not off a
+  Run. #84.
+- **That the agent cannot exfiltrate.** It is much harder than under
+  `balanced` - no object store, no gist, no arbitrary callback - but
+  `github.com` is still reachable and a repository is still a place to write
+  things. What stops that is Proposal-Only Output and the token's scope, not
+  the boundary.
+
 ## Rebuilding
 
 `ansible-playbook loop.yml` installs and pins the boundary, and now also starts
 it: the play declares a `sandboxd` user unit and `loginctl enable-linger loop`,
-so a rebuilt box brings the daemon up at boot with no command. It also chooses
-the egress profile if nothing has. What it still cannot do is sign in, so run
-the walkthrough - the Docker sign-in does not survive a rebuild (it does survive
-a reboot; see above), and the policy choice the play makes is `balanced`:
+so a rebuilt box brings the daemon up at boot with no command. Since #100 it
+also reconciles the egress posture rather than only choosing one when nothing
+has: `deny-all` plus the declared allowlist, on a rebuilt box and on a running
+one. What it still cannot do is sign in, so run the walkthrough - the Docker
+sign-in does not survive a rebuild (it does survive a reboot; see above):
 
 ```
 sudo -u conductor -i

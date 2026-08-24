@@ -1,0 +1,50 @@
+# `sbx policy ls` and `sbx policy ls --wide` on loop.etadventures.com, 2026-08-24,
+# after issue #100 narrowed the boundary from `balanced` to `deny-all` plus an
+# explicit allowlist. Companion to loop-sbx-balanced-policy-2026-08-24.txt, which
+# is the 193-host posture this replaces.
+#
+# Two things to read here rather than count:
+#
+#   1. `local-policy` holds TWO network allow rules - github.com:443 and
+#      api.github.com:443 - and that is the whole global allowlist. It also still
+#      holds `filesystem read: 1 allow` and `filesystem write: 1 allow`, both
+#      `**`: `deny-all` is the network posture and does not touch the filesystem.
+#
+#   2. The `kit` policies are NOT ours. `sbx` attaches them per sandbox from the
+#      agent template - six Anthropic hosts to a `claude` sandbox, openrouter.ai
+#      to a `shell` one - and they survive `sbx policy init deny-all`,
+#      `editable: false`. Choosing a template chooses hosts.
+#
+# The three `egressprobe*` sandboxes are the probing rig for #100, not part of
+# the posture. See loop-execution-boundary-evidence.md, "Narrowing to `deny-all`".
+
+POLICY                                 SOURCE   APPLIES TO             SUMMARY
+972093a5-4b04-4622-98a8-5e7ae8145c58   kit      sandbox:egressprobe2   network: 6 allow
+b304c934-0889-4091-aa0b-03b9f3046357   kit      sandbox:egressprobe    network: 6 allow
+d745d84a-f58b-4b90-bbb3-ec8403b53043   kit      sandbox:egressprobe3   network: 1 allow
+local-policy                           local    all                    network: 2 allow; filesystem read: 1 allow; filesystem write: 1 allow
+
+SOURCE   APPLIES TO             POLICY   POLICY_ID                              RULE               RULE_ID                                TYPE               DECISION   RESOURCES
+kit      sandbox:egressprobe3   -        d745d84a-f58b-4b90-bbb3-ec8403b53043   kit:egressprobe3   670e21a8-c52f-4df6-b723-5532cb8fe1c5   network            allow      openrouter.ai
+                                                                                                                                                                        
+kit      sandbox:egressprobe    -        b304c934-0889-4091-aa0b-03b9f3046357   kit:egressprobe    3268952f-fb0a-4454-9a1e-619ee7b49808   network            allow      api.anthropic.com:443
+                                                                                                                                                                        bridge.claudeusercontent.com:443
+                                                                                                                                                                        claude.com:443
+                                                                                                                                                                        downloads.claude.ai:443
+                                                                                                                                                                        mcp-proxy.anthropic.com:443
+                                                                                                                                                                        platform.claude.com:443
+                                                                                                                                                                        
+kit      sandbox:egressprobe2   -        972093a5-4b04-4622-98a8-5e7ae8145c58   kit:egressprobe2   f289eba1-30df-4d1e-8a30-9e76176c905c   network            allow      api.anthropic.com:443
+                                                                                                                                                                        bridge.claudeusercontent.com:443
+                                                                                                                                                                        claude.com:443
+                                                                                                                                                                        downloads.claude.ai:443
+                                                                                                                                                                        mcp-proxy.anthropic.com:443
+                                                                                                                                                                        platform.claude.com:443
+                                                                                                                                                                        
+local    all                    -        local-policy                           -                  default-fs-read-allow-all              filesystem:read    allow      **
+                                                                                                                                                                        
+local    all                    -        local-policy                           -                  default-fs-write-allow-all             filesystem:write   allow      **
+                                                                                                                                                                        
+local    all                    -        local-policy                           -                  d86f8a4c-9165-4e3b-b357-859c700ff330   network            allow      api.github.com:443
+                                                                                                                                                                        
+local    all                    -        local-policy                           -                  f527adae-1bca-4678-a7cb-d93860b97fa4   network            allow      github.com:443

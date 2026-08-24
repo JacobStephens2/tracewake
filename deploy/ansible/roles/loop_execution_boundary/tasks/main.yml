@@ -223,30 +223,171 @@
 
 # A daemon that is up but has no egress profile is up and unusable: `sbx` has no
 # implicit default and refuses to boot a sandbox until one is chosen. The choice
-# survives a reboot - it is a sqlite database under ~loop/.cache - so on this box
-# this finds it already made and does nothing. It is here because the unit above
-# is what creates the case it guards: on a REBUILT box the daemon now starts
-# itself at boot, with nobody there to notice it came up unconfigured.
+# survives a reboot - it is a sqlite database at
+# ~loop/.cache/sandboxes/sandboxes/policykit/governor.db - so on a box already
+# holding the right posture everything below is a read and a comparison.
 #
-# `sbx policy init` is one-time per the CLI's own help, so this is guarded on the
-# daemon's own answer. The guard fails loudly rather than assuming: any exit
-# from `sbx policy ls` that is neither success nor the uninitialized message -
-# a daemon that is not up, a reworded message on the next pinned version - stops
-# the play instead of silently skipping the init and leaving the box with no
-# profile, which is the exact state this is here to prevent.
-- name: Ask the boundary whether an egress profile has been chosen
-  ansible.builtin.command: sbx policy ls
+# It does NOT survive a rebuild, and it lives under `~/.cache`, which is by
+# convention the directory anything is free to delete. That is worth knowing and
+# is not worth alarm: a boundary whose policy store is gone refuses to boot a
+# sandbox rather than quietly widening, so the failure lands as a Run that does
+# not start. This role is what puts it back.
+#
+# Everything from here to the end of the file is issue #100: moving the box off
+# `balanced` and onto `deny-all` plus the allowlist declared in defaults. It is
+# written as a reconcile rather than a one-time init because `sbx policy init`
+# IS one-time per the CLI's own help - so a role that only guards on
+# "has anything been chosen" moves a REBUILT box and does nothing whatever to
+# this one, and a `deny-all` posture that only arrives on a rebuild is not the
+# posture.
+- name: Read the boundary's current egress posture
+  ansible.builtin.command: sbx policy ls --json
   become: true
   become_user: loop
   register: loop_execution_boundary_policy_state
   changed_when: false
+  # The one command task in this role that runs under `--check`, and it has to.
+  # Every other one is skipped there, correctly - proof is an apply. This one
+  # only READS, and skipping it makes `--check` actively lie: with no output to
+  # parse the posture reads as empty, so a box holding exactly the declared
+  # allowlist is reported as holding none of it and about to be reset. A dry run
+  # that says that is worse than no dry run.
+  check_mode: false
+  # The guard fails loudly rather than assuming: any exit that is neither
+  # success nor the uninitialized message - a daemon that is not up, a reworded
+  # message on the next pinned version - stops the play, instead of being read
+  # as "no profile chosen" and silently resetting a policy store that was fine.
   failed_when: >-
     loop_execution_boundary_policy_state.rc != 0 and
     not loop_execution_boundary_policy_uninitialized
 
-- name: Choose the egress profile if nothing has
+# One comparison, and the four tasks below hang off it. Separated from the
+# `when:` on each so that the play SAYS what it thought was wrong before it
+# resets a policy store - otherwise the next person reads a `changed` and has to
+# reconstruct why.
+#
+# Counts and differences rather than both lists in full. The first version of
+# this printed them, and against `balanced` that is 193 hosts in one `msg` -
+# which buries the two lines that matter under a screen of wildcards nobody
+# reads. `sbx policy ls --wide` on the box is where the full dump belongs.
+- name: Report the egress posture against the declared one
+  ansible.builtin.debug:
+    msg:
+      - "agent: {{ loop_execution_boundary_agent }}"
+      - "declared: {{ loop_execution_boundary_egress_desired }}"
+      - >-
+        on the box: {{ loop_execution_boundary_egress_observed | length }} host(s),
+        {{ (loop_execution_boundary_egress_observed
+            | difference(loop_execution_boundary_egress_desired)) | length }} not declared
+      - >-
+        declared but absent:
+        {{ loop_execution_boundary_egress_desired
+           | difference(loop_execution_boundary_egress_observed) }}
+  changed_when: false
+
+# `sbx policy init` refuses to run twice, so moving an already-initialized box
+# means clearing the store first. This is the destructive step in the role and
+# the reason applies are an operator action: `reset` stops the daemon and, with
+# it, every sandbox it is holding. Do not run an apply against a box mid-Run.
+#
+# `--force` because there is no terminal to answer the confirmation prompt on.
+#
+# `shell` with the redirect, and NOT `command`, for a reason that cost a hung
+# play to find. `sbx policy reset` stops the daemon and then auto-starts a
+# replacement as its own child. That child inherits the task's stdout, ansible
+# waits for the pipe to close, and the pipe never closes because the daemon does
+# not exit:
+#
+#   6986  09:16  sbx policy reset --force     <- still "running" after 9 minutes
+#   6997  09:16  /usr/bin/sbx daemon start    <- its child, holding the pipe open
+#
+# Sending the output to a file gives the orphan somewhere to hold that is not
+# ansible's pipe. The exit status is still `reset`'s own, so a real failure
+# still fails the task, and the log is on the box if one ever does.
+#
+# Only this task needs it. Every other `sbx` command in this role runs with a
+# daemon already up - the unit started it, or the restart below did - so none of
+# them spawns anything. The read task above is the one to be careful with if
+# these are ever reordered: it needs its stdout, so it must stay after the task
+# that guarantees a daemon is running.
+- name: Clear the policy store so the profile can be re-chosen
+  ansible.builtin.shell: >-
+    sbx policy reset --force
+    </dev/null >/tmp/sbx-policy-reset.log 2>&1
+  become: true
+  become_user: loop
+  when:
+    - not (loop_execution_boundary_policy_uninitialized | bool)
+    - loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  changed_when: true
+
+# The task above leaves an UNSUPERVISED daemon behind, and this is what takes it
+# back. That is not a guess about what might happen; it is what happened:
+#
+#   $ sbx policy reset --force        # "Daemon stopped successfully"
+#   $ systemctl --user is-active sandboxd
+#   inactive                          # Result=success, ExecMainStatus=0
+#   $ ps -eo pid,user,cgroup,args | grep sbx
+#   4104 loop 0::/user.slice/user-0.slice /usr/bin/sbx daemon start
+#
+# `reset` stops the daemon cleanly, so `Restart=on-failure` correctly does not
+# fire and the unit goes inactive - and the CLI then auto-starts a replacement
+# in whatever process tree invoked it, here root's session slice rather than the
+# unit's cgroup. Restarting the unit at that point does NOT reclaim it: `sbx
+# daemon start` prints `Daemon is already running`, exits 0, and the unit stays
+# inactive while the stray daemon keeps running. This is exactly the hazard the
+# header of files/sandboxd.service names, reached by an ordinary apply rather
+# than by hand-starting anything.
+#
+# So: stop whatever is running, then let systemd start the one it supervises.
+- name: Take the daemon back from the reset
+  ansible.builtin.command: sbx daemon stop
+  become: true
+  become_user: loop
+  when:
+    - not (loop_execution_boundary_policy_uninitialized | bool)
+    - loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  changed_when: true
+  # Tolerant on purpose, and only here: if nothing is running there is nothing
+  # to take back and the next task starts the supervised one regardless. This is
+  # the one place a non-zero exit is not information.
+  failed_when: false
+
+- name: The supervised daemon is the one running
+  ansible.builtin.systemd:
+    name: sandboxd.service
+    scope: user
+    state: restarted
+    daemon_reload: true
+  become: true
+  become_user: loop
+  environment: "{{ loop_execution_boundary_user_manager_env }}"
+  when: loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+
+# Deny by default. On a rebuilt box this is the only one of these tasks that
+# fires, because nothing has been chosen and the reset has nothing to clear.
+- name: Choose the egress profile
   ansible.builtin.command: "sbx policy init {{ loop_execution_boundary_policy_profile }}"
   become: true
   become_user: loop
-  when: loop_execution_boundary_policy_uninitialized
+  when: loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
+  changed_when: true
+
+# And then the allowlist, in one command rather than one per host: `sbx policy
+# allow network` takes a comma-separated list and writes a separate rule per
+# resource either way, so the rule ids are not something to depend on. That is
+# why the comparison above is over the resources and not over rule names.
+#
+# Skipped, correctly, if the declared list is empty - a `deny-all` box with no
+# allowlist is a legitimate posture and `sbx policy allow network ""` is not a
+# command.
+- name: Allow exactly the hosts the agent needs
+  ansible.builtin.command: >-
+    sbx policy allow network
+    {{ loop_execution_boundary_egress_desired | join(',') }}
+  become: true
+  become_user: loop
+  when:
+    - loop_execution_boundary_egress_desired | length > 0
+    - loop_execution_boundary_egress_observed != loop_execution_boundary_egress_desired
   changed_when: true

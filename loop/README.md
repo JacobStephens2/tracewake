@@ -8,6 +8,24 @@ Termination Contract that makes walking away from it defensible.
 run.sh --repo <path> [--task-ref <text>]
 ```
 
+## Before a Run is left unattended
+
+**No Run is left unattended until the Execution Boundary's egress is narrowed to
+what the agent needs.** That is an ordering rather than a rule of thumb, and it
+is why #100 landed before #83's Run was allowed to go unwatched: `balanced`, the
+posture the box came up on, allows 193 hosts including S3, GCS and
+githubusercontent, which is a boundary against a runaway agent and not against a
+motivated one. An attended Run may run on any posture, because somebody is
+watching it. An unattended one may not.
+
+As of 2026-08-24 `loop.etadventures.com` is on `deny-all` plus a two-host
+allowlist, declared in `ansible/roles/loop_execution_boundary/defaults/main.yml`
+and reconciled by `ansible-playbook loop.yml`. If a Run fails on a host it
+needed, the fix is a line in `loop_execution_boundary_egress_common` saying what
+broke without it - not widening the profile. The posture, the probes and what
+was deliberately left off are in
+`lab/single-user-factory/notes/loop-execution-boundary-evidence.md`.
+
 ## What is here
 
 | File | What it is |
