@@ -25,13 +25,22 @@ each one alone tells you which subsystem to keep:
 
 | Axis | Question | Drives | ETA | Single-user |
 | --- | --- | --- | --- | --- |
-| **Blast radius** | what happens when it goes wrong | prevention apparatus | prod ERP for a company | I notice and fix |
+| **Blast radius** | what happens when it goes wrong | prevention apparatus | prod ERP for a company | I notice and fix - while watching* |
 | **Reversibility** | can I undo a bad outcome | rollback / backup machinery | hard to undo prod damage | `git revert`, or re-run |
 | **Trust model** | who feeds it input, can the executor be trusted | isolation / credential apparatus | hostile intake, untrusted worker | I feed it my own work |
 
 For the single-user factory all three collapse toward zero, and each collapse
 independently deletes a subsystem. That's the whole cost saving — not accepting
 more risk, but building for a smaller, honest threat model.
+
+\* *Amended.* The blast-radius collapse rests on an unstated premise - **"I
+notice and fix"** - which is about presence, not scale. Nobody is watching an
+unattended run, so the premise fails and the collapse does not follow.
+**Attendedness** is a fourth axis, and the only one that does not collapse for
+a single operator:
+[ADR 0003](../docs/adr/0003-attendedness-is-a-fourth-trust-axis.md). What
+follows holds while I am at the keyboard; where it does not, the text is marked
+*Amended*.
 
 ---
 
@@ -115,15 +124,25 @@ not on the tradeoff axis. Keep them.
 
 ## Drop or defer at single-user scale
 
-Each of these is deleted or shrunk by one of the three collapsing axes.
+Each of these is deleted or shrunk by one of the collapsing axes.
 
-- **Collapse the trust model → delete the isolation stack.** No
-  provider-credential lifecycle, no capability drives, no secret-free ephemeral
-  worker. Put the API key in the environment and run the agent directly. This
-  deletes the ETA factory's current long pole outright.
-- **Defer reproducibility.** "It runs on my machine / one box I set up by hand"
-  is fine until it isn't. Add Ansible the day you rebuild a *second* time — not
-  before. You lose rebuild-from-declaration and gain enormous velocity.
+- **Collapse the trust model → delete the isolation stack, except the
+  boundary.** No provider-credential lifecycle, no capability drives, no
+  secret-free ephemeral worker. Put the API key in the environment and run the
+  agent directly. This deletes the ETA factory's current long pole outright.
+  *Amended:* an unattended run re-earns exactly one subsystem, the **Execution
+  Boundary**, and nothing else
+  ([ADR 0003](../docs/adr/0003-attendedness-is-a-fourth-trust-axis.md)). Keep
+  it whenever the agent runs with nobody watching.
+- **Defer reproducibility ceremony, not reproducibility tooling.** "It runs on
+  my machine / one box I set up by hand" is fine until it isn't. Add Ansible
+  the day you rebuild a *second* time - not before. You lose
+  rebuild-from-declaration and gain enormous velocity. *Amended:* that price
+  was taken from `eta-factory`, where the tooling arrived bundled with a CI
+  pipeline and a governance gate. `orchestration` has no `.github/workflows/`
+  directory at all and already declares `tofu/` and `ansible/`, so one more
+  host costs an entry and zero CI time
+  ([ADR 0006](../docs/adr/0006-provision-the-loop-box-through-the-existing-iac-layout.md)).
 - **Lighter governance.** Keep a `decisions.md` you append to — the *value* (why
   you chose things) without the *ceremony* (PR + propagate + regenerate +
   review). Append-only ledgers with stable-citation discipline are worth it when
@@ -155,8 +174,10 @@ stripped away, because you become the only reviewer.
 ## The through-line
 
 Name it by the constraint that makes everything true: **single-user.** Because I
-author my inputs, content-trust collapses. Because the blast radius is me, the
-prevention apparatus collapses. Because I rarely rebuild, the reproducibility
-apparatus collapses. Build for that threat model honestly, keep the three free
-velocity wins, and don't mistake the resulting lightness for recklessness — it's
-correct sizing for a danger that mostly isn't there.
+author my inputs, content-trust collapses. Because the blast radius is me *and
+I am watching*, the prevention apparatus collapses - down to the Execution
+Boundary, which an unattended run re-earns. Because I rarely rebuild, the
+reproducibility apparatus collapses, though its tooling is worth reaching for
+where it is already declared. Build for that threat model honestly, keep the
+three free velocity wins, and don't mistake the resulting lightness for
+recklessness - it's correct sizing for a danger that mostly isn't there.
