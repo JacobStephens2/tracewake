@@ -5,11 +5,16 @@
     update_cache: true
     cache_valid_time: 3600
 
-# Presence of the package is not presence of a working command - the suite has
-# to be runnable on the box "in seconds without a model or a network", so assert
-# the two binaries actually execute. `changed_when: false` because asking a
-# program its version changes nothing.
-- name: Both tools run
+# Installed by root, but run by `loop` - so verify as `loop`. Presence of a
+# package is not presence of a working command, and the property the Loop needs
+# is that its suite runs in seconds on this box as the account a Run uses.
+# `changed_when: false` because asking a program its version changes nothing.
+#
+# Skipped under --check, like every command task: a dry run reports what the
+# play would install, not that the binaries work. Proof is an apply.
+- name: Both tools run as the Loop's account
   ansible.builtin.command: "{{ item }} --version"
   loop: [bats, shellcheck]
+  become: true
+  become_user: loop
   changed_when: false

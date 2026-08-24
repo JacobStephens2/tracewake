@@ -1,14 +1,8 @@
 # Ubuntu 24.04 (the stock DigitalOcean image), not the fleet's Rocky 9 - `sbx`
-# supports no Rocky release. `ansible.builtin.apt` rather than the generic
-# `package` module so the cache handling below is explicit.
-- name: Refuse to run against anything but Ubuntu
-  ansible.builtin.assert:
-    that: ansible_facts.distribution == "Ubuntu"
-    fail_msg: >-
-      loop.yml is Ubuntu-only; this host reports
-      {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
-      The orchestration roles are the Rocky ones - see site.yml.
-
+# supports no Rocky release. The play asserts the distribution before this role
+# runs. `ansible.builtin.apt` rather than the generic `package` module so the
+# cache handling below is explicit.
+#
 # `update_cache` + `cache_valid_time` on the install task, not as a task of its
 # own: the module reports changed for the package set, not for a cache refresh,
 # so a second apply is clean even when apt re-reads its lists.

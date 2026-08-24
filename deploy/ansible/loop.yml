@@ -11,7 +11,9 @@
 # roles - which is Single-User Factory ADR 0006's "its own small role set".
 #
 # NOT covered here, deliberately, because each is its own ticket:
-#   - the Execution Boundary (`sbx`) and the browser login it needs (#78)
+#   - the Execution Boundary (`sbx`), its pinned version and the browser login
+#     it needs (#78) - including whatever access the boundary turns out to want
+#     on /dev/kvm, which is #78's observation to make, not this play's guess
 #   - the Loop's three credentials and the signing key generated on the box (#81)
 #   - the Loop scripts themselves and their Termination Contract (#79)
 # This play stops at: the box has the packages the Loop's own test suite needs,
@@ -19,7 +21,22 @@
 - name: Configure the Loop's box
   hosts: loop
   gather_facts: true
+
+  # A play-level guard, not a task inside the first role: it protects every role
+  # below, and putting it in loop_base would make it depend on that role staying
+  # first in the list.
+  pre_tasks:
+    - name: Refuse to run against anything but Ubuntu
+      ansible.builtin.assert:
+        that: ansible_facts.distribution == "Ubuntu"
+        fail_msg: >-
+          loop.yml is Ubuntu-only; this host reports
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
+          The orchestration roles are the Rocky ones - see site.yml.
+
+  # loop_account precedes loop_shell_suite so that role can prove the suite runs
+  # as the account a Run uses, rather than only as the root that installed it.
   roles:
-    - loop_base       # apt base package set (git, curl, jq, ca-certificates)
+    - loop_base        # apt base package set (git, curl, jq, ca-certificates)
+    - loop_account     # the unprivileged `loop` user a Run executes as
     - loop_shell_suite # bats + shellcheck, what the Loop's suite is written against
-    - loop_account    # the unprivileged `loop` user a Run executes as

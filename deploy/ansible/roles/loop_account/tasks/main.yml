@@ -1,38 +1,30 @@
-# The account a Run executes as. Unprivileged on purpose: the box's three
-# credentials (#81) land in this home, the Loop's scripts run here, and nothing
-# in a Run needs root. There is deliberately NO sudoers entry - an unattended
-# agent that can escalate is an unattended agent with no boundary worth the
-# name, and the boundary is the one control Attendedness re-earns (ADR 0003).
+# The account a Run executes as. Unprivileged on purpose: the Loop's scripts run
+# here and nothing in a Run needs root. There is deliberately NO sudoers entry -
+# an unattended agent that can escalate is an unattended agent with no boundary
+# worth the name, and the boundary is the one control Attendedness re-earns
+# (ADR 0003).
 #
 # Also deliberately no authorized_keys: the operator reaches this account by
-# SSHing to the box as root and running `su - {{ loop_account_user }}`. Adding a key
-# here would mean a second way in with nothing gained.
+# SSHing to the box as root and running `su - loop`. Adding a key here would
+# mean a second way in with nothing gained.
+#
+# Values are inline rather than in defaults/: there is one Loop, one box and one
+# account, and the orchestration roles hardcode the same way (see
+# conductor_account). A variable here would be a knob with one setting.
 - name: The Loop's unprivileged account
   ansible.builtin.user:
-    name: "{{ loop_account_user }}"
-    home: "{{ loop_account_home }}"
+    name: loop
+    home: /home/loop
     shell: /bin/bash
-    groups: "{{ loop_account_groups }}"
-    append: true
     create_home: true
 
-# 0750, not the Ubuntu default 0755: the GitHub token and the dedicated signing
-# key arrive in this home in #81, and a home other local accounts can read is a
-# poor place for either. The box has no other login accounts today; this is so
-# that adding one later is not silently a disclosure.
+# 0750, not the Ubuntu default 0755. The box has no second login account today;
+# this is so that adding one later is not silently a disclosure of whatever the
+# Loop keeps in its home.
 - name: The home is not world-readable
   ansible.builtin.file:
-    path: "{{ loop_account_home }}"
+    path: /home/loop
     state: directory
-    owner: "{{ loop_account_user }}"
-    group: "{{ loop_account_user }}"
+    owner: loop
+    group: loop
     mode: "0750"
-
-# Membership is not access. Assert the account can actually open the KVM device,
-# because the failure this catches - a boundary that cannot start - is exactly
-# the one issue #76 spent a ticket proving would not happen at the kernel level.
-- name: The account can reach /dev/kvm
-  ansible.builtin.command: test -r /dev/kvm -a -w /dev/kvm
-  become: true
-  become_user: "{{ loop_account_user }}"
-  changed_when: false
