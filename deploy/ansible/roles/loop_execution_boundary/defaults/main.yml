@@ -10,6 +10,18 @@
 # tasks/main.yml is what stops an unattended `apt upgrade` moving it instead.
 loop_execution_boundary_sbx_version: 0.39.0-1~ubuntu.24.04~noble
 
+# What this role does NOT give you, stated here because it is the property most
+# likely to be inherited wrongly. The microVM, the separate kernel and the
+# egress proxy are properties of the sandbox and hold for every agent. Host-
+# proxy credential injection is NOT: it is keyed to a `sbx secret` service, and
+# `sbx create --env` - the fallback for any agent without one - puts the value
+# inside the VM where the agent can read it and send it to any of the 193 hosts
+# the default `balanced` policy allows. Grok has no agent template here at all
+# (`sbx create` offers claude, codex, copilot, cursor, docker-agent, droid,
+# gemini, kiro, opencode, shell), though `xai` IS a supported secret service.
+# The full statement, and the evidence under it, is in
+# lab/single-user-factory/notes/loop-execution-boundary-evidence.md.
+
 # Docker's own apt repository, added the way `get.docker.com REPO_ONLY=1 sh`
 # adds it - the same keyring path, the same one-line source - but as declared
 # tasks rather than a piped shell script, so a re-apply is a comparison instead

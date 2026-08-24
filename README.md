@@ -12,6 +12,9 @@ is to record *what to strip and why*, drawn from building the heavy one.
   synthesis these notes started from.
 - `docs/adr/` - the decisions, numbered. ADRs 0003-0006 govern the Loop.
 - `research/` - the source-cited investigations the notes and ADRs rest on.
+- `wizards/` - runnable walkthroughs for the steps only a human can take.
+  `loop-sbx-login.sh` signs the Loop's Execution Boundary in, which needs a
+  browser the box does not have.
 - `site/` - hand-authored HTML, served at `lab.etadventures.com/single-user-factory/`.
   Write HTML here directly; markdown in `notes/` is source, not served-rendered.
 
