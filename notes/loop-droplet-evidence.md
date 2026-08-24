@@ -1,11 +1,11 @@
 # The Loop's droplet: provisioning evidence
 
-`loop.etadventures.com` — DigitalOcean droplet `594834213`, `142.93.121.211`,
+`loop.etadventures.com` - DigitalOcean droplet `594834213`, `142.93.121.211`,
 created 2026-08-24 from `tofu/hosts/loop.tf` (issue #76, spec issue #73).
 
 This note is the record of the four things issue #76 asked to be proved before
 anything is installed on the box. It is evidence, not documentation of how the
-box works — that arrives with its ansible play.
+box works - that arrives with its ansible play.
 
 ## What it is
 
@@ -13,19 +13,20 @@ box works — that arrives with its ansible play.
 |---|---|
 | Name / DNS | `loop.etadventures.com` → `142.93.121.211` (Route 53 A, TTL 300) |
 | DO id / region / size | `594834213` · `nyc1` · `s-2vcpu-4gb` (2 vCPU, 3915 MB usable, 77 GB disk, $24/mo) |
-| Image | `ubuntu-24-04-x64` — Ubuntu 24.04.4 LTS, kernel 6.8.0-124-generic |
+| Image | `ubuntu-24-04-x64` - Ubuntu 24.04.4 LTS, kernel 6.8.0-124-generic |
 | VPC | `b6705332-dc84-11e8-8650-3cfdfea9f8c8` (nyc1 default) |
-| Backups | off, deliberately — see `tofu/hosts/loop.tf` |
-| SSH | `root@loop.etadventures.com`, conductor's key from the orchestration VM |
+| Backups | off, deliberately - see `tofu/hosts/loop.tf` |
+| SSH | `root@loop.etadventures.com`, conductor's key from the orchestration VM (DO key `57930013`, `SHA256:AaLUxQYjAVXt8fsPz8BorgfG/vHpQRjZi6DMs95SzdU`) |
 
-Ubuntu rather than the fleet's Rocky 9 because `sbx` requires it (ADR 0004);
-declared in `tofu/hosts` rather than by hand because ADR 0006 says so, and there
-rather than in another stack because root ADR 0002 gives droplets-plus-their-DNS
-to that stack.
+Ubuntu rather than the fleet's Rocky 9 because `sbx` supports Ubuntu 24.04 or
+later and no Rocky release, which ADR 0006 records (ADR 0004 governs which agent
+runs inside the boundary, not the OS underneath it). Declared in `tofu/hosts`
+rather than built by hand because ADR 0006 says so, and in that stack rather
+than another because root ADR 0002 gives droplets-plus-their-DNS to it.
 
 ## Declared, and the stack agrees
 
-`./tofu.sh apply` created exactly two resources — the droplet and its A-record —
+`./tofu.sh apply` created exactly two resources - the droplet and its A-record -
 and the plan immediately afterwards was clean:
 
 ```
@@ -40,7 +41,7 @@ No changes. Your infrastructure matches the configuration.
 
 `-detailed-exitcode` returning 0 is the assertion: 0 means no changes, 2 would
 mean a diff. Note that `image` is *not* in this droplet's `ignore_changes`, as it
-is on the two imported droplets — this one was created from the config, so the
+is on the two imported droplets - this one was created from the config, so the
 API returns the slug and the clean plan is a real comparison rather than a
 suppressed one.
 
@@ -81,7 +82,7 @@ irqbypass              12288  1 kvm
 ```
 
 The CPU flag, the device node and the nested parameter are the three the ticket
-named. A fourth check goes past presence to use — opening `/dev/kvm` and asking
+named. A fourth check goes past presence to use - opening `/dev/kvm` and asking
 the kernel to create a guest, with no package installed:
 
 ```
@@ -92,7 +93,7 @@ $ python3 -c "import fcntl,os; fd=os.open('/dev/kvm',os.O_RDWR); \
 ```
 
 `KVM_GET_API_VERSION` returns 12 (the only value the ABI defines) and
-`KVM_CREATE_VM` returns a file descriptor — the kernel built a real, empty guest
+`KVM_CREATE_VM` returns a file descriptor - the kernel built a real, empty guest
 and handed it back. The hypervisor is not merely advertised, it works.
 
 ## What this settles
@@ -100,11 +101,12 @@ and handed it back. The hypervisor is not merely advertised, it works.
 Spec issue #73 lists "whether droplet sizes below the orchestration VM's expose
 nested virtualization" among its known-unverified items. They do: the
 `s-2vcpu-4gb` Regular Intel droplet above exposes the same `vmx` /
-`kvm_intel.nested = Y` as the `s-8vcpu-16gb` orchestration VM that ADR 0006 cites.
+`kvm_intel.nested = Y` as the `s-8vcpu-16gb` orchestration VM that ADR 0006 cites
+as the only size then known to.
 The Loop's host therefore costs $24/mo rather than $96/mo.
 
 Two vCPUs and 4 GB is headroom for one microVM guest, not for many. If a Run is
-ever found to be starved, the size is one line in `loop.tf` — but a resize
+ever found to be starved, the size is one line in `loop.tf` - but a resize
 changes the disk too, so it is a reboot and a permanent commitment to the larger
 disk, not a free dial.
 
@@ -122,5 +124,5 @@ disk, not a free dial.
 
 Rebuild is `./tofu.sh apply` from `tofu/hosts` in a `va` session, then the
 ansible play. Teardown needs `prevent_destroy = true` removed from `loop.tf`
-first — that guard is there so a plan can never quietly propose replacing a
+first - that guard is there so a plan can never quietly propose replacing a
 running box, which is the stack's standing rule.
