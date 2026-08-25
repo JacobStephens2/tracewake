@@ -34,9 +34,12 @@
 # nothing failed is the Run's planned end, and it is the one thing exit 0 means.
 # Which bound ended it is still reported, always, for every code including 0.
 #
-# The Loop does not push, does not open a pull request, and does not seed the
-# Plan. Those are #82 and #83. This script needs a repository that already has a
-# Plan in it, and its only effect is commits on the branch that is checked out.
+# The Loop does not push and does not open a pull request - that is #83. Nor does
+# it seed the Plan: `seed-run.sh` does that before a Run starts, because putting
+# the task into the repository is a setup step and keeping it one is what makes
+# ADR 0003's content-trust reasoning valid (ADR 0010). This script needs a
+# repository that already has a Plan in it, and its only effect is commits on the
+# branch that is checked out.
 
 set -euo pipefail
 
@@ -91,7 +94,7 @@ git -C "${repo}" rev-parse HEAD >/dev/null 2>&1 ||
     die "repository has no commits: ${repo}"
 
 [[ -f "${repo}/${LOOP_PLAN_PATH}" ]] ||
-    die "no Plan at ${LOOP_PLAN_PATH} - a Run is seeded before it is started (#82)"
+    die "no Plan at ${LOOP_PLAN_PATH} - a Run is seeded before it is started: see seed-run.sh"
 
 [[ -x ${LOOP_AGENT_COMMAND} ]] ||
     die "agent command is not executable: ${LOOP_AGENT_COMMAND}"

@@ -63,6 +63,23 @@
 # leaves behind.
 : "${LOOP_FAULT_OUTPUT_LINES:=20}"
 
+# --- The task source -------------------------------------------------------
+#
+# How seed-run.sh reaches the one task the operator chose. It is one
+# substitutable command for the same reason the agent is (ADR 0004) and with the
+# same second benefit: the offline suite drives the real seed step through a
+# scripted fake, so the suite needs no GitHub token and no network.
+#
+# Its contract is two positional arguments - the task's repository as
+# owner/name, and the task's number - printing the task on stdout as JSON with
+# number, title, url, state and body, and exiting non-zero on failure.
+#
+# Fetching ONE task the operator chose is a setup step, not issue intake. What
+# follows from that, and why building real intake would invalidate ADR 0003's
+# reasoning, is ADR 0010. Resolved in seed-run.sh rather than here, like the
+# agent command, because the default is a path relative to this checkout.
+: "${LOOP_TASK_SOURCE_COMMAND:=}"
+
 # --- Where the Run's state lives, relative to the repository ----------------
 : "${LOOP_PLAN_PATH:=PLAN.md}"
 : "${LOOP_PROGRESS_LOG_PATH:=PROGRESS.md}"

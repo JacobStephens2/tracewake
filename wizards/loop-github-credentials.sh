@@ -367,6 +367,8 @@ step "  because of what you select on this screen."
 step "Permissions → Repository permissions:"
 step "  Contents: Read and write        (the branch a Run pushes)"
 step "  Pull requests: Read and write   (the draft PR a Run opens)"
+step "  Issues: leave at No access      (ADR 0010 - a Run does not read issues;"
+step "                                   the operator seeds the Run off the box)"
 step "  Metadata: Read-only             (GitHub adds this itself)"
 step "  Nothing else. Not Actions, not Administration, not Secrets."
 step "Generate token, then copy it. GitHub shows it exactly once."
@@ -457,6 +459,23 @@ else
     warn "Spec #73's blast radius is 'one repository'; this token is wider."
     note "Narrow it at github.com/settings/personal-access-tokens and re-run."
     confirm "Continue anyway with a wider token?" || exit 1
+fi
+
+# The second negative probe, and the one ADR 0010 rests on. Seeding a Run fetches
+# one task the operator chose, off the box, with his own identity; a box that
+# could read issues would make "this is not issue intake" a convention rather
+# than a property of what the token opens.
+code="$(api_status "repos/${TARGET_REPO}/issues?per_page=1")"
+if [[ ${code} != "200" ]]; then
+    printf '  %s✓%s %s issues  unreadable (%s) - ADR 0010 holds\n' \
+        "$GREEN" "$RESET" "${TARGET_REPO}" "${code}"
+else
+    printf '\n'
+    warn "The token can read ${TARGET_REPO}'s issues (200)."
+    warn "ADR 0010 makes 'the Loop cannot read arbitrary issues' a property of this"
+    warn "token, not a convention. With Issues granted it is only a convention."
+    note "Set Issues back to No access at github.com/settings/personal-access-tokens."
+    confirm "Continue anyway with a token that can read issues?" || exit 1
 fi
 
 note "Not probed, on purpose: whether the token can push to the default branch."

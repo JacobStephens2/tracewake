@@ -40,9 +40,24 @@ _Avoid_: PRD, prd.json, fix_plan.md, spec
 
 **Progress Log**:
 The append-only record of what each Iteration did, what it decided and why, and
-what is blocked. Session-scoped, deleted when the Run's work ends; not permanent
-documentation.
+what is blocked. Initialized by Seeding and appended to from then on.
+Session-scoped, deleted when the Run's work ends; not permanent documentation.
 _Avoid_: progress.txt, changelog, journal
+
+**Seeding**:
+The setup step that turns one task the operator chose, fetched by number, into a
+Plan and an initialized Progress Log. It is a human handing over a task he
+authored, which is what makes ADR 0003's content-trust collapse valid - and it is
+emphatically *not* issue intake, which would have the Loop read text the operator
+never saw. ADR 0010.
+_Avoid_: intake, ingestion, triage, importing an issue
+
+**Owning Area**:
+The one part of a task a single Run is scoped to, named in the Plan at Seeding.
+The rest of the task is out of scope for that Run and is not remaining work: an
+Iteration that starts on it has left the Plan rather than found more of it. The
+same word the Inventory groups by.
+_Avoid_: slice, chunk, batch, phase
 
 **Termination Contract**:
 The predeclared set of conditions that end a Run, and the conditions that end a
