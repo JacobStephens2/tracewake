@@ -387,10 +387,19 @@ if [[ ${GITHUB_TOKEN} != github_pat_* ]]; then
     confirm "Send it anyway?" || exit 1
 fi
 
-# install -m 600 from stdin: the file is created with the right mode from the
-# first byte, rather than existing world-readable for however long a chmod takes.
+# A redirect, not `install -D -m 600 /dev/stdin`, which is the obvious way and
+# does not work: under `su - loop` that path is the ssh pipe, still owned by
+# root, and loop cannot open it - `install: cannot open '/dev/stdin'`. `cat`
+# with no argument reads the descriptor it was handed rather than opening
+# anything, so it does not care who owns it.
+#
+# umask 077 then mv, rather than write-then-chmod: the temporary file is 0600
+# from its first byte and `mv` carries that mode onto the destination, so the
+# token is never on disk in a mode anyone else could read - not even for the
+# instant a chmod would take, and not at all on a re-run over a file that was
+# already there with a wider mode.
 if printf '%s\n' "${GITHUB_TOKEN}" |
-    on_loop_stdin "install -D -m 600 /dev/stdin ${TOKEN_FILE}"; then
+    on_loop_stdin "umask 077 && mkdir -p $(dirname "${TOKEN_FILE}") && cat > ${TOKEN_FILE}.new && mv ${TOKEN_FILE}.new ${TOKEN_FILE}"; then
     printf '  %s✓%s token written to %s on the box, mode 0600\n' "$GREEN" "$RESET" "${TOKEN_FILE}"
 else
     warn "could not write the token to the box."
