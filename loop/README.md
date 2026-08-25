@@ -34,9 +34,11 @@ was deliberately left off are in
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `agents/claude.sh` | The agent as one substitutable command (ADR 0004). |
 | `check-inventory.sh` | The first task's grade. Derives its own denominator. |
+| `assert-credentials.sh` | What the box holds, and what it may not. Both directions (#81). |
 | `tests/loop.bats` | The Loop's offline suite. No model, no network, no spend. |
 | `tests/check-inventory.bats` | The check's offline suite, seamed separately (#80). |
 | `tests/fake-agent.sh` | The scripted agent the suite drives the real Run through. |
+| `tests/assert-credentials.bats` | The credential inventory's offline suite, seamed separately (#81). |
 | `tests/mutation-check.sh` | Breaks each bound and each guard, confirms the suites notice. |
 
 ## The Termination Contract
@@ -120,6 +122,36 @@ reporting that nothing was classified. The second matters because "the work was
 not done" and "the check could not read the work" would otherwise produce the
 same output.
 
+## The credential inventory
+
+Every isolation argument in spec #73 rests on one sentence about what this box
+holds. `assert-credentials.sh` is that sentence, asserted:
+
+```
+ssh root@loop.etadventures.com 'su - loop -s /bin/bash -c "bash -s"' \
+    < assert-credentials.sh
+```
+
+It reports **both** directions, because either alone is a half-truth: the four
+credentials the box is allowed to hold, and the four families it may not. `0`
+clean, `2` naming every violation, `1` when it could not run.
+
+**Four, not three.** The spec says three; the Execution Boundary itself needs a
+Docker identity, so there is a fourth (ADR 0009). It is a read-only Docker token
+that reads Docker Hub and reaches nothing else, and it is a line of the inventory
+rather than an exception to it.
+
+The collision spec #73 story 32 wants made impossible has three doors, and the
+script checks all three: `ANTHROPIC_API_KEY` in the Run's environment, the same
+name exported from a shell profile or `/etc/environment`, and a metered secret
+stored in the Execution Boundary by `sbx secret set` or `sbx secret import` -
+which is in no environment and no file at all. `agents/claude.sh` guards the
+first door at Run start, per-agent, because that collision is a property of the
+agent; this script guards the box.
+
+It never fixes what it finds. What to do about a fleet key that reached this box
+is not a decision to take unattended.
+
 ## Running the suite
 
 On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
@@ -128,11 +160,13 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Fifty-five tests, thirty seconds, no model and no network. Twenty-three drive
-`run.sh` unmodified and assert only what a Run externally produces - exit code,
-reported bound, Progress Log contents, git history. Thirty-two drive
-`check-inventory.sh` against small fixture checkouts and assert its exit code and
-its report. Neither names an internal function or depends on the order of steps.
+Ninety-one tests, no model and no network. Twenty-three drive `run.sh`
+unmodified and assert only what a Run externally produces - exit code, reported
+bound, Progress Log contents, git history. Thirty-two drive `check-inventory.sh`
+against small fixture checkouts. Thirty-six drive `assert-credentials.sh` against
+a constructed box - a home directory, a system root and a scripted fake `sbx`,
+all three of which a tmpdir can hold. None of them names an internal function or
+depends on the order of steps.
 
 The check is seamed and tested on its own rather than only through a Run because
 it is itself the honest failure signal, and a component that is the failure
@@ -140,14 +174,14 @@ signal should not have its correctness established only through another
 component (spec issue #73, Seam B).
 
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
-Contract, each guard of the check - and confirms the suite goes red. Twenty-five
-deliberate breaks, twenty-five caught. It names exact lines, so a reorganisation
-will make a mutation stop applying; it says so and fails rather than reporting a
-false pass. `--only check-inventory.sh` runs one subject's set. The evidence is
+Contract, each guard of the check, each credential family - and confirms the
+suite goes red. Thirty-seven deliberate breaks, thirty-seven caught. It names
+exact lines, so a reorganisation will make a mutation stop applying; it says so
+and fails rather than reporting a false pass. `--only check-inventory.sh` runs one subject's set. The evidence is
 in `../notes/loop-termination-contract-evidence.md` and
 `../notes/loop-completeness-check-evidence.md`.
 
-`shellcheck -x run.sh contract.sh agents/*.sh tests/*.sh` gates the scripts.
+`shellcheck -x *.sh agents/*.sh tests/*.sh` gates the scripts.
 
 ## What this directory does not do
 
@@ -158,6 +192,11 @@ in `../notes/loop-termination-contract-evidence.md` and
 - **Run inside the Execution Boundary.** Wrapping the agent call in `sbx` is a
   change to `agents/claude.sh` and nowhere else - the Loop does not know what a
   boundary is. Also #83.
+- **Place the box's credentials.** The signing key is generated on the box by
+  `ansible/loop.yml` (role `loop_credentials`) and git is configured to sign with
+  it, but registering that key to the operator's GitHub account and minting the
+  repository-scoped token are browser steps:
+  `../wizards/loop-github-credentials.sh` (#81).
 - **Get itself onto the box.** Nothing in `ansible/loop.yml` places this
   directory on `loop.etadventures.com` yet. The first end-to-end Run needs that,
   and it is the first thing #83 will find missing.

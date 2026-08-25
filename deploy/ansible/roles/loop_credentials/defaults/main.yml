@@ -1,0 +1,33 @@
+---
+# Who a Loop commit is by. GitHub attributes a commit to an account by matching
+# the author email against the account's verified addresses, so this is not
+# cosmetic: get it wrong and the commit lands as an unattributed name with no
+# avatar, however well it is signed.
+loop_commit_author_name: Jacob Stephens
+loop_commit_author_email: jstephens@etadventures.com
+
+# The dedicated signing key. Generated ON the box (ADR 0005) and never copied
+# anywhere - the operator's laptop key never leaves the laptop, and this one
+# revokes on its own.
+loop_signing_key_path: /home/loop/.ssh/loop_signing_ed25519
+
+# The comment baked into the public key. GitHub ignores it and `ssh-keygen -l`
+# prints it, so it is the fastest way to tell on the box which key this is.
+loop_signing_key_comment: loop@loop.etadventures.com
+
+# The title the key is registered under on the operator's GitHub account. ADR
+# 0005 makes the key itself the discriminator between a Loop commit and a
+# hand-authored one, and the title is how a human reads that discrimination -
+# so it is declared here, where the wizard reads it, rather than typed into a
+# browser from memory. Changing it here changes what the walkthrough tells you
+# to type; it does not rename a key already registered.
+loop_signing_key_title: Loop - loop.etadventures.com
+
+# Where the box keeps what only it holds. Not /etc: these are the Run account's
+# credentials, and root does not need to be able to hand them to anything.
+loop_credentials_dir: /home/loop/.config/loop
+
+# The repository a Run may propose to. The fine-grained token is scoped to it
+# and to nothing else; the wizard checks the token can see it and cannot see
+# more than it should.
+loop_target_repository: Educational-Travel-Adventures/tourbot

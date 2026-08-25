@@ -11,13 +11,19 @@
 # role set - which is what Single-User Factory ADR 0006 asks for.
 #
 # NOT covered here, deliberately, because each is its own ticket:
-#   - the Loop's three credentials and the signing key generated on the box (#81)
 #   - the Loop scripts themselves and their Termination Contract (#79)
 # This play stops at: the box has the packages the Loop's own test suite needs,
-# an unprivileged account for a Run to execute as, and the Execution Boundary
-# installed at a pinned version. It does NOT log the boundary in - `sbx login`
-# opens a browser, which is one of the spec's two human-only steps, and it is a
-# runnable walkthrough instead: `lab/single-user-factory/wizards/loop-sbx-login.sh`.
+# an unprivileged account for a Run to execute as, the Execution Boundary
+# installed at a pinned version, and a signing key generated on the box with git
+# configured to use it.
+#
+# It stops short of both credentials that arrive through a browser, which are
+# the spec's two human-only steps and are runnable walkthroughs rather than
+# prose:
+#   `sbx login`        lab/single-user-factory/wizards/loop-sbx-login.sh (#78)
+#   the GitHub token,
+#   and registering
+#   the signing key    lab/single-user-factory/wizards/loop-github-credentials.sh (#81)
 - name: Configure the Loop's box
   hosts: loop
   gather_facts: true
@@ -42,3 +48,4 @@
     - loop_account     # the unprivileged `loop` user a Run executes as
     - loop_shell_suite # bats + shellcheck, what the Loop's suite is written against
     - loop_execution_boundary # `sbx`, pinned - the hypervisor microVM an Iteration runs inside
+    - loop_credentials # the signing key, generated here, and the git identity that uses it

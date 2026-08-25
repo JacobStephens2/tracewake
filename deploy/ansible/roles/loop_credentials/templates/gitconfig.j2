@@ -1,0 +1,54 @@
+# {{ ansible_managed }}
+#
+# The Loop's git identity. Every value here exists so that a commit made by an
+# unattended Iteration lands on GitHub attributed to the operator and marked
+# Verified - which ADR 0005 defines as "the operator caused this", not "the
+# operator typed it".
+#
+# Hand edits are overwritten by `ansible-playbook loop.yml`. The two things this
+# file deliberately does NOT contain are the two a machine cannot establish: the
+# token (a browser step) and the key's registration on GitHub (a browser step).
+
+[user]
+	name = {{ loop_commit_author_name }}
+	email = {{ loop_commit_author_email }}
+	signingkey = {{ loop_signing_key_path }}.pub
+
+[gpg]
+	format = ssh
+
+[gpg "ssh"]
+	# So `git log --show-signature` and `git verify-commit` answer on the box
+	# itself. Without it the box can sign and cannot check its own signature,
+	# and the first place anyone would find out a Run's commits are unverifiable
+	# is GitHub, after a whole Run has been spent.
+	allowedSignersFile = {{ loop_credentials_dir }}/allowed_signers
+
+[commit]
+	# The point of the ticket. An Iteration runs `git commit` with no flags, so
+	# if this is not true here, nothing signs and nobody finds out until the
+	# pull request is open.
+	gpgsign = true
+
+[tag]
+	gpgsign = true
+
+[credential "https://github.com"]
+	# Reads the fine-grained token from a file mode 0600 that this role never
+	# writes. A helper rather than a URL with the token in it: a token in a
+	# remote URL ends up in .git/config, in `git remote -v`, and in any error
+	# message that quotes the URL.
+	helper = {{ loop_credentials_dir }}/git-credential-loop
+	# The token is the whole identity; asking for a username interactively on a
+	# box with nobody at it would hang a Run until its Iteration timeout.
+	username = x-access-token
+
+[credential]
+	# An unattended process must never be handed a prompt it cannot answer.
+	interactive = never
+
+[init]
+	defaultBranch = main
+
+[advice]
+	detachedHead = false
