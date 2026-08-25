@@ -31,6 +31,13 @@ and still true as written. It is the count above it that moved. That distinction
 is worth keeping straight: the Docker token widens what the box holds by one line
 that reads Docker Hub, and widens what the box can reach by nothing.
 
+The assertion gates on the Docker identity, which is a step past merely
+counting it, and deliberate: the script grades the box **for a Run**, not for a
+ticket. A box whose `sbx` session has lapsed satisfies every acceptance
+criterion of #81 and would start a Run with no Execution Boundary, and this
+script is what #83's preflight asks. So "the box satisfies #81" and "the
+assertion is clean" are different statements, and the second is the stricter one.
+
 A fifth credential is a decision, not an accident, and the assertion script is
 where it becomes visible: anything on the box that is not one of the four is
 either a violation it names or a gap in the script, and both are things to fix
