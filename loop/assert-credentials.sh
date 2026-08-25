@@ -282,6 +282,7 @@ check_forbidden_files digitalocean-token \
 
 # Fleet SSH keys. A private key is identified by its header rather than by its
 # filename, because the filename is the one part of a key an operator renames.
+repository_keys=()
 #
 # root's home is the sweep's blind spot when this runs as the Run account, which
 # is the documented way to run it. Named rather than passed over: an empty sweep
@@ -301,6 +302,22 @@ while IFS= read -r candidate; do
     # being read. A key parked in /etc/ssh under any other name is still caught.
     [[ $(basename -- "${candidate}") == ssh_host_* ]] && continue
     if head -n1 -- "${candidate}" 2>/dev/null | grep -q -- '-----BEGIN .*PRIVATE KEY-----'; then
+        # A key that is TRACKED CONTENT of a git checkout is the repository's,
+        # not the box's. The Loop's box holds a checkout of the repository a Run
+        # works in, and `tourbot` carries three vendor sample keys in
+        # phpdocx's examples - so without this the assertion is red on a
+        # correctly-built box, which is precisely how a check stops being read
+        # (ADR 0009). Such a file arrived by clone, is visible in a diff, and
+        # changes when the repository changes.
+        #
+        # The line is drawn at *tracked*, not at "inside a checkout". A key
+        # dropped into the checkout by hand is untracked, and is still a key
+        # somebody put on this box - which is the thing this family is for.
+        if git -C "$(dirname -- "${candidate}")" ls-files --error-unmatch -- "${candidate}" \
+            >/dev/null 2>&1; then
+            repository_keys+=("${candidate}")
+            continue
+        fi
         violation "fleet-ssh-key: ${candidate} is a private key that is not the Loop's signing key"
     fi
 done < <(
@@ -314,6 +331,14 @@ done < <(
         -not -path "${home}/.cache/*" 2>/dev/null || true
     find "${system_root}/root/.ssh" "${system_root}/etc/ssh" -maxdepth 1 -type f 2>/dev/null || true
 )
+
+# Reported rather than silent. An exclusion nobody can see is an exclusion
+# nobody can audit, which is the same reason check-inventory.sh prints its own
+# with the count each removed.
+if ((${#repository_keys[@]} > 0)); then
+    observe "$(printf '%d private key(s) skipped as tracked repository content: %s' \
+        "${#repository_keys[@]}" "$(printf '%s ' "${repository_keys[@]}")")"
+fi
 
 # The third door: a secret the boundary holds, which is in no environment and no
 # file this script can read.
@@ -474,7 +499,13 @@ for row in "${allowed[@]}"; do
     printf '  %-9s %-17s %s\n' "[${marker}]" "${name}" "${what}"
     printf '  %-9s %-17s %s\n' "" "" "${detail["${name}"]}"
 done
-printf '  %s\n' "* not gating: absent is the expected state until #83 installs the agent."
+# Printed only when there is a starred row to explain. Every row gates today -
+# the model credential's stopped being the exception when #83 put the agent's
+# login on the box - and a footnote about a marker nobody can see is noise in
+# the one report that has to stay worth reading.
+if printf '%s\n' "${allowed[@]}" | grep -q '|no|'; then
+    printf '  %s\n' "* not gating: absent is the expected state for this row."
+fi
 
 printf '\nForbidden - none of these may be on the box:\n'
 for family in "${forbidden_families[@]}"; do

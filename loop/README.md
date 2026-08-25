@@ -254,6 +254,15 @@ which is in no environment and no file at all. `agents/claude.sh` guards the
 first door at Run start, per-agent, because that collision is a property of the
 agent; this script guards the box.
 
+**A private key that is tracked content of a git checkout is the repository's,
+not the box's.** The box holds a checkout of the repository a Run works in, and
+`tourbot` carries three vendor sample keys in phpdocx's examples - so without
+that exception the fleet-key family is red on a correctly-built box, which is
+how a check stops being read. The line is at *tracked*: a key dropped into the
+checkout by hand is untracked and is still a violation. What was skipped is
+printed with its count, because an exclusion nobody can see is one nobody can
+audit.
+
 It never fixes what it finds. What to do about a fleet key that reached this box
 is not a decision to take unattended.
 

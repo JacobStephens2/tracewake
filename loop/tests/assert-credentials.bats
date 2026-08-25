@@ -45,6 +45,41 @@ setup() { setup_credential_fixture; }
 # Claude Code writes ~/.claude.json the moment it is installed. Accepting it as
 # a credential would report a login on a box where nobody logged in, and the Run
 # would find out at its first Iteration - after the boundary was built.
+# The Loop's box holds a checkout of the repository a Run works in, and
+# `tourbot` carries three vendor sample keys in phpdocx's examples. Flagging
+# them would make this family red on a correctly-built box, which is how a check
+# stops being read.
+@test "a private key that is tracked content of a checkout is not a fleet key" {
+    checkout="${BOX_HOME}/tourbot"
+    mkdir -p "${checkout}/examples"
+    git init --quiet --initial-branch=main "${checkout}"
+    git -C "${checkout}" config user.email "someone@example.invalid"
+    git -C "${checkout}" config user.name "Someone"
+    git -C "${checkout}" config commit.gpgsign false
+    printf -- '-----BEGIN RSA PRIVATE KEY-----\nsample\n' >"${checkout}/examples/Test.pem"
+    git -C "${checkout}" add -A
+    git -C "${checkout}" commit --quiet --message "a vendor's sample key"
+
+    run_assert
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipped as tracked repository content"* ]]
+    [[ "$output" == *"Test.pem"* ]]
+}
+
+# The line is at tracked, not at "inside a checkout": a key somebody put there
+# is a key on this box whatever directory it landed in.
+@test "an untracked private key inside a checkout is still a violation" {
+    checkout="${BOX_HOME}/tourbot"
+    mkdir -p "${checkout}"
+    git init --quiet --initial-branch=main "${checkout}"
+    printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nfleet\n' >"${checkout}/id_ed25519"
+
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fleet-ssh-key"* ]]
+    [[ "$output" == *"id_ed25519"* ]]
+}
+
 @test "an installed agent that was never logged in is not a model credential" {
     rm -rf "${BOX_HOME}/.claude"
     printf '{"hasCompletedOnboarding": false}\n' >"${BOX_HOME}/.claude.json"

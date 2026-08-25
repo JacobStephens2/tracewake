@@ -99,6 +99,20 @@ MUTATIONS = {
         '    find "${home}" -type f -size -32k \\',
         '    find "${home}/.ssh" -maxdepth 1 -type f -size -32k \\',
     ),
+    # The repository-content exception widens from "tracked" to "anywhere inside
+    # a checkout", so a key somebody dropped into the work checkout is skipped.
+    "repository-exception-too-wide": (
+        '        if git -C "$(dirname -- "${candidate}")" ls-files --error-unmatch'
+        ' -- "${candidate}" \\\n            >/dev/null 2>&1; then',
+        '        if git -C "$(dirname -- "${candidate}")" rev-parse --show-toplevel \\\n'
+        '            >/dev/null 2>&1; then',
+    ),
+    # The exception stops being reported, so an exclusion nobody can see is one
+    # nobody can audit.
+    "repository-exception-silent": (
+        'if ((${#repository_keys[@]} > 0)); then',
+        "if false; then",
+    ),
     # Violations are counted but the exit code stops carrying them, so every
     # caller - a Run preflight, a wizard, an operator - reads success.
     "exit-code": (
