@@ -129,8 +129,7 @@ git -C "${repo}" config user.email >/dev/null ||
 # to propose. Skipped where there is no remote, which is every fixture the
 # offline suite builds.
 run_base=""
-if run_base="$(git -C "${repo}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
-    run_base="${run_base#origin/}"
+if run_base="$(loop_base_branch "${repo}" origin)"; then
     run_branch="$(git -C "${repo}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
     [[ ${run_branch} != "${run_base}" ]] ||
         die "the Run is on ${run_base}, origin's default branch - a Run works on its own branch so that its Iterations are a proposal rather than a change"
@@ -468,6 +467,26 @@ if ${propose}; then
         # already ended on a bound keeps that bound's code: which bound ended it
         # is the more useful fact, and LOOP_RUN_PROPOSAL below says the rest.
         ((exit_code != 0)) || exit_code=6
+
+        # The block above was written and committed BEFORE the proposal ran,
+        # because the proposal pushes it and a pull request has to contain the
+        # record of the Run that produced it. So on this path the log now holds
+        # an exit code that is out of date, and the log is the artifact the Run
+        # tells a reviewer to read first. Correct it here rather than leave the
+        # two disagreeing in exactly the case the log exists for.
+        #
+        # Only on failure, and not pushed again: when a proposal fails there is
+        # no pull request to keep in sync - either nothing was pushed at all, or
+        # the branch is up with nothing open on it. Re-running propose.sh by
+        # hand, which is what that second case is for, carries this commit up
+        # with it.
+        {
+            printf '\n### Proposal failed %s\n\n' "$(stamp)"
+            printf -- '- The exit code recorded above was written before the proposal ran.\n'
+            printf -- '- Ending bound: %s\n' "${ended_by}"
+            printf -- '- Exit code: %d\n\n' "${exit_code}"
+        } >>"${progress_log}"
+        commit_bookkeeping "Loop: the proposal failed (${ended_by})"
     fi
 fi
 

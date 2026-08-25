@@ -162,6 +162,24 @@ calls() {
     [[ "$(calls)" != *"github-token"* ]]
 }
 
+# Skipping a missing credential would produce an Iteration that runs, commits,
+# and lands commits that are unsigned or attributed to nobody - which is not
+# recoverable afterwards, and whose first sighting would be the pull request.
+@test "a box missing the signing key fails the Iteration rather than running it" {
+    rm -f "${BOX_HOME}/.ssh/loop_signing_ed25519"
+    run_an_iteration
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"loop_signing_ed25519"* ]]
+    [[ "$(calls)" != *"--max-turns"* ]]
+}
+
+@test "a box missing the git identity fails the Iteration rather than running it" {
+    rm -f "${BOX_HOME}/.gitconfig"
+    run_an_iteration
+    [ "$status" -eq 1 ]
+    [[ "$(calls)" != *"--max-turns"* ]]
+}
+
 @test "a box with no model credential does not build a boundary at all" {
     rm -f "${BOX_HOME}/.claude/.credentials.json"
     run_an_iteration

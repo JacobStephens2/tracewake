@@ -116,6 +116,24 @@
 : "${LOOP_RUN_HEADING:=## Run started}"
 : "${LOOP_ITERATION_HEADING:=### Iteration}"
 
+# The branch a proposal is made against, read from a remote's recorded HEAD.
+# Prints nothing and returns non-zero when the remote has no recorded default,
+# because guessing `main` or `master` aims a Run's proposal at a branch nobody
+# is watching - the target repository's default is `master` and this one's is
+# not.
+#
+# Here rather than in either caller because both need it and for different
+# reasons: run.sh refuses to START a Run on it, at second zero, and propose.sh
+# refuses to propose ONTO it. Two copies of the derivation would drift the day
+# either moved, and the refusals would then disagree about which branch they
+# were protecting.
+loop_base_branch() {
+    local repo="$1" remote="$2" base
+    base="$(git -C "${repo}" symbolic-ref --quiet --short "refs/remotes/${remote}/HEAD" 2>/dev/null)" ||
+        return 1
+    printf '%s\n' "${base#"${remote}/"}"
+}
+
 # Render the Contract for the Progress Log. Written at Run start so that reading
 # the log afterwards tells you which bound fired and what it was set to, without
 # needing the version of this file that was current at the time.

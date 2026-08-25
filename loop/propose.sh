@@ -111,8 +111,7 @@ branch="$(git -C "${repo}" symbolic-ref --quiet --short HEAD)" ||
 # repository's is not, and a wrong base opens a pull request nobody asked for
 # against a branch nobody is watching.
 if [[ -z ${base} ]]; then
-    base="$(git -C "${repo}" symbolic-ref --quiet --short "refs/remotes/${remote}/HEAD" 2>/dev/null || true)"
-    base="${base#"${remote}/"}"
+    base="$(loop_base_branch "${repo}" "${remote}" || true)"
     [[ -n ${base} ]] ||
         die "cannot tell what ${remote}'s default branch is - pass --base. \`git remote set-head ${remote} --auto\` records it."
 fi

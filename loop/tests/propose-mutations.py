@@ -18,9 +18,11 @@ MUTATIONS = {
         "[[ true ]] ||",
     ),
     # The base is guessed rather than read from the remote, so a proposal is
-    # opened against a branch that may not be the default one.
+    # opened against a branch that may not be the default one. The derivation
+    # itself lives in contract.sh, which both this script and run.sh source;
+    # what is mutated here is this script's use of it.
     "base-guessed": (
-        '    base="${base#"${remote}/"}"',
+        '    base="$(loop_base_branch "${repo}" "${remote}" || true)"',
         '    base="main"',
     ),
     # The push is forced, so a Run resolves a conflict by discarding whatever

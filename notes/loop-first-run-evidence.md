@@ -386,6 +386,20 @@ Iteration's own section records what it did, what it **decided** and why, and
 what it found **blocked**. Both of the findings above were found by reading it,
 not by instrumenting anything.
 
+### One thing the Run worked around that the operator should not have made it work around
+
+The Plan was seeded with `--check "~/loop/check-inventory.sh …"`. The Loop's
+directory is mounted into each microVM at its **host** path, and the guest's
+`HOME` is `/home/agent`, so `~/loop/…` resolved to nothing an Iteration could
+run. Iterations recorded the check as unreachable until one of them worked the
+real path out and hand-patched it into the Plan.
+
+That is an operator error rather than a defect - nothing validates the check
+command, because it is free text the operator writes and the Plan carries, which
+is the seam that lets the Loop stay task-agnostic. The README now says the path
+must be absolute and why. It is recorded here because "an Iteration recovered
+from it" is exactly the kind of thing that reads as working and is not.
+
 ## Which bound ended the Run, and whether the first values were right
 
 | Bound | First value | What happened |
@@ -414,3 +428,13 @@ is the safe direction, and is not the same as being right.
 - **That host-proxy credential injection works for this configuration.** It does
   not, and ADR 0011 records why: the credential is a subscription, and the proxy
   injects API keys.
+- **That a Run tells the operator it has finished.** Spec #73's user story 6
+  asks not to have to poll it. A Run prints its result and exits; nothing
+  notifies anybody. All three Runs here were started by hand and read
+  afterwards, which is not the same thing.
+- **That the box's credential inventory is checked before a Run.** It is the
+  operator's and the walkthrough's, not `run.sh`'s, and `assert-credentials.sh`
+  now says so - a Run's preflight checks what a Run needs and can check with no
+  box under it, so that the whole Contract stays exercisable offline. What a Run
+  does enforce is the model credential and the absence of a metered key, both in
+  the agent adapter.

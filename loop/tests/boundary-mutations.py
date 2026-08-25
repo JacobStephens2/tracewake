@@ -44,6 +44,13 @@ MUTATIONS = {
         'put "${HOME}/.config/loop/github-token"'
         ' "${guest_home}/.config/loop/github-token" 0600',
     ),
+    # A missing credential is skipped instead of fatal - the shape this had
+    # before, which would run an Iteration that commits unsigned.
+    "missing-credential-skipped": (
+        '    [[ -f ${src} ]] ||\n        die "${src} is not on this box'
+        ' - a Run needs it inside the boundary. Apply ansible/loop.yml."',
+        "    [[ -f ${src} ]] || return 0",
+    ),
     # A Run starts with no model credential on the box and finds out one
     # Iteration at a time.
     "model-credential-unchecked": (

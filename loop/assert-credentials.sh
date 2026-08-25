@@ -16,7 +16,17 @@
 # It grades the box for a RUN, not for a ticket. That is why an Execution
 # Boundary whose session has lapsed is a violation rather than a note: the box
 # would still satisfy every acceptance criterion of #81 and a Run started on it
-# would have no boundary, and this script is what #83's preflight asks.
+# would have no boundary.
+#
+# **`run.sh` does not call this**, and that is a decision rather than an
+# omission. A Run's preflight checks what a Run needs and can check offline, so
+# that the whole Contract is exercisable by a suite with no box under it; this
+# grades a specific box, needs `sbx`, and takes seconds. What a Run does enforce
+# is the one credential it cannot start without - `agents/claude.sh` refuses an
+# Iteration with no model credential, and refuses one with a metered key in the
+# environment. This script is the operator's and the walkthrough's: it is stage
+# 5 of `wizards/loop-claude-login.sh`, and it is what to run before leaving a
+# box alone for a while rather than before every Run.
 #
 #   0  clean - every gating credential is held, and nothing forbidden is here.
 #   1  the check could not run.
@@ -283,6 +293,19 @@ check_forbidden_files digitalocean-token \
 # Fleet SSH keys. A private key is identified by its header rather than by its
 # filename, because the filename is the one part of a key an operator renames.
 repository_keys=()
+
+# Whether a private key is upstream content of a checkout rather than something
+# put on this box. True only when the file exists on the remote's recorded
+# default branch - see the caller for why "tracked" is not enough.
+key_came_with_the_clone() {
+    local candidate="$1" dir root base relative
+    dir="$(dirname -- "${candidate}")"
+    root="$(git -C "${dir}" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    base="$(git -C "${root}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" ||
+        return 1
+    relative="${candidate#"${root}/"}"
+    git -C "${root}" cat-file -e "${base}:${relative}" 2>/dev/null
+}
 #
 # root's home is the sweep's blind spot when this runs as the Run account, which
 # is the documented way to run it. Named rather than passed over: an empty sweep
@@ -302,19 +325,23 @@ while IFS= read -r candidate; do
     # being read. A key parked in /etc/ssh under any other name is still caught.
     [[ $(basename -- "${candidate}") == ssh_host_* ]] && continue
     if head -n1 -- "${candidate}" 2>/dev/null | grep -q -- '-----BEGIN .*PRIVATE KEY-----'; then
-        # A key that is TRACKED CONTENT of a git checkout is the repository's,
-        # not the box's. The Loop's box holds a checkout of the repository a Run
-        # works in, and `tourbot` carries three vendor sample keys in
-        # phpdocx's examples - so without this the assertion is red on a
-        # correctly-built box, which is precisely how a check stops being read
-        # (ADR 0009). Such a file arrived by clone, is visible in a diff, and
-        # changes when the repository changes.
+        # A key that CAME WITH THE CLONE is the repository's, not the box's. The
+        # Loop's box holds a checkout of the repository a Run works in, and
+        # `tourbot` carries three vendor sample keys in phpdocx's examples - so
+        # without this the assertion is red on a correctly-built box, which is
+        # precisely how a check stops being read (ADR 0009).
         #
-        # The line is drawn at *tracked*, not at "inside a checkout". A key
-        # dropped into the checkout by hand is untracked, and is still a key
-        # somebody put on this box - which is the thing this family is for.
-        if git -C "$(dirname -- "${candidate}")" ls-files --error-unmatch -- "${candidate}" \
-            >/dev/null 2>&1; then
+        # The line is drawn at "on the remote's default branch", not at
+        # "tracked", and the difference is the whole point: a Run commits into
+        # this same checkout, so `git ls-files` would exempt a key an Iteration
+        # committed - an unattended agent could put a fleet key on this box and
+        # take it out of the sweep in the same move. A file on `origin/HEAD`
+        # arrived by clone from upstream, which is what the exemption claims.
+        #
+        # No `origin/HEAD` means no exemption, which is the safe direction: a
+        # checkout with no recorded default branch is one this cannot reason
+        # about.
+        if key_came_with_the_clone "${candidate}"; then
             repository_keys+=("${candidate}")
             continue
         fi
@@ -336,7 +363,7 @@ done < <(
 # nobody can audit, which is the same reason check-inventory.sh prints its own
 # with the count each removed.
 if ((${#repository_keys[@]} > 0)); then
-    observe "$(printf '%d private key(s) skipped as tracked repository content: %s' \
+    observe "$(printf '%d private key(s) skipped as upstream repository content: %s' \
         "${#repository_keys[@]}" "$(printf '%s ' "${repository_keys[@]}")")"
 fi
 

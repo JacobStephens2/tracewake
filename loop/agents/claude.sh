@@ -117,7 +117,7 @@ trap cleanup EXIT INT TERM
 # Read-only. The check is what says the work did not land, and an agent that
 # could edit it could make it say otherwise - which is the one thing a Run's own
 # grade must not be able to do.
-loop_dir="${LOOP_SCRIPTS_DIR:-$(cd -- "${agent_dir}/.." && pwd)}"
+loop_dir="$(cd -- "${agent_dir}/.." && pwd)"
 
 "${sbx}" create --quiet --name "${sandbox}" claude "${workspace}" "${loop_dir}:ro" >&2 ||
     die "could not create the Execution Boundary for this Iteration"
@@ -128,10 +128,17 @@ loop_dir="${LOOP_SCRIPTS_DIR:-$(cd -- "${agent_dir}/.." && pwd)}"
 #
 # `sbx cp` will not create a parent directory it has not been given, so each
 # destination directory is made first.
+#
+# A missing source is fatal, not skipped. Every one of these is placed by
+# `ansible/loop.yml`, so its absence means a box that was never configured - and
+# skipping it would produce an Iteration that runs, commits, and lands commits
+# that are unsigned or attributed to nobody. That is not recoverable after the
+# fact, and the first place anyone would find out is the pull request.
 guest_home=/home/agent
 put() {
     local src="$1" dest="$2" mode="$3"
-    [[ -f ${src} ]] || return 0
+    [[ -f ${src} ]] ||
+        die "${src} is not on this box - a Run needs it inside the boundary. Apply ansible/loop.yml."
     "${sbx}" exec "${sandbox}" mkdir -p "$(dirname -- "${dest}")" ||
         die "could not prepare ${dest} in the boundary"
     "${sbx}" cp "${src}" "${sandbox}:${dest}" >/dev/null ||

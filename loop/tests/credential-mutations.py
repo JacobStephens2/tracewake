@@ -99,13 +99,21 @@ MUTATIONS = {
         '    find "${home}" -type f -size -32k \\',
         '    find "${home}/.ssh" -maxdepth 1 -type f -size -32k \\',
     ),
-    # The repository-content exception widens from "tracked" to "anywhere inside
-    # a checkout", so a key somebody dropped into the work checkout is skipped.
+    # The exemption widens from "on the remote's default branch" to "anywhere
+    # inside a checkout", so a key somebody dropped into the work checkout is
+    # skipped.
     "repository-exception-too-wide": (
-        '        if git -C "$(dirname -- "${candidate}")" ls-files --error-unmatch'
-        ' -- "${candidate}" \\\n            >/dev/null 2>&1; then',
-        '        if git -C "$(dirname -- "${candidate}")" rev-parse --show-toplevel \\\n'
-        '            >/dev/null 2>&1; then',
+        '    if key_came_with_the_clone "${candidate}"; then',
+        '    if git -C "$(dirname -- "${candidate}")" rev-parse --show-toplevel'
+        ' >/dev/null 2>&1; then',
+    ),
+    # The exemption widens from "on the remote's default branch" to "tracked",
+    # which is the version an unattended agent can defeat: a Run commits into
+    # this checkout, so an Iteration could commit a key and exempt it in one move.
+    "repository-exception-trusts-tracked": (
+        '    base="$(git -C "${root}" symbolic-ref --quiet --short'
+        ' refs/remotes/origin/HEAD 2>/dev/null)" ||\n        return 1',
+        '    base=HEAD',
     ),
     # The exception stops being reported, so an exclusion nobody can see is one
     # nobody can audit.

@@ -44,6 +44,10 @@ was deliberately left off are in
 | `tests/seed-run.bats` | The seed step's offline suite, seamed separately (#82). |
 | `tests/fake-agent.sh` | The scripted agent the suite drives the real Run through. |
 | `tests/fake-task-source.sh` | The scripted task source, so the seed step's suite reaches no network. |
+| `tests/fake-propose.sh` | The scripted proposal, so a Run's suite pushes nowhere. |
+| `tests/fake-pr-source.sh` | The scripted pull request, so the proposal's suite opens none. |
+| `tests/fake-sbx.sh` | The scripted Execution Boundary, so the adapter's suite needs no hypervisor. |
+| `tests/fake-curl.sh` | The scripted GitHub, so `draft: true` is asserted rather than stated. |
 | `tests/propose.bats` | The proposal's offline suite, seamed separately (#83). |
 | `tests/pr-source.bats` | The pull-request surface's own suite - what one request says. |
 | `tests/boundary.bats` | The agent adapter's suite: an Iteration inside the boundary. |
@@ -133,9 +137,18 @@ seeding, in full:
 
 ```
 seed-run.sh --repo ~/tourbot --task 648 --area 'dashboards and reports' \
-    --check "check-inventory.sh --checkout . --inventory docs/tblEmailMessage-inventory.md \
+    --check "/home/loop/loop/check-inventory.sh --checkout . \
+             --inventory documentation/tblEmailMessage-inventory.md \
              --scope 'mtourbot/reports/*'"
 ```
+
+**An absolute path, and `~` will not do.** The Loop's directory is mounted into
+each Iteration's microVM at its host path, but the guest's `HOME` is
+`/home/agent`, so `~/loop/check-inventory.sh` resolves to nothing an Iteration
+can run. The first Run was seeded with a `~` and every Iteration recorded the
+check as unreachable until one of them worked the real path out by hand. Nothing
+validates the check command - it is free text the operator writes and the Plan
+carries - so this is a rule rather than a guard.
 
 **This is not issue intake, and the difference is load-bearing** (ADR 0010). It
 is a human handing over a task he authored, and that authorship is what makes
@@ -294,10 +307,10 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and nineteen tests, no model and no network. Forty-two drive `run.sh`
+Two hundred and twenty-three tests, no model and no network. Forty-two drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history. Thirty-two drive
-`check-inventory.sh` against small fixture checkouts. Forty-four drive
+`check-inventory.sh` against small fixture checkouts. Forty-six drive
 `assert-credentials.sh` against a constructed box - a home directory, a system
 root and a scripted fake `sbx`, all three of which a tmpdir can hold.
 Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
@@ -305,7 +318,7 @@ what the Plan ends up saying, what the Progress Log is left ready for, and what
 seeding twice does. Twenty-four drive `propose.sh` against a real `git push` to
 a bare repository and a scripted fake pull request. Thirteen drive
 `pr-sources/github.sh` through a fake `curl`, which is what makes `draft: true`
-something the suite asserts rather than something the file says. Twenty-three drive
+something the suite asserts rather than something the file says. Twenty-five drive
 `agents/claude.sh` through a scripted fake `sbx` and assert what an Iteration
 does to the boundary. None of them names an internal function or depends on the
 order of steps.
@@ -318,8 +331,8 @@ component (spec issue #73, Seam B).
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
 Contract, each guard of the check, each credential family, each guard of the
 seed step, each thing holding Proposal-Only Output up, each property of the
-boundary - and confirms the suite goes red. Eighty-two deliberate breaks,
-eighty-two caught. It names
+boundary - and confirms the suite goes red. Eighty-four deliberate breaks,
+eighty-four caught. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs
 one subject's set. The evidence is in

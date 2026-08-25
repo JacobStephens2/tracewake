@@ -49,35 +49,79 @@ setup() { setup_credential_fixture; }
 # `tourbot` carries three vendor sample keys in phpdocx's examples. Flagging
 # them would make this family red on a correctly-built box, which is how a check
 # stops being read.
-@test "a private key that is tracked content of a checkout is not a fleet key" {
-    checkout="${BOX_HOME}/tourbot"
-    mkdir -p "${checkout}/examples"
-    git init --quiet --initial-branch=main "${checkout}"
-    git -C "${checkout}" config user.email "someone@example.invalid"
-    git -C "${checkout}" config user.name "Someone"
-    git -C "${checkout}" config commit.gpgsign false
-    printf -- '-----BEGIN RSA PRIVATE KEY-----\nsample\n' >"${checkout}/examples/Test.pem"
-    git -C "${checkout}" add -A
-    git -C "${checkout}" commit --quiet --message "a vendor's sample key"
+# A checkout of the repository a Run works in, with an upstream it was cloned
+# from - which is what the exemption below turns on.
+make_checkout() {
+    CHECKOUT="${BOX_HOME}/tourbot"
+    UPSTREAM="${BATS_TEST_TMPDIR}/upstream.git"
+    git init --quiet --bare --initial-branch=main "${UPSTREAM}"
+    git init --quiet --initial-branch=main "${CHECKOUT}"
+    git -C "${CHECKOUT}" config user.email "someone@example.invalid"
+    git -C "${CHECKOUT}" config user.name "Someone"
+    git -C "${CHECKOUT}" config commit.gpgsign false
+    git -C "${CHECKOUT}" remote add origin "${UPSTREAM}"
+}
+
+publish_upstream() {
+    git -C "${CHECKOUT}" add -A
+    git -C "${CHECKOUT}" commit --quiet --message "$1"
+    git -C "${CHECKOUT}" push --quiet origin main
+    git -C "${CHECKOUT}" remote set-head origin main
+}
+
+@test "a private key that came with the clone is not a fleet key" {
+    make_checkout
+    mkdir -p "${CHECKOUT}/examples"
+    printf -- '-----BEGIN RSA PRIVATE KEY-----\nsample\n' >"${CHECKOUT}/examples/Test.pem"
+    publish_upstream "a vendor's sample key"
 
     run_assert
     [ "$status" -eq 0 ]
-    [[ "$output" == *"skipped as tracked repository content"* ]]
+    [[ "$output" == *"skipped as upstream repository content"* ]]
     [[ "$output" == *"Test.pem"* ]]
 }
 
-# The line is at tracked, not at "inside a checkout": a key somebody put there
-# is a key on this box whatever directory it landed in.
+# A key somebody put there is a key on this box whatever directory it landed in.
 @test "an untracked private key inside a checkout is still a violation" {
-    checkout="${BOX_HOME}/tourbot"
-    mkdir -p "${checkout}"
-    git init --quiet --initial-branch=main "${checkout}"
-    printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nfleet\n' >"${checkout}/id_ed25519"
+    make_checkout
+    printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nfleet\n' >"${CHECKOUT}/id_ed25519"
 
     run_assert
     [ "$status" -eq 2 ]
     [[ "$output" == *"fleet-ssh-key"* ]]
     [[ "$output" == *"id_ed25519"* ]]
+}
+
+# The one an unattended agent could reach for. A Run commits into this same
+# checkout, so an exemption keyed on "tracked" would let an Iteration put a key
+# on the box and take it out of the sweep in the same move.
+@test "a private key an Iteration committed is still a violation" {
+    make_checkout
+    printf 'nothing\n' >"${CHECKOUT}/README.md"
+    publish_upstream "the repository as it was cloned"
+
+    git -C "${CHECKOUT}" checkout --quiet -b loop/run-1
+    printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nfleet\n' >"${CHECKOUT}/id_ed25519"
+    git -C "${CHECKOUT}" add -A
+    git -C "${CHECKOUT}" commit --quiet --message "Iteration 1: helpfully commit a key"
+
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fleet-ssh-key"* ]]
+    [[ "$output" == *"id_ed25519"* ]]
+}
+
+# No recorded default branch means nothing to compare against, and the safe
+# direction is to report rather than to exempt.
+@test "a checkout with no upstream default branch exempts nothing" {
+    make_checkout
+    printf -- '-----BEGIN RSA PRIVATE KEY-----\nsample\n' >"${CHECKOUT}/Test.pem"
+    git -C "${CHECKOUT}" add -A
+    git -C "${CHECKOUT}" commit --quiet --message "tracked, but nowhere upstream"
+
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"Test.pem"* ]]
 }
 
 @test "an installed agent that was never logged in is not a model credential" {

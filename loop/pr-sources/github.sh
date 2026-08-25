@@ -62,7 +62,6 @@ token_file="${LOOP_GITHUB_TOKEN_FILE:-${HOME}/.config/loop/github-token}"
     die "no GitHub token at ${token_file} - the box can commit but cannot propose"
 token="$(tr -d '\r\n' <"${token_file}")"
 
-api="${LOOP_GITHUB_API:-https://api.github.com}"
 owner="${task_repo%%/*}"
 
 # `--fail-with-body` rather than `--fail`: a 422 from GitHub carries the reason
@@ -78,7 +77,7 @@ github_api() {
         --header "X-GitHub-Api-Version: 2022-11-28" \
         --header "User-Agent: eta-loop" \
         "$@" \
-        "${api}/${path#/}"
+        "https://api.github.com/${path#/}"
 }
 
 # --- An open pull request for this head already? ----------------------------
