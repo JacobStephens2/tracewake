@@ -11,6 +11,12 @@
 # shell loop rather than a stop hook inside one agent session precisely because
 # a single session accumulates context and defeats the point (spec issue #73).
 #
+# Two of the Contract's five bounds end an ITERATION rather than a Run - the
+# Iteration wall clock and the turn bound inside it. Both are recorded as faults,
+# so a Run that reached its cap having hit one does not exit 0, and neither is a
+# reason to stop: the next Iteration reads in the Progress Log that the last one
+# was cut off and what it left behind.
+#
 # What ends a Run is declared in contract.sh before the Run starts, written into
 # the Progress Log at Run start, and named on stdout at the end:
 #
@@ -24,7 +30,8 @@
 #   2  run-clock: the Run's wall clock ended it.
 #   3  consecutive-noops: the head stopped moving.
 #   4  agent-failed: an agent process exited non-zero on its own.
-#   5  iteration-cap, but at least one Iteration was killed by its wall clock.
+#   5  iteration-cap, but at least one Iteration was cut off by a bound of its
+#      own - its wall clock, or the turn bound inside it.
 #   6  the Run reached a planned end and the proposal failed. The bound that
 #      ended the Run is still reported; what failed is the Run's only external
 #      effect, and a Run whose proposal is missing has produced nothing the
@@ -191,6 +198,7 @@ iterations_run=0
 committed_count=0
 noop_count=0
 killed_count=0
+turn_bound_count=0
 promise_count=0
 
 prompt_for_iteration() {
@@ -273,6 +281,19 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
         killed=true
     fi
 
+    # The turn bound firing is not the agent failing, and the first Run proved
+    # the difference is the whole Run: read as a failure it ended everything at
+    # Iteration 1, with the Iteration's work sitting uncommitted in the working
+    # tree. It is one of the Contract's five bounds and it ends an ITERATION,
+    # exactly as the Iteration wall clock does.
+    #
+    # Which vendor message means it is the agent adapter's to know (ADR 0004);
+    # what arrives here is one exit status the Contract declares.
+    turn_bound=false
+    if ((agent_rc == LOOP_AGENT_TURN_BOUND_EXIT)); then
+        turn_bound=true
+    fi
+
     noop=false
     if [[ ${head_before} == "${head_after}" ]]; then
         noop=true
@@ -294,14 +315,24 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
         dirty=true
     fi
 
+    # Which bound cut the Iteration off, if either did, in the words the Progress
+    # Log uses. Built here rather than inline in the printf below: two `&&`
+    # chains inside one command substitution read as a trick, and this file is
+    # the one an operator reads to work out what a Run did.
+    exit_note=""
+    if ${killed}; then
+        exit_note="$(printf ' (killed at its %ss wall clock)' "${iteration_timeout}")"
+    elif ${turn_bound}; then
+        exit_note="$(printf ' (turn bound of %s reached)' "${LOOP_MAX_TURNS}")"
+    fi
+
     # The Loop's own record of the Iteration, appended AFTER the head comparison
     # so that the bookkeeping commit below cannot make a No-op Iteration look
     # like progress. Whatever the agent wrote about its decisions and blockers is
     # already above this, written by the agent itself.
     {
         printf '\n%s %d - %s\n\n' "${LOOP_ITERATION_HEADING}" "${iteration}" "${iteration_started}"
-        printf -- '- Agent exit: %d%s\n' "${agent_rc}" \
-            "$(${killed} && printf ' (killed at its %ss wall clock)' "${iteration_timeout}")"
+        printf -- '- Agent exit: %d%s\n' "${agent_rc}" "${exit_note}"
         printf -- '- Turn bound: %s\n' "${LOOP_MAX_TURNS}"
         if ${noop}; then
             printf -- '- No-op Iteration: head unchanged at %s\n' "${head_before:0:12}"
@@ -317,7 +348,7 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
         # from this file, and "the agent exited 3" with nothing behind it is not
         # a diagnosis - but pasting a healthy Iteration's whole transcript in
         # here would bury the narrative the Progress Log exists to be.
-        if ${killed} || ((agent_rc != 0)); then
+        if ${killed} || ${turn_bound} || ((agent_rc != 0)); then
             printf '\nAgent output, last %d lines:\n\n' "${LOOP_FAULT_OUTPUT_LINES}"
             sed 's/^/    /' <(tail -n "${LOOP_FAULT_OUTPUT_LINES}" "${output_file}")
         fi
@@ -336,6 +367,14 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
     if ${killed}; then
         killed_count=$((killed_count + 1))
         faults+=("iteration-timeout")
+    elif ${turn_bound}; then
+        # A fault, so a Run that reached its cap having hit it does not exit 0 -
+        # the same treatment the Iteration wall clock gets, and for the same
+        # reason: an Iteration that was cut off did not finish what it started.
+        # NOT an ending bound: the Run continues, and the next Iteration reads
+        # in the Progress Log that this one was cut off and what it left behind.
+        turn_bound_count=$((turn_bound_count + 1))
+        faults+=("turn-bound")
     elif ((agent_rc != 0)); then
         faults+=("agent-failed")
         ended_by="agent-failed"
@@ -379,8 +418,9 @@ fi
 {
     printf '\n### Run ended %s\n\n' "$(stamp)"
     printf -- '- Ended by: %s\n' "${ended_by}"
-    printf -- '- Iterations: %d (committed %d, no-op %d, killed %d)\n' \
-        "${iterations_run}" "${committed_count}" "${noop_count}" "${killed_count}"
+    printf -- '- Iterations: %d (committed %d, no-op %d, killed %d, turn bound %d)\n' \
+        "${iterations_run}" "${committed_count}" "${noop_count}" "${killed_count}" \
+        "${turn_bound_count}"
     printf -- '- Completion Promises recorded: %d\n' "${promise_count}"
     printf -- '- Faults: %s\n' "${fault_summary}"
     printf -- '- Exit code: %d\n' "${exit_code}"

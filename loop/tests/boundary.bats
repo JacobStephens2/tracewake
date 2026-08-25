@@ -170,3 +170,29 @@ calls() {
     [[ "$output" == *"metered"* ]]
     [ -z "$(calls)" ]
 }
+
+# --- The turn bound is the adapter's to recognise ----------------------------
+#
+# ADR 0004 puts vendor concerns here: which message means the turn bound fired
+# is a property of Claude Code, and the Contract declares only the exit status
+# the two sides share.
+
+@test "an agent that ran out of turns exits the turn-bound status, not a failure" {
+    FAKE_SBX_BEHAVIOUR=turn-bound run_an_iteration
+    [ "$status" -eq 33 ]
+}
+
+@test "an agent that failed for another reason keeps its own status" {
+    FAKE_SBX_BEHAVIOUR=agent-fails run_an_iteration
+    [ "$status" -eq 3 ]
+}
+
+@test "the agent's output still reaches the caller, so a fault is diagnosable" {
+    FAKE_SBX_BEHAVIOUR=turn-bound run_an_iteration
+    [[ "$output" == *"Reached max turns"* ]]
+}
+
+@test "the boundary is destroyed when the turn bound fires" {
+    FAKE_SBX_BEHAVIOUR=turn-bound run_an_iteration
+    [[ "$(calls)" == *"rm --force loop-"* ]]
+}

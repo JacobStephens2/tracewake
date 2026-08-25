@@ -27,6 +27,8 @@
 #   promise       commit, and record the Completion Promise in the Progress Log
 #   promise-noop  emit the Completion Promise on stdout and commit nothing
 #   hang          outlive the Iteration's wall clock
+#   turn-bound    do work, leave it uncommitted, and exit the way an agent
+#                 adapter says the turn bound fired
 #   fail          exit 3 the way a broken invocation does
 #   slow:N        take N seconds, then commit
 
@@ -97,6 +99,15 @@ case "${behaviour}" in
         ;;
     hang)
         exec sleep 300
+        ;;
+    turn-bound)
+        # The shape the first Run actually produced: an Iteration that did real
+        # work and ran out of turns before it could commit it, so the head has
+        # not moved and the working tree is dirty.
+        printf 'work from iteration %d\n' "${count}" >>work.txt
+        log_work
+        printf 'Error: Reached max turns (%s)\n' "${max_turns}" >&2
+        exit "${LOOP_AGENT_TURN_BOUND_EXIT:-33}"
         ;;
     fail)
         printf 'fake-agent: pretending the invocation is broken\n' >&2

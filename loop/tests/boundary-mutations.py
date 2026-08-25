@@ -49,6 +49,19 @@ MUTATIONS = {
         '[[ -f "${credentials_dir}/.credentials.json" ]] ||',
         "[[ true ]] ||",
     ),
+    # The turn bound firing stops being told apart from a broken invocation,
+    # which is what it looked like before the first Run.
+    "turn-bound-unrecognised": (
+        "if ((agent_rc != 0)) && grep -qF 'Reached max turns' -- \"${transcript}\"; then",
+        "if false; then",
+    ),
+    # `pipefail` back on for the agent's pipeline. `set -e` then ends this
+    # script the moment the agent exits non-zero, so the turn bound is never
+    # recognised - which is how this was written the first time.
+    "pipefail-kills-detection": (
+        "set +o pipefail\n\"${sbx}\" exec --workdir",
+        "\"${sbx}\" exec --workdir",
+    ),
     # The turn bound the Contract declared never reaches the agent.
     "turn-bound-dropped": (
         '--max-turns "${max_turns}" \\',

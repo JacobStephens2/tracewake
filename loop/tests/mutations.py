@@ -76,6 +76,19 @@ MUTATIONS = {
         "        ((exit_code != 0)) || exit_code=6",
         "        :",
     ),
+    # The turn bound is read as a broken invocation again, so one of the
+    # Contract's five bounds ends the whole Run at whichever Iteration hits it.
+    # This is the defect the first Run found, kept as a mutation.
+    "turn-bound-is-a-failure": (
+        "    if ((agent_rc == LOOP_AGENT_TURN_BOUND_EXIT)); then\n        turn_bound=true\n    fi",
+        "    if false; then\n        turn_bound=true\n    fi",
+    ),
+    # The turn bound stops being a fault, so a Run that reached its cap with an
+    # Iteration cut off short reports that it worked.
+    "turn-bound-not-a-fault": (
+        '        turn_bound_count=$((turn_bound_count + 1))\n        faults+=("turn-bound")',
+        "        turn_bound_count=$((turn_bound_count + 1))",
+    ),
     # A Run may execute on the branch its proposal was supposed to protect.
     "base-branch-allowed": (
         '    [[ ${run_branch} != "${run_base}" ]] ||',

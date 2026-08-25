@@ -70,12 +70,20 @@ for subject in "${subjects[@]}"; do
     cp -- "${target}" "${backup}"
 
     printf '%s\n' "${script}"
+    declared="$(python3 "${loop_dir}/${mutations}" --list | grep -c '')"
+    subject_applied=0
     while read -r mutation; do
         cp -- "${backup}" "${target}"
         python3 "${loop_dir}/${mutations}" "${mutation}" "${target}"
         applied=$((applied + 1))
+        subject_applied=$((subject_applied + 1))
 
-        output="$("${bats_cmd}" "${loop_dir}/${suite}" 2>&1 || true)"
+        # </dev/null is load-bearing. Without it the suite inherits this loop's
+        # stdin - the mutation list - and anything under it that reads stdin
+        # swallows the rest, so the loop ends early and the summary reports
+        # "all N caught" for an N that is not the number of mutations there are.
+        # Found when a subject with nine reported one.
+        output="$("${bats_cmd}" "${loop_dir}/${suite}" </dev/null 2>&1 || true)"
         red="$(grep -c '^not ok' <<<"${output}" || true)"
 
         if ((red > 0)); then
@@ -85,6 +93,15 @@ for subject in "${subjects[@]}"; do
             survivors=$((survivors + 1))
         fi
     done < <(python3 "${loop_dir}/${mutations}" --list)
+
+    # The guard against the failure above, kept even though the cause is fixed:
+    # a mutation check that quietly skips mutations reports coverage that does
+    # not exist, which is the one thing this script must never do.
+    if ((subject_applied != declared)); then
+        printf '  %s\n' \
+            "APPLIED ${subject_applied} of ${declared} declared mutations - the list was truncated" >&2
+        survivors=$((survivors + declared - subject_applied))
+    fi
 
     restore
 done

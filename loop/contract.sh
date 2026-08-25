@@ -32,7 +32,16 @@
 
 # How many turns the agent may take inside one Iteration. Cuts off an agent that
 # starts thrashing *inside* the Iteration rather than at its edge.
-: "${LOOP_MAX_TURNS:=40}"
+#
+# Was 40, which the first Run found too small (#83): Iteration 1 spent all forty
+# reading a 128-occurrence classification task, wrote a file, and ran out before
+# it could commit - so a whole Iteration's work landed as an uncommitted diff and
+# a No-op. 100 is the wall clock's answer rather than a guess: forty turns took
+# about four and a half minutes, so a hundred is roughly eleven, which leaves
+# headroom under the fifteen-minute Iteration timeout. The two bounds should not
+# fire at the same moment; whichever bites first should bite alone, or a Run
+# cannot say which one it was.
+: "${LOOP_MAX_TURNS:=100}"
 
 # How long the whole Run may last. Ends a Run where every Iteration runs long
 # before the iteration cap would.
@@ -52,6 +61,21 @@
 # failure. Changing vendor is changing this one line, which is also why the
 # offline suite can point it at a scripted fake and drive the real Run.
 : "${LOOP_AGENT_COMMAND:=}"
+
+# The exit status an agent command uses to say THE TURN BOUND FIRED, as opposed
+# to the agent having failed on its own. They are different events and the first
+# Run proved it matters: Claude Code exits 1 on reaching --max-turns, which the
+# Loop read as a broken invocation and used to end the whole Run at Iteration 1.
+#
+# The turn bound is one of the Contract's five. Reaching it ends an ITERATION,
+# exactly as the Iteration wall clock does - it is not a fault in the agent and
+# it is not a reason to stop. Which vendor message means it is the agent
+# adapter's to know (ADR 0004); this number is the vocabulary the two share.
+#
+# 33 rather than something lower: 1 and 2 are what any broken command exits with,
+# 124 and 137 are `timeout`'s, and 64 upwards are conventionally usage errors. A
+# code an agent is unlikely to pick for itself is the point.
+: "${LOOP_AGENT_TURN_BOUND_EXIT:=33}"
 
 # The string an agent emits to claim the work is finished. Recorded in the
 # Progress Log as advisory evidence and never terminal on its own: nothing

@@ -11,7 +11,8 @@
 #
 #   FAKE_SBX_STATE       a scratch path. Every invocation is appended to
 #                        "<path>.calls" as one line, argv joined by spaces.
-#   FAKE_SBX_BEHAVIOUR   ok | create-fails | agent-fails | agent-hangs
+#   FAKE_SBX_BEHAVIOUR   ok | create-fails | agent-fails | agent-hangs |
+#                        turn-bound
 #
 # `exec` is the one that has to do something rather than record something: the
 # real one runs the agent, so this one carries the agent's exit status.
@@ -44,6 +45,13 @@ case "${1:-}" in
             case "${FAKE_SBX_BEHAVIOUR:-ok}" in
                 agent-fails) exit 3 ;;
                 agent-hangs) exec sleep 300 ;;
+                # What Claude Code does on reaching --max-turns: a message, and
+                # the same exit status a broken invocation uses. Telling the two
+                # apart is the adapter's job, which is what this exercises.
+                turn-bound)
+                    printf 'Error: Reached max turns (40)\n' >&2
+                    exit 1
+                    ;;
             esac
         fi
         ;;

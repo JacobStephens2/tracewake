@@ -449,3 +449,62 @@ setup() {
     [ "$status" -eq 1 ]
     [ "$(agent_invocations)" -eq 0 ]
 }
+
+# --- The turn bound ends an Iteration, not a Run ----------------------------
+#
+# The first Run's finding, as tests. Claude Code exits non-zero on reaching
+# --max-turns, and the Loop read that as a broken invocation and ended the whole
+# Run at Iteration 1 with the Iteration's work sitting uncommitted. The turn
+# bound is one of the Contract's five; it ends an Iteration exactly as the
+# Iteration wall clock does.
+
+@test "an Iteration that reaches its turn bound does not end the Run" {
+    export LOOP_MAX_ITERATIONS=3
+    export FAKE_AGENT_BEHAVIOURS="turn-bound commit commit"
+    run_the_loop
+    [[ "$output" == *"LOOP_RUN_ENDED_BY=iteration-cap"* ]]
+    [ "$(agent_invocations)" -eq 3 ]
+}
+
+@test "the turn bound is recorded as a fault, so the Run does not exit 0" {
+    export LOOP_MAX_ITERATIONS=2
+    export FAKE_AGENT_BEHAVIOURS="turn-bound commit"
+    run_the_loop
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"LOOP_RUN_FAULTS="*"turn-bound"* ]]
+}
+
+@test "the Progress Log says the turn bound was what cut the Iteration off" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="turn-bound"
+    run_the_loop
+    [[ "$(progress_log)" == *"turn bound of 40 reached"* ]]
+    [[ "$(progress_log)" == *"Uncommitted changes left in the working tree"* ]]
+}
+
+@test "the Run's summary counts turn-bound Iterations separately from failures" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="turn-bound"
+    run_the_loop
+    [[ "$(progress_log)" == *"turn bound 1"* ]]
+    [[ "$(progress_log)" != *"Ended by: agent-failed"* ]]
+}
+
+@test "an agent that fails for any other reason still ends the Run" {
+    export LOOP_MAX_ITERATIONS=3
+    export FAKE_AGENT_BEHAVIOURS="fail commit commit"
+    run_the_loop
+    [ "$status" -eq 4 ]
+    [[ "$output" == *"LOOP_RUN_ENDED_BY=agent-failed"* ]]
+    [ "$(agent_invocations)" -eq 1 ]
+}
+
+@test "consecutive turn-bound Iterations still abort as No-ops" {
+    # They commit nothing, so the head does not move, and the bound that notices
+    # an agent stuck re-reading the same task is the one that should fire.
+    export LOOP_MAX_ITERATIONS=5
+    export FAKE_AGENT_BEHAVIOURS="turn-bound"
+    run_the_loop
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"LOOP_RUN_ENDED_BY=consecutive-noops"* ]]
+}

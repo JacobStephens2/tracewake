@@ -48,6 +48,14 @@
 
 set -euo pipefail
 
+# The Contract, for one value: the exit status that means the turn bound fired.
+# Sourced rather than restated, because run.sh reads the same declaration and two
+# files agreeing on a number by both spelling it out is a seam that breaks
+# silently - the Loop would simply stop recognising the bound.
+agent_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../contract.sh
+source "${agent_dir}/../contract.sh"
+
 prompt_file="${1:?usage: claude.sh <prompt-file> <max-turns>}"
 max_turns="${2:?usage: claude.sh <prompt-file> <max-turns>}"
 
@@ -134,12 +142,44 @@ put "${allowed_signers}" "${allowed_signers}" 0644
 #
 # No `exec`: the trap above has to run, and the sandbox has to be removed even
 # when the agent exits non-zero.
-agent_rc=0
+# Streamed AND captured. Streamed because run.sh quotes the tail of a faulting
+# Iteration's output into the Progress Log and an Iteration killed at its wall
+# clock must not take its own diagnosis with it; captured because the turn bound
+# has to be told apart from a broken invocation, and Claude Code says which by
+# what it prints rather than by what it exits.
+transcript="$(mktemp)"
+trap 'cleanup; rm -f -- "${transcript}"' EXIT INT TERM
+
+# `pipefail` off for this one pipeline, and it is load-bearing rather than
+# stylistic: with it on, an agent exiting non-zero fails the pipeline, `set -e`
+# ends this script on that line, and everything below - including telling the
+# turn bound apart from a failure - never runs. Off, the pipeline carries tee's
+# status and the agent's own is in PIPESTATUS, which is what this needs.
+set +o pipefail
 "${sbx}" exec --workdir "${workspace}" "${sandbox}" \
     claude \
     --print \
     --permission-mode acceptEdits \
     --max-turns "${max_turns}" \
-    "$(cat -- "${prompt_file}")" || agent_rc=$?
+    "$(cat -- "${prompt_file}")" 2>&1 | tee -- "${transcript}"
+agent_rc="${PIPESTATUS[0]}"
+set -o pipefail
+
+# The turn bound firing is not the agent failing. Claude Code exits 1 for both,
+# so the message is the only thing that tells them apart - and the first Run
+# proved the difference is the whole Run: read as a failure, a bound of the
+# Termination Contract ended everything at Iteration 1.
+#
+# If the vendor rewords this, the behaviour degrades to what it was before -
+# reported as agent-failed, with the output quoted into the Progress Log, where
+# a human reads the words "Reached max turns" and finds this comment. That is a
+# visible degradation rather than a silent one, which is the reason to prefer a
+# message match here over `--output-format json`: the JSON carries a structured
+# `error_max_turns` and would be more robust, at the cost of making every
+# faulting Iteration's Progress Log excerpt a blob nobody reads. Worth
+# revisiting if the log excerpt stops being the way a Run is diagnosed.
+if ((agent_rc != 0)) && grep -qF 'Reached max turns' -- "${transcript}"; then
+    exit "${LOOP_AGENT_TURN_BOUND_EXIT}"
+fi
 
 exit "${agent_rc}"
