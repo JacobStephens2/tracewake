@@ -4,10 +4,10 @@
 ADR 0005 governs what a Verified commit from this box means; ADR 0009 records
 that the inventory is four lines, not three.
 
-**Status: the two browser steps have not been run yet.** Everything below marked
-**[pending]** is what the walkthrough will produce, not what has been observed;
-it is written down first so that running it is a comparison rather than a
-transcription. Everything not so marked was observed on 2026-08-25.
+**Status: complete.** Both browser steps were run on 2026-08-25 and everything
+below was observed rather than expected. The Verified commit is
+`e974df8e22ea968a193246e404c5cbd2f9125f09`, and it is checkable independently of
+this note - see "One Verified commit".
 
 This note is evidence, not documentation. It records what was generated, what
 was registered by hand, what was observed by running commands, and - the part
@@ -19,7 +19,7 @@ something that runs and which are asserted by a sentence in a document.
 | # | Credential | Where it lives | Placed by | Revokes at |
 |---|---|---|---|---|
 | 1 | Model credential | not on the box yet | #83 installs the agent | - |
-| 2 | GitHub token, fine-grained, `Educational-Travel-Adventures/tourbot`, contents + pull requests **[pending]** | `~loop/.config/loop/github-token`, mode 0600 | `wizards/loop-github-credentials.sh` | github.com/settings/personal-access-tokens |
+| 2 | GitHub token, fine-grained, `Educational-Travel-Adventures/tourbot`, contents + pull requests | `~loop/.config/loop/github-token`, mode 0600 | `wizards/loop-github-credentials.sh` | github.com/settings/personal-access-tokens |
 | 3 | SSH signing key, dedicated | `~loop/.ssh/loop_signing_ed25519`, mode 0600 | `ansible/loop.yml`, role `loop_credentials` | github.com/settings/keys |
 | 4 | Docker PAT, read-only | `gnome-keyring` under `~loop` | `wizards/loop-sbx-login.sh` (#78) | app.docker.com |
 
@@ -99,10 +99,18 @@ credential assertion.
 Two properties of the walkthrough worth keeping if it is ever rewritten:
 
 - **The token never reaches the orchestration VM's disk, and never comes back.**
-  It is piped into `install -D -m 600 /dev/stdin` on the box, so the file is
-  created with the right mode from its first byte rather than existing
-  world-readable for however long a `chmod` takes. Every later command that needs
+  It goes over SSH into a redirect on the box, and every later command that needs
   it reads it from that file inside the same shell that uses it.
+
+  The obvious way to write it, `install -D -m 600 /dev/stdin`, does not work and
+  cost a run to find out: under `su - loop` that path is the ssh pipe, still owned
+  by root, and `install` fails with `cannot open '/dev/stdin': Permission
+  denied`. `cat` with no argument reads the descriptor it was handed rather than
+  opening a path, so it does not care who owns it. What replaced it is
+  `umask 077 && cat > file.new && mv file.new file`: the temporary file is 0600
+  from its first byte and `mv` carries that mode across, so the token is never on
+  disk in a mode anyone else could read - not for the instant a `chmod` would
+  take, and not on a re-run over a file already there with a wider mode.
 - **The key title and the target repository are read from the role's defaults**,
   not carried in the wizard. A walkthrough with its own copy would be a second
   place they are decided, and the two would disagree the first time either moved.
@@ -112,36 +120,69 @@ offers **Authentication Key** and **Signing Key**, and the same key in the wrong
 box lets the box log in and leaves every commit Unverified with no error anywhere
 saying why.
 
-## The negative probe **[pending]**
+## The negative probe
 
 The property the whole isolation argument rests on is that the token reaches one
-repository. That is asserted by asking GitHub, in both directions:
+repository. That is asserted by asking GitHub, from the box, with the token the
+box holds:
 
 ```
-repos/Educational-Travel-Adventures/tourbot          ???   expected 200, reachable
-repos/Educational-Travel-Adventures/orchestration    ???   expected 404, invisible
+repos/Educational-Travel-Adventures/tourbot                    200
+repos/Educational-Travel-Adventures/orchestration              404
+repos/Educational-Travel-Adventures/tourbot/actions/secrets    403
+repos/Educational-Travel-Adventures/tourbot/hooks              403
+repos/Educational-Travel-Adventures/tourbot/collaborators      200
+orgs/Educational-Travel-Adventures/repos                       200
 ```
 
-The 404 is the one that matters. A token that can see a second repository is
-wider than the acceptance criterion, and nothing else in the wizard or on the box
-would notice.
+The 404 is the one that matters: a token that could see a second repository would
+be wider than the acceptance criterion, and nothing else in the wizard or on the
+box would notice. The two 403s are Secrets and Administration, neither of which
+was granted.
+
+The last two lines are the honest part of this section, because both are 200 and
+neither is a hole. `collaborators` is readable with Metadata, which GitHub adds
+to every fine-grained token and does not let you remove. `orgs/…/repos` answers
+**2** of the organisation's **52** repositories - `tourbot`, which the token was
+granted, and `.github`, which is public and visible to any token at all. So the
+token cannot enumerate the organisation; it sees what it was given plus what the
+world already sees.
 
 Not probed, deliberately: whether the token can push to `master`. Branch
 protection there requires a review (`required_pull_request_reviews: 1`), and an
 unattended Run that tried would be testing a backstop rather than using it.
 
-## One Verified commit **[pending]**
+## One Verified commit
 
 The stage that makes the other five worth anything: the box makes a commit,
 signs it with the registered key, pushes it to a throwaway branch on the target
 repository, and GitHub is asked what it thinks of it.
 
 ```
-author account : ???   expected JacobStephens2
+commit         : e974df8e22ea968a193246e404c5cbd2f9125f09
+message        : Loop: prove a Verified commit on a throwaway branch
+author account : JacobStephens2
 author email   : jstephens@etadventures.com
-verified       : ???   expected true (valid)
-branch         : loop/verified-proof-<utc timestamp>, deleted immediately after
+signature      : -----BEGIN SSH SIGNATURE-----
+verified       : true (valid)
+branch         : loop/verified-proof-20260825-021243
 ```
+
+Checkable without trusting either the wizard or this note. The branch is gone,
+but the repository's activity log records it and the commit answers by SHA:
+
+```
+$ gh api /repos/Educational-Travel-Adventures/tourbot/activity
+  branch_creation  refs/heads/loop/verified-proof-20260825-021243  02:12:46Z  JacobStephens2
+  branch_deletion  refs/heads/loop/verified-proof-20260825-021243  02:12:53Z  JacobStephens2
+
+$ gh api /repos/Educational-Travel-Adventures/tourbot/commits/e974df8e
+  .author.login                  JacobStephens2
+  .commit.verification.verified  true
+  .commit.verification.reason    valid
+```
+
+Seven seconds on the branch, which is the whole external effect of this ticket.
 
 It is an **orphan branch built in a fresh repository**, not a clone of
 `tourbot`. That repository is 981 MB, and cloning it to make one commit would
@@ -160,37 +201,39 @@ walkthrough exists to prevent, and it is invisible from the box.
 
 ## The credential assertion
 
-`loop/assert-credentials.sh` is the inventory as something that runs. Against the
-box, as the account a Run executes as, before the token was placed - the one
-violation is the credential the walkthrough exists to install, which is the
-script reporting exactly what was true at the time:
+`loop/assert-credentials.sh` is the inventory as something that runs, on the box,
+as the account a Run executes as. After the walkthrough:
 
 ```
-CREDENTIALS_RESULT=violations
-CREDENTIALS_HELD=2
-CREDENTIALS_VIOLATIONS=1
+CREDENTIALS_RESULT=clean
+CREDENTIALS_HELD=3
+CREDENTIALS_VIOLATIONS=0
+CREDENTIALS_INDETERMINATE=2
 
 Allowed - the box holds these and nothing else:
-  [absent]  github-token      fine-grained, repository-scoped, contents + pull requests
-  [held]    signing-key       dedicated SSH signing key, registered to the operator
-  [held]    docker-identity   read-only Docker PAT the Execution Boundary requires
-  [absent*] model-credential  the agent's subscription login (#83 installs the agent)
+  [held]    github-token      /home/loop/.config/loop/github-token
+  [held]    signing-key       /home/loop/.ssh/loop_signing_ed25519
+  [held]    docker-identity   sbx reports authenticated
+  [absent*] model-credential  no agent login on the box yet
+  * not gating: absent is the expected state until #83 installs the agent.
 
 Forbidden - none of these may be on the box:
   [clear]   vault-token
-  [clear]   database-credential
-  [clear]   fleet-ssh-key
+  [partial] database-credential
   [clear]   digitalocean-token
   [clear]   metered-model-key
+  [partial] fleet-ssh-key
 
-Violations:
-  - github-token: absent - expected at /home/loop/.config/loop/github-token
+Could not be checked - these are not passes:
+  - database-credential: /root/.my.cnf could not be checked - /root is not searchable by loop
+  - fleet-ssh-key: /root could not be swept - it is not searchable by loop
 ```
 
-The four forbidden families were already clear at that point, which is the half
-of the fifth acceptance criterion that does not depend on the browser steps.
-**[pending]** the same run after the walkthrough, which should answer
-`CREDENTIALS_RESULT=clean` with `CREDENTIALS_HELD=3`.
+Before the token was placed the same run answered `violations` with exactly one -
+`github-token: absent` - which is the script reporting what was true at the time
+rather than a check that had not noticed anything yet.
+
+The two `[partial]` lines are the reason the next section exists.
 
 ### The collision has three doors, not one
 
@@ -327,17 +370,20 @@ having at all.
 
 ## What this does not establish
 
-- **That the key is registered as a signing key rather than an authentication
-  key.** No credential on this box can read
-  `/user/ssh_signing_keys`, and the orchestration VM's own token cannot either
-  (`403 Resource not accessible by personal access token`). The Verified badge on
-  a pushed commit is the proof, which is why the walkthrough pushes one rather
-  than asking the API what is registered.
+- **Which keys are registered to the account, or under what titles.** No
+  credential on this box can read `/user/ssh_signing_keys`, and the orchestration
+  VM's own token cannot either (`403 Resource not accessible by personal access
+  token`). What is established is stronger for this ticket and weaker in general:
+  `verified: true, reason: valid` on a commit signed by this key proves the key
+  is registered *as a signing key*, because an authentication key produces
+  `unknown_key`. The title is not checkable from here at all - it is the
+  operator's to keep right, and the walkthrough is where he is told what to type.
 - **That the token's permissions are exactly contents + pull requests.** GitHub
   publishes no endpoint that reports a fine-grained token's own permission set.
-  What is established is that it can read one repository and cannot see another,
-  and that it can push a branch. Pull-request write is proven the first time #82
-  opens one.
+  What is established: it reads one repository and cannot see a second, it cannot
+  read Secrets or Administration, and it pushed and deleted a branch - so
+  contents write is proven. Pull-request write is proven the first time #82 opens
+  one.
 - **What happens when the token expires.** A Run fails at its push, loudly, with
   everything it did still on the box. That is the intended direction and it has
   not been exercised.
