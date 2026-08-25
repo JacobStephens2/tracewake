@@ -1,0 +1,138 @@
+---
+# The half of the Loop's credentials a machine can establish.
+#
+# Spec issue #73 puts three credentials on this box; #78 found a fourth that the
+# Execution Boundary itself requires. Of the four, exactly two can be created by
+# automation: the signing key (generated here, on the box, never moved) and the
+# git configuration that makes it get used. The other two arrive through a
+# browser and are therefore walkthroughs, not tasks:
+#
+#   the Docker identity   wizards/loop-sbx-login.sh          (#78)
+#   the GitHub token      wizards/loop-github-credentials.sh (#81)
+#
+# and one thing here is only half a machine's: registering the public key to the
+# operator's GitHub account AS A SIGNING KEY is a separate registration from an
+# authentication key and only a human can do it. The key exists after this role;
+# it means nothing until that registration.
+#
+# Nothing in this role writes a secret. It is safe to run and re-run against a
+# box that already holds the token: the token file is never templated, never
+# copied and never deleted here.
+
+- name: The Run account's SSH directory
+  ansible.builtin.file:
+    path: /home/loop/.ssh
+    state: directory
+    owner: loop
+    group: loop
+    mode: "0700"
+
+- name: Where the box keeps what only it holds
+  ansible.builtin.file:
+    path: "{{ loop_credentials_dir }}"
+    state: directory
+    owner: loop
+    group: loop
+    mode: "0700"
+
+# `creates:` rather than a state module: regenerating this key would silently
+# invalidate the registration on GitHub, and every commit signed afterwards
+# would be unverifiable with no error anywhere. A key that already exists is
+# left exactly as it is.
+- name: The Loop's dedicated signing key, generated on the box
+  become: true
+  become_user: loop
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -t
+      - ed25519
+      - -N
+      - ""
+      - -C
+      - "{{ loop_signing_key_comment }}"
+      - -f
+      - "{{ loop_signing_key_path }}"
+    creates: "{{ loop_signing_key_path }}"
+
+- name: The private half is readable by nobody else
+  ansible.builtin.file:
+    path: "{{ loop_signing_key_path }}"
+    owner: loop
+    group: loop
+    mode: "0600"
+  # `--check` skips the command above, so on a first check run the key does not
+  # exist and these three would fail on its absence rather than report anything.
+  # #77 already records that a check run proves nothing about this box; this is
+  # that, made explicit rather than fatal.
+  when: not ansible_check_mode
+
+- name: Read the public half back
+  ansible.builtin.slurp:
+    src: "{{ loop_signing_key_path }}.pub"
+  register: loop_signing_pubkey
+  when: not ansible_check_mode
+
+# So the box can verify its own signatures. `git verify-commit` on the box is
+# what turns "the commit says it is signed" into "this key signed it", and the
+# wizard checks it there before it ever pushes - a failed signature found on the
+# box costs a second, and found on GitHub costs a round trip and a branch.
+- name: The allowed signers file, so the box can check its own work
+  ansible.builtin.copy:
+    dest: "{{ loop_credentials_dir }}/allowed_signers"
+    content: "{{ loop_commit_author_email }} {{ loop_signing_pubkey.content | b64decode | trim }}\n"
+    owner: loop
+    group: loop
+    mode: "0644"
+  when: not ansible_check_mode
+
+- name: The credential helper that reads the token file
+  ansible.builtin.template:
+    src: git-credential-loop.j2
+    dest: "{{ loop_credentials_dir }}/git-credential-loop"
+    owner: loop
+    group: loop
+    mode: "0755"
+
+- name: The Loop's git identity, signing on by default
+  ansible.builtin.template:
+    src: gitconfig.j2
+    dest: /home/loop/.gitconfig
+    owner: loop
+    group: loop
+    mode: "0644"
+
+# Proof, as the account a Run executes as, that the three settings actually
+# resolve - a template that landed and a `git config` that reads it back are
+# different claims, and it is the second one every Iteration depends on.
+- name: The Run account signs with the Loop's key
+  become: true
+  become_user: loop
+  ansible.builtin.command: git config --global --get {{ item.key }}
+  changed_when: false
+  register: loop_git_setting
+  failed_when: loop_git_setting.stdout | trim != item.value
+  loop:
+    - { key: gpg.format, value: ssh }
+    - { key: commit.gpgsign, value: "true" }
+    - { key: user.signingkey, value: "{{ loop_signing_key_path }}.pub" }
+    - { key: user.email, value: "{{ loop_commit_author_email }}" }
+  loop_control:
+    label: "{{ item.key }}"
+
+# The token is not this role's to place, but its absence is worth naming once,
+# where the operator is already looking, rather than being discovered by a Run
+# that fails at its push after spending its Iterations.
+- name: Report whether the human-only half has been done
+  ansible.builtin.stat:
+    path: "{{ loop_credentials_dir }}/github-token"
+  register: loop_github_token
+
+- name: Say so if the GitHub token is not on the box yet
+  ansible.builtin.debug:
+    msg: >-
+      No GitHub token at {{ loop_credentials_dir }}/github-token. The box can
+      sign but cannot push. Run
+      lab/single-user-factory/wizards/loop-github-credentials.sh from the
+      orchestration VM as conductor.
+  when: not loop_github_token.stat.exists

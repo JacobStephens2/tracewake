@@ -33,6 +33,7 @@ loop_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 subjects=(
     "run.sh|tests/loop.bats|tests/mutations.py"
     "check-inventory.sh|tests/check-inventory.bats|tests/check-mutations.py"
+    "assert-credentials.sh|tests/assert-credentials.bats|tests/credential-mutations.py"
 )
 
 only=""
