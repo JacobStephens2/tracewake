@@ -84,6 +84,14 @@
 : "${LOOP_PLAN_PATH:=PLAN.md}"
 : "${LOOP_PROGRESS_LOG_PATH:=PROGRESS.md}"
 
+# The headings run.sh writes into the Progress Log, declared here because
+# seed-run.sh reads them: a Progress Log holding a Run is what stops a re-seed
+# from discarding one. Two scripts agreeing on a literal string by both spelling
+# it out is a seam that breaks silently - the guard would simply stop finding
+# anything and the seed would overwrite a Run's record without a word.
+: "${LOOP_RUN_HEADING:=## Run started}"
+: "${LOOP_ITERATION_HEADING:=### Iteration}"
+
 # Render the Contract for the Progress Log. Written at Run start so that reading
 # the log afterwards tells you which bound fired and what it was set to, without
 # needing the version of this file that was current at the time.

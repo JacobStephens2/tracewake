@@ -115,12 +115,16 @@ ADR 0003 closed; it is not a feature on top of this one.
 
 The property is enforced rather than honoured. The box's fine-grained token
 holds Contents and Pull requests and **no Issues permission**, so a Run cannot
-fetch a task even if something inside it tried, and
-`wizards/loop-github-credentials.sh` asks GitHub whether that is still true
-rather than trusting the setting. `seed-run.sh` runs as the operator, with his
-own GitHub identity, off the box; the Plan reaches the box as a commit like
-everything else. Same shape as Proposal-Only Output: a property of what the
-credential opens. Do not add Issues to that token.
+fetch a task even if something inside it tried. `seed-run.sh` runs as the
+operator, with his own GitHub identity, off the box; the Plan reaches the box as
+a commit like everything else. Same shape as Proposal-Only Output: a property of
+what the credential opens. Do not add Issues to that token.
+
+Unlike the wizard's other claims about the token, this one is **not probed** -
+GitHub publishes no endpoint reporting a fine-grained token's permission set, and
+its list-issues endpoint is satisfied by Pull requests: read, which the token must
+hold. ADR 0010 records that gap rather than papering it with a probe that would
+fire on a correctly scoped box.
 
 **`--area` is required.** A Run is a handful of Iterations and Tourbot issue 648
 is 303 occurrences, so how much of a task one Run is for is a decision - the
@@ -143,9 +147,12 @@ count written into the task is carried across with a note that the check derives
 its own denominator (ADR 0008), because #648's "78 files and 276 occurrences" is
 exactly the number an Iteration might otherwise grade itself against.
 
-**Re-running it is reproducible.** Neither file carries a timestamp, so seeding
-the same task and area twice produces the same two files and commits nothing the
-second time (`LOOP_SEED_RESULT=unchanged`). Both are written whole rather than
+**Re-running it is reproducible.** The two files are a pure function of the task
+as fetched, the owning area and the check command, and neither carries a
+timestamp - so seeding twice produces the same two files and commits nothing the
+second time (`LOOP_SEED_RESULT=unchanged`). Editing the task upstream does change
+them, which is the point: the seed is how the current task gets in, and a Run
+seeded from a task that has since moved should say so in a diff. Both are written whole rather than
 appended to, which is what stops state accumulating - and is also why a Progress
 Log that already records a Run stops the seed with exit 2 and the word `--reseed`
 rather than overwriting it. The Run's record is the only account of what an
@@ -244,13 +251,13 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-A hundred and thirty-three tests, no model and no network. Twenty-three drive
+A hundred and thirty-seven tests, no model and no network. Twenty-three drive
 `run.sh` unmodified and assert only what a Run externally produces - exit code,
 reported bound, Progress Log contents, git history. Thirty-two drive
 `check-inventory.sh` against small fixture checkouts. Forty-one drive
 `assert-credentials.sh` against a constructed box - a home directory, a system
 root and a scripted fake `sbx`, all three of which a tmpdir can hold.
-Thirty-seven drive `seed-run.sh` against a scripted fake task source, and assert
+Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
 what the Plan ends up saying, what the Progress Log is left ready for, and what
 seeding twice does. None of them names an internal function or depends on the
 order of steps.

@@ -382,7 +382,7 @@ having at all.
   publishes no endpoint that reports a fine-grained token's own permission set.
   What is established: it reads one repository and cannot see a second, it cannot
   read Secrets or Administration, and it pushed and deleted a branch - so
-  contents write is proven. Pull-request write is proven the first time #82 opens
+  contents write is proven. Pull-request write is proven the first time #83 opens
   one.
 - **What happens when the token expires.** A Run fails at its push, loudly, with
   everything it did still on the box. That is the intended direction and it has

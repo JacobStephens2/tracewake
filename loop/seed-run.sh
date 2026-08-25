@@ -126,6 +126,12 @@ git -C "${repo}" config user.email >/dev/null ||
 [[ ${task_number} =~ ^[1-9][0-9]*$ ]] ||
     die "--task must be a task number, got '${task_number}'"
 
+# Free text, matched against nothing - not the task's body, not the check
+# script's grouping. The areas live in a ticket's prose in whatever words its
+# author used ("dashboards/reports" in issue 648, which is not how anyone types
+# it), so a match would reject correct input more often than it caught a typo.
+# What guards against the wrong area is that it is printed back, written into the
+# Plan, and committed before a Run starts.
 [[ -n ${area} ]] ||
     die "--area is required - a Run is scoped to one owning area of the task, not the whole of it"
 
@@ -157,17 +163,18 @@ task_ref="${task_repo}#${task_number}"
 # Run has to stop this: the Run's record is the only account of what happened,
 # and losing it costs more than re-running the seed.
 
-if [[ -f ${progress_target} ]] && grep -q '^## Run started' -- "${progress_target}"; then
+if [[ -f ${progress_target} ]] &&
+    grep -q -- "^${LOOP_RUN_HEADING}" "${progress_target}"; then
+    recorded_runs="$(grep -c -- "^${LOOP_RUN_HEADING}" "${progress_target}" || true)"
+    recorded_iterations="$(grep -c -- "^${LOOP_ITERATION_HEADING} " "${progress_target}" || true)"
     if ! ${reseed}; then
-        runs="$(grep -c '^## Run started' -- "${progress_target}" || true)"
-        iterations="$(grep -c '^### Iteration ' -- "${progress_target}" || true)"
         printf 'seed-run.sh: %s already records %s Run(s) and %s Iteration(s).\n' \
-            "${LOOP_PROGRESS_LOG_PATH}" "${runs}" "${iterations}" >&2
+            "${LOOP_PROGRESS_LOG_PATH}" "${recorded_runs}" "${recorded_iterations}" >&2
         printf 'Seeding rewrites it. Pass --reseed to discard that record, or seed a fresh checkout.\n' >&2
         exit 2
     fi
-    discarded_runs="$(grep -c '^## Run started' -- "${progress_target}" || true)"
-    discarded_iterations="$(grep -c '^### Iteration ' -- "${progress_target}" || true)"
+    discarded_runs="${recorded_runs}"
+    discarded_iterations="${recorded_iterations}"
 fi
 
 # --- Fetch the one task -----------------------------------------------------
@@ -178,8 +185,13 @@ task_json="$("${LOOP_TASK_SOURCE_COMMAND}" "${task_repo}" "${task_number}")" ||
 jq -e . >/dev/null 2>&1 <<<"${task_json}" ||
     die "the task source did not return a task: ${task_ref}"
 
+# A JSON null becomes an empty string rather than the four characters "null".
+# GitHub returns `"body": null` for an issue nobody wrote a body for, and `jq -r`
+# prints that as the word - which would put "null" in the Plan and satisfy every
+# emptiness check below. Absent, empty and null are the same thing here and are
+# read as the same thing.
 task_field() {
-    jq -r --arg field "$1" 'if has($field) then .[$field] else "" end' <<<"${task_json}"
+    jq -r --arg field "$1" '(.[$field] // "") | tostring' <<<"${task_json}"
 }
 
 fetched_number="$(task_field number)"
@@ -258,8 +270,20 @@ task_rest="$(printf '%s\n' "${task_body}" | task_sections rest | trim_blank_line
 # a heading with nothing under it is refused for the same reason a denominator of
 # zero is refused in check-inventory.sh: an empty result and a broken read must
 # not produce the same output.
-criteria_count="$(printf '%s\n' "${criteria}" |
-    grep -c -E '^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]' || true)"
+# Only the outermost level of the list. A criterion with sub-bullets under it is
+# one criterion, and counting its children as criteria of their own would make
+# the reported number larger than the number of things that have to be true - the
+# opposite of the reason it is reported at all.
+criteria_count="$(printf '%s\n' "${criteria}" | awk '
+    /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ {
+        match($0, /^[ \t]*/)
+        items[NR] = RLENGTH
+        if (shallowest == "" || RLENGTH < shallowest) shallowest = RLENGTH
+    }
+    END {
+        for (n in items) if (items[n] == shallowest) count++
+        print count + 0
+    }')"
 
 if [[ -z ${criteria} ]] || ((criteria_count == 0)); then
     printf 'seed-run.sh: %s has no acceptance criteria this step could read.\n' "${task_ref}" >&2

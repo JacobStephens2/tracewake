@@ -54,7 +54,10 @@ $ git rev-list --count HEAD
 ```
 
 Two commits: the fixture's own, and one seeding. The second seeding wrote
-nothing and committed nothing. Neither file carries a timestamp, which is what
+nothing and committed nothing. The guarantee is against the task **as fetched**:
+edit issue 648 upstream and the next seeding rewrites the Plan and commits, which
+is correct - the seed is how the current task gets in, and a task that moved
+under a Run is something a diff should show rather than hide. Neither file carries a timestamp, which is what
 makes that true - a generated file with a "seeded at" line in it would commit
 every time it ran and turn "re-run the setup step" into "accumulate another
 commit".
@@ -78,7 +81,10 @@ only account of what an unattended agent did. So it exits 2 and names the flag.
 
 ## The suite
 
-Thirty-seven tests, `bats tests/seed-run.bats`, about ten seconds. The task
+Forty-one tests, `bats tests/seed-run.bats`, about fifteen seconds. bats 1.10.0,
+fetched to the orchestration VM for this work the same way #79's was - the box
+has it from `ansible/roles/loop_shell_suite`, the orchestration VM has
+`shellcheck` and no bats. The task
 source is one substitutable command for the same reason the agent is (ADR 0004),
 and `tests/fake-task-source.sh` is what the suite substitutes: no GitHub token,
 no network, no rate limit. Every test asserts on what the seed leaves behind -
@@ -95,24 +101,30 @@ disagreeing.
 ## Mutation check
 
 ```
-$ tests/mutation-check.sh --only seed-run.sh
+$ tests/mutation-check.sh
+...
 seed-run.sh
-  criteria-not-required        caught,  5 red
-  prose-counts-as-criteria     caught,  2 red
+  criteria-not-required        caught,  4 red
+  prose-counts-as-criteria     caught,  1 red
   criteria-dropped-from-plan   caught,  2 red
-  area-not-required            caught,  2 red
+  area-not-required            caught,  1 red
   run-history-overwritten      caught,  2 red
-  plan-appended-not-rewritten  caught,  2 red
-  reseeding-never-unchanged    caught,  2 red
-  fenced-headings-counted      caught,  3 red
-  headings-not-demoted         caught,  2 red
-  task-number-unvalidated      caught,  2 red
-  wrong-task-accepted          caught,  2 red
-  unrelated-work-swept-in      caught,  2 red
-  plan-path-hardcoded          caught,  2 red
+  plan-appended-not-rewritten  caught,  1 red
+  reseeding-never-unchanged    caught,  1 red
+  fenced-headings-counted      caught,  2 red
+  headings-not-demoted         caught,  1 red
+  task-number-unvalidated      caught,  1 red
+  wrong-task-accepted          caught,  1 red
+  unrelated-work-swept-in      caught,  1 red
+  plan-path-hardcoded          caught,  1 red
 
-All 13 mutations caught.
+All 53 mutations caught.
 ```
+
+Thirteen of the fifty-three are the seed step's; the other forty are the
+Contract's, the check's and the credential inventory's, and they were re-run to
+confirm this ticket did not break them - `run.sh` changed here, to take the
+Progress Log's headings from `contract.sh` rather than spelling them out.
 
 `wrong-task-accepted` is the one worth naming. It removes the check that the
 task the source answered with is the task that was asked for, and the failure it
@@ -131,15 +143,17 @@ scope; that seeding twice is byte-identical and commits nothing; that a Progress
 Log holding a Run stops a re-seed; that the seed stages the Plan and the Progress
 Log by path and does not sweep an operator's unrelated work into its commit.
 
-**Not asserted here.** That the box's token cannot read issues - the enforcement
-ADR 0010 rests on. It cannot be asserted from the orchestration VM, which does
-not hold that token. It is probed where the token is:
-`wizards/loop-github-credentials.sh` stage 4 now asks GitHub whether the box's
-token can list the target repository's issues, alongside the existing probe for a
-second repository, and refuses to continue quietly if it can. That probe has not
-been run yet - the wizard is a human walkthrough and the token exists - so this
-is a check that is in place rather than a result, and running it is the first
-thing #83's operator sees.
+**Not asserted here, and not assertable anywhere.** That the box's token cannot
+read issues - the enforcement ADR 0010 rests on. A probe was written for it and
+then removed: GitHub's list-issues endpoint is satisfied by Pull requests: read,
+which this token must hold, so a 200 proves nothing and the probe would have
+warned on every correctly scoped box. There is no call that separates the two
+permissions, and GitHub publishes no endpoint reporting a fine-grained token's
+own permission set - the same fact `loop-credentials-evidence.md` records about
+proving the token's scope generally. What stands instead:
+`wizards/loop-github-credentials.sh` stage 3 tells the operator to leave Issues
+at No access and stage 4 says plainly that it is unprobed and why. This is the
+one claim in ADR 0010 that rests on a configuration page read by a human.
 
 **Not built.** Issue intake. Not because it was hard but because it would
 invalidate ADR 0003's reasoning, which is ADR 0010.

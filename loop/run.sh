@@ -139,7 +139,7 @@ commit_bookkeeping() {
 run_started="$(now)"
 
 {
-    printf '\n## Run started %s\n\n' "$(stamp)"
+    printf '\n%s %s\n\n' "${LOOP_RUN_HEADING}" "$(stamp)"
     if [[ -n ${task_ref} ]]; then
         printf 'Task: %s\n\n' "${task_ref}"
     fi
@@ -267,7 +267,7 @@ for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
     # like progress. Whatever the agent wrote about its decisions and blockers is
     # already above this, written by the agent itself.
     {
-        printf '\n### Iteration %d - %s\n\n' "${iteration}" "${iteration_started}"
+        printf '\n%s %d - %s\n\n' "${LOOP_ITERATION_HEADING}" "${iteration}" "${iteration_started}"
         printf -- '- Agent exit: %d%s\n' "${agent_rc}" \
             "$(${killed} && printf ' (killed at its %ss wall clock)' "${iteration_timeout}")"
         printf -- '- Turn bound: %s\n' "${LOOP_MAX_TURNS}"

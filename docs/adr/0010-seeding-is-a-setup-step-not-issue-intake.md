@@ -22,11 +22,19 @@ ADR 0003 closed, and it needs its own decision rather than an afternoon.
 box's fine-grained token holds Contents: Read and write and Pull requests: Read
 and write, and no Issues permission at all. So a Run cannot fetch a task even if
 something inside it decided to: the request does not return the issue.
-`wizards/loop-github-credentials.sh` sets that permission in stage 3 and probes
-it in stage 4, asking GitHub whether the box's token can list the target
-repository's issues and refusing to continue quietly if it can - the same shape
-as the existing probe for a second repository, and for the same reason: a scope
-is a claim until something asks. `seed-run.sh` runs as the operator, with
+`wizards/loop-github-credentials.sh` stage 3 is where that permission is left
+unset, and stage 4 says so.
+
+**It is not probed, and that is a real gap rather than a rounding error.** The
+wizard's other claims are probed - the token reads one repository and cannot see
+a second - and this one cannot be, by the same fact recorded in
+`notes/loop-credentials-evidence.md`: GitHub publishes no endpoint that reports a
+fine-grained token's own permission set, and the list-issues endpoint is
+satisfied by Pull requests: read, which this token must hold. So a 200 there
+would prove nothing and a probe built on it would fire on a correctly scoped box.
+The control is the permission being unset; the evidence for it is the token's
+configuration page, read by a human. Anything stronger would need a call that
+separates the two permissions, and there is not one. `seed-run.sh` runs as the operator, with
 the operator's own GitHub identity, off the box - and the Plan reaches the box
 the way everything else does, as a commit. That is the same shape as
 Proposal-Only Output: a property of what the credential opens, not a rule the

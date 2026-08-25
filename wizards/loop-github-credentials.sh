@@ -461,22 +461,14 @@ else
     confirm "Continue anyway with a wider token?" || exit 1
 fi
 
-# The second negative probe, and the one ADR 0010 rests on. Seeding a Run fetches
-# one task the operator chose, off the box, with his own identity; a box that
-# could read issues would make "this is not issue intake" a convention rather
-# than a property of what the token opens.
-code="$(api_status "repos/${TARGET_REPO}/issues?per_page=1")"
-if [[ ${code} != "200" ]]; then
-    printf '  %s✓%s %s issues  unreadable (%s) - ADR 0010 holds\n' \
-        "$GREEN" "$RESET" "${TARGET_REPO}" "${code}"
-else
-    printf '\n'
-    warn "The token can read ${TARGET_REPO}'s issues (200)."
-    warn "ADR 0010 makes 'the Loop cannot read arbitrary issues' a property of this"
-    warn "token, not a convention. With Issues granted it is only a convention."
-    note "Set Issues back to No access at github.com/settings/personal-access-tokens."
-    confirm "Continue anyway with a token that can read issues?" || exit 1
-fi
+note "Not probed, and it should be: whether the token can read issues. ADR 0010"
+note "makes 'a Run cannot fetch a task' a property of this token holding no Issues"
+note "permission, which is why stage 3 says to leave it at No access - but there"
+note "is no call that separates the two cases. GitHub's list-issues endpoint is"
+note "satisfied by Pull requests: read, which this token must hold, so a 200 there"
+note "proves nothing; and GitHub publishes no endpoint reporting a fine-grained"
+note "token's own permission set. Leaving the permission unset is the control."
+printf '\n'
 
 note "Not probed, on purpose: whether the token can push to the default branch."
 note "Branch protection on ${TARGET_REPO} requires a review, and an unattended"

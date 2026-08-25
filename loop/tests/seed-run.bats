@@ -77,6 +77,52 @@ setup() {
     [[ ${output} == *"LOOP_SEED_CRITERIA=3"* ]]
 }
 
+@test "sub-bullets under a criterion are not counted as criteria of their own" {
+    write_task_json <<'JSON'
+{
+  "number": 5,
+  "title": "A task whose criteria have detail under them",
+  "url": "https://github.com/owner/repo/issues/5",
+  "state": "OPEN",
+  "body": "## Acceptance criteria\n\n- [ ] the first thing is true\n  - including this detail\n  - and this one\n- [ ] the second thing is true\n"
+}
+JSON
+    run_the_seed --task 5 --task-repo owner/repo --area "one area"
+    [ "$status" -eq 0 ]
+    [[ ${output} == *"LOOP_SEED_CRITERIA=2"* ]]
+    plan | grep -qF "including this detail"
+}
+
+@test "a task whose body is JSON null is refused, not seeded with the word null" {
+    write_task_json <<'JSON'
+{
+  "number": 5,
+  "title": "A task nobody wrote a body for",
+  "url": "https://github.com/owner/repo/issues/5",
+  "state": "OPEN",
+  "body": null
+}
+JSON
+    run_the_seed --task 5 --task-repo owner/repo --area "one area"
+    [ "$status" -eq 1 ]
+    [ ! -f "${REPO}/PLAN.md" ]
+}
+
+@test "a task whose title is JSON null does not reach the Plan as the word null" {
+    write_task_json <<'JSON'
+{
+  "number": 5,
+  "title": null,
+  "url": "https://github.com/owner/repo/issues/5",
+  "state": "OPEN",
+  "body": "## Acceptance criteria\n\n- [ ] it works\n"
+}
+JSON
+    run_the_seed --task 5 --task-repo owner/repo --area "one area"
+    [ "$status" -eq 1 ]
+    [ ! -f "${REPO}/PLAN.md" ]
+}
+
 @test "a task with no acceptance criteria is refused rather than seeded blind" {
     write_task_json <<'JSON'
 {
@@ -326,6 +372,29 @@ JSON
     [[ ${output} == *"--reseed"* ]]
     progress_log | grep -qF "## Run started 2026-08-25T10:00:00Z"
     ! plan | grep -qF "alerts and background jobs"
+}
+
+@test "a real Run's record stops a re-seed, without the marker being spelled twice" {
+    write_classification_task
+    run_the_seed --task 648 --task-repo Educational-Travel-Adventures/tourbot \
+        --area "dashboards and reports"
+    [ "$status" -eq 0 ]
+
+    # Driven through the real run.sh rather than by appending a heading by hand.
+    # The seed recognises a Run by what run.sh actually wrote, so a heading that
+    # changed in one script and not the other would show up here as a re-seed
+    # that quietly succeeded rather than as a suite nobody updated.
+    export FAKE_AGENT_STATE="${BATS_TEST_TMPDIR}/fake-agent-state"
+    run env LOOP_AGENT_COMMAND="${LOOP_SRC}/tests/fake-agent.sh" \
+        LOOP_MAX_ITERATIONS=1 LOOP_ITERATION_TIMEOUT_SECONDS=30 \
+        LOOP_RUN_TIMEOUT_SECONDS=120 FAKE_AGENT_BEHAVIOURS="commit" \
+        timeout 120 "${LOOP_SRC}/run.sh" --repo "${REPO}"
+    [ "$status" -eq 0 ]
+
+    run_the_seed --task 648 --task-repo Educational-Travel-Adventures/tourbot \
+        --area "alerts and background jobs"
+    [ "$status" -eq 2 ]
+    [[ ${output} == *"1 Run(s) and 1 Iteration(s)"* ]]
 }
 
 @test "--reseed discards the Run's history and says how much it discarded" {
