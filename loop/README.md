@@ -31,13 +31,17 @@ was deliberately left off are in
 | File | What it is |
 | --- | --- |
 | `contract.sh` | The Termination Contract. Five bounds, one place. |
+| `seed-run.sh` | The setup step. One chosen task in, a Plan and a Progress Log out (#82). |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `agents/claude.sh` | The agent as one substitutable command (ADR 0004). |
+| `task-sources/github.sh` | The task source as one substitutable command. One task, by number. |
 | `check-inventory.sh` | The first task's grade. Derives its own denominator. |
 | `assert-credentials.sh` | What the box holds, and what it may not. Both directions (#81). |
 | `tests/loop.bats` | The Loop's offline suite. No model, no network, no spend. |
 | `tests/check-inventory.bats` | The check's offline suite, seamed separately (#80). |
+| `tests/seed-run.bats` | The seed step's offline suite, seamed separately (#82). |
 | `tests/fake-agent.sh` | The scripted agent the suite drives the real Run through. |
+| `tests/fake-task-source.sh` | The scripted task source, so the seed step's suite reaches no network. |
 | `tests/assert-credentials.bats` | The credential inventory's offline suite, seamed separately (#81). |
 | `tests/mutation-check.sh` | Breaks each bound and each guard, confirms the suites notice. |
 
@@ -79,6 +83,85 @@ Exit codes: `0` planned end, `1` preflight failed, `2` run-clock, `3`
 consecutive-noops, `4` agent-failed, `5` cap reached with an Iteration killed.
 Why `0` exists at all, when every Run ends on a bound, is ADR 0007.
 
+## Seeding a Run
+
+A Run is seeded before it is started, by the operator, from one task he chose:
+
+```
+seed-run.sh --repo <path> --task <number> --area <text>
+            [--task-repo <owner/name>] [--check <command>] [--reseed]
+```
+
+It fetches that one task, writes it into the Plan with its acceptance criteria,
+and initializes the Progress Log ready for the first Iteration - so starting a
+Run is one command and re-running one is the same command again. The first Run's
+seeding, in full:
+
+```
+seed-run.sh --repo ~/tourbot --task 648 --area 'dashboards and reports' \
+    --check "check-inventory.sh --checkout . --inventory docs/tblEmailMessage-inventory.md \
+             --scope 'mtourbot/reports/*'"
+```
+
+**This is not issue intake, and the difference is load-bearing** (ADR 0010). It
+is a human handing over a task he authored, and that authorship is what makes
+ADR 0003's content-trust collapse valid: the Execution Boundary contains an
+unsupervised agent, it does not defend against hostile input, and `lessons.md`'s
+content-trust floor stays deleted only while nothing the Loop reads was written
+by somebody else. A Loop that read issues by search would be feeding text the
+operator never saw into the prompt of a process that can commit and open a pull
+request, with nobody watching for forty-five minutes. That reopens the subsystem
+ADR 0003 closed; it is not a feature on top of this one.
+
+The property is enforced rather than honoured. The box's fine-grained token
+holds Contents and Pull requests and **no Issues permission**, so a Run cannot
+fetch a task even if something inside it tried. `seed-run.sh` runs as the
+operator, with his own GitHub identity, off the box; the Plan reaches the box as
+a commit like everything else. Same shape as Proposal-Only Output: a property of
+what the credential opens. Do not add Issues to that token.
+
+Unlike the wizard's other claims about the token, this one is **not probed** -
+GitHub publishes no endpoint reporting a fine-grained token's permission set, and
+its list-issues endpoint is satisfied by Pull requests: read, which the token must
+hold. ADR 0010 records that gap rather than papering it with a probe that would
+fire on a correctly scoped box.
+
+**`--area` is required.** A Run is a handful of Iterations and Tourbot issue 648
+is 303 occurrences, so how much of a task one Run is for is a decision - the
+operator's, not an Iteration's. The Plan names the owning area and says the rest
+of the task is out of scope for this Run, so an Iteration that wanders into the
+rest has left the Plan rather than found more of it.
+
+**`--check` is what an Iteration and the operator both grade against**, and it is
+the reason the Plan and the check script never had to know about each other: the
+command belongs beside the task, in the Plan, and `run.sh` still knows nothing
+about either. A Plan seeded with no check says so in as many words, because a
+check that is missing and a check that passed must not read the same.
+
+**Acceptance criteria are required.** A task whose criteria section this step
+cannot read is refused, not seeded blind - an unattended Run has nobody to ask
+what done means. The criteria are lifted out verbatim and given their own section
+so an Iteration can find them; the rest of the task follows, with its headings
+demoted one level so it nests instead of reading as the Plan's own sections. A
+count written into the task is carried across with a note that the check derives
+its own denominator (ADR 0008), because #648's "78 files and 276 occurrences" is
+exactly the number an Iteration might otherwise grade itself against.
+
+**Re-running it is reproducible.** The two files are a pure function of the task
+as fetched, the owning area and the check command, and neither carries a
+timestamp - so seeding twice produces the same two files and commits nothing the
+second time (`LOOP_SEED_RESULT=unchanged`). Editing the task upstream does change
+them, which is the point: the seed is how the current task gets in, and a Run
+seeded from a task that has since moved should say so in a diff. Both are written whole rather than
+appended to, which is what stops state accumulating - and is also why a Progress
+Log that already records a Run stops the seed with exit 2 and the word `--reseed`
+rather than overwriting it. The Run's record is the only account of what an
+unattended agent did.
+
+Exit codes: `0` seeded, re-seeded, or unchanged. `1` could not run - bad
+arguments, a failed fetch, or a task with no readable acceptance criteria. `2`
+refused, because a Run is already recorded in the Progress Log.
+
 ## The completeness check
 
 The first task (Tourbot issue 648) is a classification exercise, and a
@@ -110,7 +193,8 @@ the count each removed, so the denominator can be audited rather than taken.
 Same script, both roles: an Iteration runs it to find out what is left, and the
 operator runs it afterwards to decide whether the Run's proposal is acceptable.
 Nothing in `run.sh` knows about it, deliberately - the Loop is task-agnostic, and
-the command belongs in the Plan that seeds the Run (#82) alongside the task.
+the command belongs in the Plan beside the task, where `seed-run.sh --check` puts
+it.
 It reaches no network and writes nothing to the checkout, so it behaves the same
 inside the Execution Boundary on `deny-all` egress as it does here. It needs no
 host on the allowlist.
@@ -167,13 +251,16 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Ninety-six tests, no model and no network. Twenty-three drive `run.sh`
-unmodified and assert only what a Run externally produces - exit code, reported
-bound, Progress Log contents, git history. Thirty-two drive `check-inventory.sh`
-against small fixture checkouts. Forty-one drive `assert-credentials.sh` against
-a constructed box - a home directory, a system root and a scripted fake `sbx`,
-all three of which a tmpdir can hold. None of them names an internal function or
-depends on the order of steps.
+A hundred and thirty-seven tests, no model and no network. Twenty-three drive
+`run.sh` unmodified and assert only what a Run externally produces - exit code,
+reported bound, Progress Log contents, git history. Thirty-two drive
+`check-inventory.sh` against small fixture checkouts. Forty-one drive
+`assert-credentials.sh` against a constructed box - a home directory, a system
+root and a scripted fake `sbx`, all three of which a tmpdir can hold.
+Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
+what the Plan ends up saying, what the Progress Log is left ready for, and what
+seeding twice does. None of them names an internal function or depends on the
+order of steps.
 
 The check is seamed and tested on its own rather than only through a Run because
 it is itself the honest failure signal, and a component that is the failure
@@ -181,22 +268,20 @@ signal should not have its correctness established only through another
 component (spec issue #73, Seam B).
 
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
-Contract, each guard of the check, each credential family - and confirms the
-suite goes red. Forty deliberate breaks, forty caught. It names
+Contract, each guard of the check, each credential family, each guard of the
+seed step - and confirms the suite goes red. Fifty-three deliberate breaks,
+fifty-three caught. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs
 one subject's set. The evidence is in
 `../notes/loop-termination-contract-evidence.md`,
-`../notes/loop-completeness-check-evidence.md` and
-`../notes/loop-credentials-evidence.md`.
+`../notes/loop-completeness-check-evidence.md`,
+`../notes/loop-credentials-evidence.md` and `../notes/loop-seed-evidence.md`.
 
-`shellcheck -x *.sh agents/*.sh tests/*.sh` gates the scripts.
+`shellcheck -x *.sh agents/*.sh task-sources/*.sh tests/*.sh` gates the scripts.
 
 ## What this directory does not do
 
-- **Seed the Plan.** `run.sh` refuses to start without one, because putting the
-  task into the repository is a setup step (#82) and keeping it one is what makes
-  ADR 0003's content-trust reasoning valid.
 - **Push, or open a pull request.** Proposal-Only Output is #83.
 - **Run inside the Execution Boundary.** Wrapping the agent call in `sbx` is a
   change to `agents/claude.sh` and nowhere else - the Loop does not know what a

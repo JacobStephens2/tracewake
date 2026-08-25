@@ -34,6 +34,7 @@ subjects=(
     "run.sh|tests/loop.bats|tests/mutations.py"
     "check-inventory.sh|tests/check-inventory.bats|tests/check-mutations.py"
     "assert-credentials.sh|tests/assert-credentials.bats|tests/credential-mutations.py"
+    "seed-run.sh|tests/seed-run.bats|tests/seed-mutations.py"
 )
 
 only=""

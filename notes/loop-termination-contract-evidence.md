@@ -118,7 +118,9 @@ Iteration, which is strictly more often than Run start.
   stops there. The first end-to-end Run (#83) needs the scripts on the box.
 - **Nothing runs the agent inside the Execution Boundary yet.** That is a change
   to `agents/claude.sh` and to nothing else, which is the point of the seam.
-- **Nothing seeds the Plan** (#82); `run.sh` refuses to start without one.
+- ~~**Nothing seeds the Plan** (#82); `run.sh` refuses to start without one.~~
+  Closed 2026-08-25 by `seed-run.sh`; `run.sh` still refuses to start without a
+  Plan, and that refusal now names the command that writes one.
 - **Nothing pushes or opens a pull request** (#83).
 
 Two things were still open from #78 when this was written, recorded on the

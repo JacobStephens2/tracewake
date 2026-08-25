@@ -367,6 +367,8 @@ step "  because of what you select on this screen."
 step "Permissions → Repository permissions:"
 step "  Contents: Read and write        (the branch a Run pushes)"
 step "  Pull requests: Read and write   (the draft PR a Run opens)"
+step "  Issues: leave at No access      (ADR 0010 - a Run does not read issues;"
+step "                                   the operator seeds the Run off the box)"
 step "  Metadata: Read-only             (GitHub adds this itself)"
 step "  Nothing else. Not Actions, not Administration, not Secrets."
 step "Generate token, then copy it. GitHub shows it exactly once."
@@ -458,6 +460,15 @@ else
     note "Narrow it at github.com/settings/personal-access-tokens and re-run."
     confirm "Continue anyway with a wider token?" || exit 1
 fi
+
+note "Not probed, and it should be: whether the token can read issues. ADR 0010"
+note "makes 'a Run cannot fetch a task' a property of this token holding no Issues"
+note "permission, which is why stage 3 says to leave it at No access - but there"
+note "is no call that separates the two cases. GitHub's list-issues endpoint is"
+note "satisfied by Pull requests: read, which this token must hold, so a 200 there"
+note "proves nothing; and GitHub publishes no endpoint reporting a fine-grained"
+note "token's own permission set. Leaving the permission unset is the control."
+printf '\n'
 
 note "Not probed, on purpose: whether the token can push to the default branch."
 note "Branch protection on ${TARGET_REPO} requires a review, and an unattended"
