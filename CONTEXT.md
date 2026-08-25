@@ -126,6 +126,22 @@ merges. No push to a protected branch, no merge, no deploy, no `apply`, no write
 a live third-party API.
 _Avoid_: PR-per-iteration, output contract
 
+**Agent Adapter**:
+The one substitutable command a Run launches per Iteration: a prompt file and a
+turn bound in, the agent's exit status out. Everything a vendor does differently -
+its template or lack of one, its egress hosts, the words it prints on reaching the
+turn bound, the environment names that supersede its subscription - lives here and
+nowhere else, which is what makes the agent a variable rather than a decision
+(ADR 0004).
+_Avoid_: the agent, the backend, the driver
+
+**Structural Property**:
+Something true of the Execution Boundary and the Loop's shape, so true whatever
+agent runs. Distinguished from a **per-agent property**, which is true of one
+vendor and must be re-established for the next. A property observed under one
+agent is per-agent until a second has shown it (ADR 0012).
+_Avoid_: guarantee, invariant (both are used for the Loop's own invariants)
+
 **Verified Commit**:
 A commit signed by a key registered to the operator's GitHub account. In this
 context the badge asserts that the operator *caused* the commit, not that they

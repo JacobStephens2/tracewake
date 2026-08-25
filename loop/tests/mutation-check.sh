@@ -38,6 +38,7 @@ subjects=(
     "propose.sh|tests/propose.bats|tests/propose-mutations.py"
     "pr-sources/github.sh|tests/pr-source.bats|tests/pr-mutations.py"
     "agents/claude.sh|tests/boundary.bats|tests/boundary-mutations.py"
+    "agents/grok.sh|tests/boundary-grok.bats|tests/boundary-grok-mutations.py"
 )
 
 only=""

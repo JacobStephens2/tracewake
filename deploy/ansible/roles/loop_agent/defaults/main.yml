@@ -1,20 +1,36 @@
 ---
 # The agent, on the Loop's box. ADR 0004 makes the agent a variable rather than
-# a decision; this role is the Claude Code half of that, and #84's is the Grok
-# one.
+# a decision, and this role is the half of that variable that puts a binary on
+# the box. Which one it installs is `loop_agent_name`, declared once in the play
+# and read by the boundary role too, so the box cannot be configured to install
+# one vendor and allow the other's hosts through the egress proxy.
 #
 # What this role puts on the HOST is deliberately small: the binary, and nothing
-# that runs unattended. A Run never executes it here - `loop/agents/claude.sh`
-# always goes through `sbx`, and the boundary suite is what holds that - because
+# that runs unattended. A Run never executes it here - `loop/agents/<agent>.sh`
+# always goes through `sbx`, and the boundary suites are what hold that - because
 # ADR 0003 makes the Execution Boundary the one control still standing when
 # nobody is watching, and an agent that ran beside it would have none.
 #
-# It is on the host for one reason: the login. Claude Code's subscription login
-# is a browser step, and a sandbox is destroyed after every Iteration, so the
-# credential has to be established somewhere that outlives one. The alternative
-# - logging in inside a sandbox and copying the credential out - would need the
-# OAuth hosts on the boundary's allowlist, which is widening a two-host egress
-# posture (#100) to serve a step that happens once.
+# It is on the host for one reason: the login. Both agents authenticate through
+# a browser, and a sandbox is destroyed after every Iteration, so the credential
+# has to be established somewhere that outlives one. The alternative - logging in
+# inside a sandbox and copying the credential out - would need the OAuth hosts on
+# the boundary's allowlist to serve a step that happens once.
+#
+# The two agents differ in where the pin lives, and that is not an inconsistency:
+#
+#   claude  installed on the host AND provided in the guest by `sbx`'s own
+#           template, so the pin is here and its job is to make the two agree.
+#   grok    has no template, so the guest installs it per Iteration and the pin
+#           that matters is the adapter's. This role ASKS the adapter rather
+#           than carrying a second copy - `agents/grok.sh --pinned-version` -
+#           because a host and a guest pinned to different versions by two files
+#           is exactly the drift a pin exists to prevent.
+
+# Which agent this box is set up for. A role default, so the play's `vars:`
+# declaration - or `-e loop_agent_name=grok` - wins over it; this line only
+# keeps the role usable on its own.
+loop_agent_name: claude
 
 # Pinned, not `latest`, for the reason the `sbx` version is pinned: an agent
 # that silently changes version between Runs is an agent whose behaviour nobody
@@ -26,10 +42,30 @@
 # and floats with their image; this pin is the one the operator controls.
 loop_agent_claude_version: 2.1.221
 
-# Where the installer puts things. Named here because three tasks reach for
-# them and the credential path is also what `loop/assert-credentials.sh` gates
-# on - two files agreeing on a literal by both spelling it out is a seam that
-# breaks silently.
+# Where each installer puts things. Named here because several tasks reach for
+# them and the credential path is also what `loop/assert-credentials.sh` and the
+# adapters gate on - two files agreeing on a literal by both spelling it out is
+# a seam that breaks silently.
 loop_agent_claude_bin: /home/loop/.local/bin/claude
 loop_agent_claude_config_dir: /home/loop/.claude
-loop_agent_credentials_path: /home/loop/.claude/.credentials.json
+loop_agent_grok_bin: /home/loop/.grok/bin/grok
+
+# The credential each agent's login leaves behind, and the one the adapter
+# copies into every microVM. Keyed by agent so the "has the human logged in yet"
+# task below is one task rather than one per vendor.
+loop_agent_credentials_path_by_agent:
+  claude: /home/loop/.claude/.credentials.json
+  grok: /home/loop/.grok/auth.json
+loop_agent_credentials_path: "{{ loop_agent_credentials_path_by_agent[loop_agent_name] }}"
+
+# The walkthrough that establishes it, named in the message rather than left for
+# an operator to find.
+loop_agent_login_wizard_by_agent:
+  claude: lab/single-user-factory/wizards/loop-claude-login.sh
+  grok: lab/single-user-factory/wizards/loop-grok-login.sh
+loop_agent_login_wizard: "{{ loop_agent_login_wizard_by_agent[loop_agent_name] }}"
+
+# The adapter the Grok pin is read from, on the CONTROLLER rather than on the
+# box. `loop_scripts` runs after this role, so the box's copy may not be there
+# yet - and the controller's is the one this apply is shipping anyway.
+loop_agent_grok_adapter: "{{ playbook_dir }}/../lab/single-user-factory/loop/agents/grok.sh"

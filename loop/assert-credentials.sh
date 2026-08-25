@@ -125,13 +125,51 @@ forbidden_env=(
     "database-credential MYSQL_PWD DATABASE_URL DB_PASSWORD PROD_DB_SERVER_HOST PROD_DB_SERVER_MYSQL_USER PROD_DB_SERVER_MYSQL_PASS"
     "digitalocean-token DIGITALOCEAN_TOKEN DIGITALOCEAN_ACCESS_TOKEN DO_TOKEN DO_API_TOKEN TF_VAR_do_token SPACES_ACCESS_KEY_ID SPACES_SECRET_ACCESS_KEY"
     # Not "an Anthropic key": any metered model credential supersedes a
-    # subscription, and #84 puts a second vendor on this box.
-    "metered-model-key ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY XAI_API_KEY"
+    # subscription, and #84 put a second vendor on this box. The names here are
+    # the ones no adapter claims - OpenAI-compatible endpoints are configurable
+    # in both agents, so a stray OPENAI_API_KEY is a metered key on this box
+    # whether or not either vendor's own resolution order mentions it. Every
+    # name an adapter DOES claim is added below rather than repeated here.
+    "metered-model-key OPENAI_API_KEY"
     # SSH_AUTH_SOCK is a family member rather than a file: a forwarded agent is
     # fleet reach that leaves nothing on disk, and `ssh -A` to this box is the
     # easiest way to hand an unattended agent the operator's whole key ring.
     "fleet-ssh-key SSH_AUTH_SOCK"
 )
+
+# What each agent adapter says its vendor honours, folded into the family above.
+#
+# Read off the adapters rather than restated, because the adapter is where ADR
+# 0004 puts vendor knowledge and because this script and the Run-start guard must
+# not be able to disagree: the guard in `agents/grok.sh` refuses an Iteration
+# whose environment holds one of these, and this script refuses a BOX that holds
+# one anywhere. Two lists spelled out twice would drift the first time a vendor
+# gained a name, and what would break is the check that the collision cannot
+# happen.
+#
+# A silent empty answer is refused. An adapter that failed to run would leave
+# this family holding one name and reading as complete, which is the one thing a
+# check like this must never do.
+adapters_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/agents"
+adapter_metered_names=()
+for adapter in "${adapters_dir}"/*.sh; do
+    [[ -x ${adapter} ]] || continue
+    adapter_names="$("${adapter}" --metered-env-names 2>/dev/null || true)"
+    [[ -n ${adapter_names} ]] ||
+        die "${adapter} named no metered key environment variables - this check would silently stop looking for them"
+    while IFS= read -r adapter_name; do
+        [[ -n ${adapter_name} ]] && adapter_metered_names+=("${adapter_name}")
+    done <<<"${adapter_names}"
+done
+((${#adapter_metered_names[@]} > 0)) ||
+    die "no agent adapters under ${adapters_dir} - the metered-model-key family would be incomplete"
+
+for row_index in "${!forbidden_env[@]}"; do
+    if [[ ${forbidden_env[row_index]} == metered-model-key\ * ]]; then
+        forbidden_env[row_index]+=" $(printf '%s ' "${adapter_metered_names[@]}")"
+        forbidden_env[row_index]="${forbidden_env[row_index]% }"
+    fi
+done
 
 # The families, derived from the declaration above rather than written out a
 # second time. The report at the bottom walks this list, so a family added to

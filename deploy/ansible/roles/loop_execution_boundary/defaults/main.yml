@@ -59,9 +59,14 @@ loop_execution_boundary_policy_profile: deny-all
 
 # Which agent's host set to allow alongside the common one. ADR 0004 makes the
 # agent a variable rather than a decision, and this is the egress half of that:
-# swapping to Grok (#84) is a change to this line plus a re-apply, not a rebuild
-# - which is spec #73's user story 31.
-loop_execution_boundary_agent: claude
+# swapping to Grok (#84) is a re-apply rather than a rebuild - which is spec #73
+# user story 31.
+#
+# It follows `loop_agent_name`, declared once in the play, rather than being a
+# second knob. Two variables naming the agent is a box that can be configured to
+# install one vendor and allow the other's hosts, which fails as a Run that
+# builds a boundary, installs an agent, and cannot reach a model.
+loop_execution_boundary_agent: "{{ loop_agent_name | default('claude') }}"
 
 # The allowlist, and the reason each entry is on it. Every host here was
 # observed being reached from inside the boundary rather than reasoned about;
@@ -111,20 +116,37 @@ loop_execution_boundary_egress_by_agent:
   # docker-agent, droid, gemini, kiro, opencode and shell - so nothing declares
   # its hosts for it and they have to live here. ADR 0004 priced this in.
   #
-  # Not yet verified against a Run; #84 is what does that. These come from the
-  # shipped `grok` 1.0.5 binary on the orchestration VM rather than from a
-  # vendor page, which is why the two that are here are here and the other four
-  # it names are not - see the note's "left off" list.
+  # Three hosts, and each is here because something breaks without it. The two
+  # the binary names were read off the shipped `grok` 1.0.5 binary rather than a
+  # vendor page; the install host is a consequence of there being no template.
+  # What was left OFF, and why, is in the note's "left off" list.
   grok:
     - host: cli-chat-proxy.grok.com:443
       need: >-
         Inference on the subscription. The binary's default
-        `GROK_CLI_CHAT_PROXY_BASE_URL` is https://cli-chat-proxy.grok.com/v1.
+        `GROK_CLI_CHAT_PROXY_BASE_URL` is https://cli-chat-proxy.grok.com/v1,
+        and #84's Run confirmed it against `sbx policy log` rather than leaving
+        it read off a binary - it is the only inference host an Iteration
+        reached.
     - host: auth.x.ai:443
       need: >-
         The OIDC issuer in ~/.grok/auth.json. Grok's subscription credential is
-        an auto-refreshing OAuth token, so this is needed for the refresh
-        during a Run, not only at login.
+        an auto-refreshing OAuth token that expires six hours after it is
+        minted, so this is needed for the refresh DURING a Run, not only at
+        login. A Run longer than the token's life without it would fail
+        mid-Iteration with an auth error and no explanation.
+    - host: x.ai:443
+      need: >-
+        The install. Grok Build has no `sbx` template, so the agent is
+        installed inside the boundary at a pin every Iteration
+        (`loop/agents/grok.sh`), and `https://x.ai/cli/install.sh` plus the
+        artifact beside it is where the vendor publishes it. Six seconds, one
+        host: the installer's fallback is
+        `storage.googleapis.com/grok-build-public-artifacts`, which stays OFF
+        this list deliberately - see the note. #100 left `x.ai` off as a
+        cosmetic changelog fetch, and installing inside the boundary is what
+        made it required; the changelog itself is turned off in the adapter so
+        this host is allowed for one reason rather than two.
 
 # Four derived values, here rather than repeated inline, because each is named
 # in more than one task and a second copy is a second place to be wrong. All are

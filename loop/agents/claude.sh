@@ -56,6 +56,22 @@ agent_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source-path=SCRIPTDIR source=../contract.sh
 source "${agent_dir}/../contract.sh"
 
+# Every environment variable name that would supersede the subscription login.
+# Declared here because which names a vendor honours is vendor knowledge, which
+# ADR 0004 puts in the adapter; `assert-credentials.sh` reads this list rather
+# than restating it.
+metered_env_names=(
+    ANTHROPIC_API_KEY
+    ANTHROPIC_AUTH_TOKEN
+)
+
+case "${1:-}" in
+    --metered-env-names)
+        printf '%s\n' "${metered_env_names[@]}"
+        exit 0
+        ;;
+esac
+
 prompt_file="${1:?usage: claude.sh <prompt-file> <max-turns>}"
 max_turns="${2:?usage: claude.sh <prompt-file> <max-turns>}"
 
@@ -71,8 +87,22 @@ die() {
 # Remote Control on the orchestration VM, recorded in that box's CLAUDE.md.
 # There is no per-Run spend ceiling to catch it afterwards: the Termination
 # Contract is the whole cost control.
-if [[ -n ${ANTHROPIC_API_KEY:-} ]]; then
-    printf 'claude.sh: ANTHROPIC_API_KEY is set; it would supersede the subscription and move billing to a metered key. Unset it.\n' >&2
+#
+# A list rather than a name, and readable from outside: `assert-credentials.sh`
+# grades the whole box against the union of what every adapter declares, so this
+# is the one place these names are written down. Two files agreeing on a set of
+# names by both spelling them out is a seam that breaks silently, and the thing
+# that would break is the check that the collision cannot happen (#84).
+metered_found=()
+for name in "${metered_env_names[@]}"; do
+    [[ -n ${!name:-} ]] && metered_found+=("${name}")
+done
+if ((${#metered_found[@]} > 0)); then
+    printf 'claude.sh: %s is set; it would supersede the subscription and move billing to a metered key. Unset it.\n' \
+        "$(
+            IFS=', '
+            printf '%s' "${metered_found[*]}"
+        )" >&2
     exit 1
 fi
 

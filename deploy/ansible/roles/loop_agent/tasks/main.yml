@@ -1,18 +1,36 @@
 ---
-# Claude Code on the Loop's box, at a pinned version, with the login left to a
-# human.
+# The agent named by `loop_agent_name`, at a pinned version, with the login left
+# to a human.
 #
-# Nothing here writes a credential. The subscription login opens a browser, so
-# it is the spec's third human-only step and is a runnable walkthrough rather
-# than prose: lab/single-user-factory/wizards/loop-claude-login.sh.
+# Nothing here writes a credential. Both vendors' subscription logins open a
+# browser, so each is a human-only step and a runnable walkthrough rather than
+# prose: `wizards/loop-claude-login.sh` and `wizards/loop-grok-login.sh`.
+#
+# Two install tasks rather than one parameterised task, because the two
+# installers do not take the same shape - one is `bash -s <version>` from
+# claude.ai, the other `bash -s <version>` from x.ai with the pin read off the
+# adapter - and a single task holding both behind `when:` would be less readable
+# than two that each say what they do.
 
-- name: What version of the agent the box is holding
+- name: Refuse an agent this role does not know how to install
+  ansible.builtin.assert:
+    that: loop_agent_name in loop_agent_credentials_path_by_agent
+    fail_msg: >-
+      loop_agent_name is '{{ loop_agent_name }}'; this role installs
+      {{ loop_agent_credentials_path_by_agent.keys() | list | join(', ') }}.
+      An unrecognised name would otherwise leave the box with a narrowed egress
+      allowlist and no agent to use it.
+
+# --- Claude Code -------------------------------------------------------------
+
+- name: What version of Claude Code the box is holding
   become: true
   become_user: loop
   ansible.builtin.command: "{{ loop_agent_claude_bin }} --version"
   register: loop_agent_installed
   changed_when: false
   failed_when: false
+  when: loop_agent_name == 'claude'
 
 # Piped from the vendor's installer, which is how Claude Code is installed and
 # the only way it is. Version-pinned by argument, and re-run only when the box
@@ -22,7 +40,7 @@
 # `warn` is not set and `creates:` is not used: the condition below is a version
 # comparison, which is what a pin means, and `creates:` on the binary would make
 # moving the pin a no-op.
-- name: The agent, at the pinned version
+- name: Claude Code, at the pinned version
   become: true
   become_user: loop
   ansible.builtin.shell:
@@ -31,31 +49,93 @@
       curl -fsSL https://claude.ai/install.sh
       | bash -s {{ loop_agent_claude_version }}
     executable: /bin/bash
-  when: loop_agent_claude_version not in (loop_agent_installed.stdout | default(''))
+  when:
+    - loop_agent_name == 'claude'
+    - loop_agent_claude_version not in (loop_agent_installed.stdout | default(''))
   changed_when: true
 
-- name: The box is holding the pinned version and not another one
+- name: The box is holding the pinned Claude Code and not another one
   become: true
   become_user: loop
   ansible.builtin.command: "{{ loop_agent_claude_bin }} --version"
   register: loop_agent_version_check
   changed_when: false
   failed_when: loop_agent_claude_version not in loop_agent_version_check.stdout
-  when: not ansible_check_mode
+  when:
+    - loop_agent_name == 'claude'
+    - not ansible_check_mode
 
-# The login is a human's. Its absence is worth naming once, where the operator
-# is already looking, rather than being discovered by an unattended Run that
-# builds a microVM and finds it has nothing to run inside it.
+# --- Grok Build --------------------------------------------------------------
+#
+# The pin is the adapter's, read off it rather than restated. That is the
+# difference that matters between the two agents: Grok has no `sbx` template, so
+# every Iteration installs the agent INSIDE the boundary at the adapter's pin,
+# and the host's copy exists only so a human can log in. A second pin here would
+# be a host and a guest running different versions with nothing to notice it.
+
+- name: The pin the Grok adapter installs inside the boundary
+  ansible.builtin.command: "{{ loop_agent_grok_adapter }} --pinned-version"
+  delegate_to: localhost
+  become: false
+  register: loop_agent_grok_pin
+  changed_when: false
+  when: loop_agent_name == 'grok'
+
+- name: What version of Grok Build the box is holding
+  become: true
+  become_user: loop
+  ansible.builtin.command: "{{ loop_agent_grok_bin }} --version"
+  register: loop_agent_grok_installed
+  changed_when: false
+  failed_when: false
+  when: loop_agent_name == 'grok'
+
+# `x.ai/cli/install.sh` serves the channel pointer and the artifact alike, so a
+# pinned install reaches one host. Its fallback is
+# `storage.googleapis.com/grok-build-public-artifacts`, which is deliberately
+# NOT on the boundary's allowlist - a GCS bucket reachable from inside an
+# unattended agent's microVM is an exfiltration path, and #100 closed it. On the
+# host that fallback is available and harmless; inside the boundary an x.ai
+# outage is an install that fails loudly, which is the right direction to fail.
+- name: Grok Build, at the adapter's pinned version
+  become: true
+  become_user: loop
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      curl -fsSL https://x.ai/cli/install.sh
+      | bash -s {{ loop_agent_grok_pin.stdout | trim }}
+    executable: /bin/bash
+  when:
+    - loop_agent_name == 'grok'
+    - (loop_agent_grok_pin.stdout | default('') | trim) not in (loop_agent_grok_installed.stdout | default(''))
+  changed_when: true
+
+- name: The box is holding the pinned Grok Build and not another one
+  become: true
+  become_user: loop
+  ansible.builtin.command: "{{ loop_agent_grok_bin }} --version"
+  register: loop_agent_grok_version_check
+  changed_when: false
+  failed_when: (loop_agent_grok_pin.stdout | trim) not in loop_agent_grok_version_check.stdout
+  when:
+    - loop_agent_name == 'grok'
+    - not ansible_check_mode
+
+# --- The login, which is a human's -------------------------------------------
+
 - name: Whether the human-only login has been done
   ansible.builtin.stat:
     path: "{{ loop_agent_credentials_path }}"
   register: loop_agent_credentials
 
+# Its absence is worth naming once, where the operator is already looking,
+# rather than being discovered by an unattended Run that builds a microVM and
+# finds it has nothing to run inside it.
 - name: Say so if the agent has not been logged in
   ansible.builtin.debug:
     msg: >-
       No model credential at {{ loop_agent_credentials_path }}. The box can
       build a boundary and has nothing to run inside it. Run
-      lab/single-user-factory/wizards/loop-claude-login.sh from the
-      orchestration VM as conductor.
+      {{ loop_agent_login_wizard }} from the orchestration VM as conductor.
   when: not loop_agent_credentials.stat.exists

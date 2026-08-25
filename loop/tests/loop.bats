@@ -288,6 +288,37 @@ setup() {
     [[ "$output" == *"not a git repository"* ]]
 }
 
+# Spec #73 story 32. The Loop asks the adapter which names would supersede its
+# subscription - which vendor honours what is the adapter's to know (ADR 0004) -
+# and refuses to start while one of them is set. The adapter checks again at its
+# own first act; this is the one that costs no Iteration and no model time.
+@test "a metered model key in the Run's environment stops the Run before it starts" {
+    export FAKE_METERED_MODEL_KEY=not-a-real-key
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAKE_METERED_MODEL_KEY"* ]]
+    [[ "$output" == *"metered"* ]]
+    [ "$(agent_invocations)" -eq 0 ]
+}
+
+# An adapter that answers nothing would leave the Loop checking an empty list and
+# reporting a clean preflight, which is the one thing a guard like this must
+# never do. Loud, not lenient - the same rule assert-credentials.sh applies to
+# the same list.
+@test "an agent that names no metered keys stops the Run rather than shortening the check" {
+    silent="${BATS_TEST_TMPDIR}/silent-agent.sh"
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${silent}"
+    chmod +x "${silent}"
+    export LOOP_AGENT_COMMAND="${silent}"
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"named no metered key environment variables"* ]]
+}
+
 @test "a bound that is not a positive integer stops the Run before it starts" {
     export LOOP_MAX_ITERATIONS=0
     export FAKE_AGENT_BEHAVIOURS="commit"

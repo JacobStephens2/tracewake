@@ -34,6 +34,15 @@
 
 set -euo pipefail
 
+# The adapter contract's one query, answered here because the fake satisfies the
+# whole contract or it is not a seam. A name no vendor uses, so that a suite
+# running in a vaulted-agent session cannot trip over it by accident and so that
+# a test asserting the refusal has something unambiguous to set.
+if [[ ${1:-} == --metered-env-names ]]; then
+    printf 'FAKE_METERED_MODEL_KEY\n'
+    exit 0
+fi
+
 prompt_file="${1:?usage: fake-agent.sh <prompt-file> <max-turns>}"
 max_turns="${2:?usage: fake-agent.sh <prompt-file> <max-turns>}"
 state="${FAKE_AGENT_STATE:?FAKE_AGENT_STATE must be set}"

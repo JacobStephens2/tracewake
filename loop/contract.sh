@@ -60,6 +60,14 @@
 # executed with the repository as its working directory, exiting non-zero on
 # failure. Changing vendor is changing this one line, which is also why the
 # offline suite can point it at a scripted fake and drive the real Run.
+#
+# One query is part of that contract as well: `--metered-env-names` prints, one
+# per line, every environment variable name that would supersede the agent's
+# subscription and move billing to a metered key. run.sh refuses to start a Run
+# while one of them is set, and assert-credentials.sh grades the box against the
+# union of what every adapter answers. It is a query rather than a declaration
+# here because the names are the vendor's and this file is not allowed to know
+# one (#84).
 : "${LOOP_AGENT_COMMAND:=}"
 
 # The exit status an agent command uses to say THE TURN BOUND FIRED, as opposed

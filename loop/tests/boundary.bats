@@ -46,8 +46,16 @@ setup() {
     printf 'You are Iteration 1 of at most 5 in an unattended Run.\n' >"${PROMPT}"
 }
 
+# Every name the adapter guards is cleared here rather than assumed absent: the
+# suite has to be runnable in a vaulted-agent session on the orchestration VM,
+# where a metered model key plausibly is in the environment. Read off the
+# adapter rather than restated, so a name added to its list is cleared here too
+# (#84).
 run_an_iteration() {
-    run env -u ANTHROPIC_API_KEY bash -c \
+    local -a clear=()
+    local name
+    while IFS= read -r name; do clear+=(-u "${name}"); done < <("${AGENT}" --metered-env-names)
+    run env "${clear[@]}" bash -c \
         "cd '${WORKSPACE}' && '${AGENT}' '${PROMPT}' 40"
 }
 
@@ -80,7 +88,7 @@ calls() {
     # This is the Termination Contract's Iteration timeout, arriving as a signal
     # the way run.sh's `timeout` sends it. A sandbox left behind by every killed
     # Iteration would accumulate on the box until nothing could start.
-    FAKE_SBX_BEHAVIOUR=agent-hangs run env -u ANTHROPIC_API_KEY \
+    FAKE_SBX_BEHAVIOUR=agent-hangs run env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
         timeout --kill-after=5s 2s bash -c "cd '${WORKSPACE}' && '${AGENT}' '${PROMPT}' 40"
     [[ "$(calls)" == *"rm --force loop-"* ]]
 }

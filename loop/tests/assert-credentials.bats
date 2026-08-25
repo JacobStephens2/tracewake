@@ -373,6 +373,46 @@ publish_upstream() {
     [[ "$output" == *"metered-model-key"* ]]
 }
 
+# The second vendor's names arrive here from `agents/grok.sh` rather than from
+# this script, so that the Run-start guard and the box-level inventory cannot
+# disagree about what a metered key is called (#84). Both directions are worth a
+# test: that every name an adapter declares is graded, and that the derivation
+# failing is loud rather than a family that quietly stops looking.
+@test "every metered key name an adapter declares is graded on the box" {
+    local adapter name
+    for adapter in "${LOOP_SRC}"/agents/*.sh; do
+        while IFS= read -r name; do
+            [[ -n "${name}" ]] || continue
+            run_assert "${name}=not-a-real-key"
+            [ "$status" -eq 2 ]
+            [[ "$output" == *"metered-model-key: ${name}"* ]]
+        done < <("${adapter}" --metered-env-names)
+    done
+}
+
+@test "an adapter that names nothing fails the check rather than shortening it" {
+    # A copy of the script beside a copy of the adapters, because the derivation
+    # is relative to where the script sits. Called directly rather than through
+    # run_assert: the point is which script runs, and run_assert names the real
+    # one.
+    copy="${BATS_TEST_TMPDIR}/copy"
+    mkdir -p "${copy}/agents"
+    cp "${LOOP_SRC}"/agents/*.sh "${copy}/agents/"
+    # The Contract too: an adapter sources it, and an adapter that cannot start
+    # answers nothing - which would make this test pass on the wrong adapter.
+    cp "${LOOP_SRC}/contract.sh" "${copy}/contract.sh"
+    cp "${ASSERT}" "${copy}/assert-credentials.sh"
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${copy}/agents/silent.sh"
+    chmod +x "${copy}/agents/silent.sh"
+
+    local unsets=() name
+    while IFS= read -r name; do unsets+=(-u "${name}"); done < <(credential_env_names)
+    run env "${unsets[@]}" "${copy}/assert-credentials.sh" \
+        --home "${BOX_HOME}" --system-root "${BOX_ROOT}" --sbx "${FAKE_SBX}"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"silent.sh"* ]]
+}
+
 @test "a model vendor secret stored in the boundary is a violation" {
     FAKE_SBX_SECRETS="anthropic" run_assert
     [ "$status" -eq 2 ]

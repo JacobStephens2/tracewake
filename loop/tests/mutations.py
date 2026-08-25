@@ -94,6 +94,20 @@ MUTATIONS = {
         '    [[ ${run_branch} != "${run_base}" ]] ||',
         "    [[ true ]] ||",
     ),
+    # The Run stops asking the adapter what would supersede its subscription, so
+    # a stray metered key starts a Run instead of stopping one - with no error,
+    # no output difference, and no per-Run spend ceiling behind it (#84).
+    "metered-key-preflight-dropped": (
+        "((${#metered_set[@]} == 0)) ||",
+        "((0)) ||",
+    ),
+    # The adapter's answer stops being required, so an adapter that could not
+    # answer produces a preflight that passes while checking nothing.
+    "metered-names-optional": (
+        '[[ -n ${metered_names} ]] ||\n    die "${LOOP_AGENT_COMMAND} named no metered key environment variables'
+        ' - a Run must not start without knowing what would supersede its subscription"',
+        "[[ -n ${metered_names} ]] || true",
+    ),
 }
 
 

@@ -140,6 +140,33 @@ if ${propose}; then
         die "propose command is not executable: ${LOOP_PROPOSE_COMMAND}"
 fi
 
+# The metered-key collision, at second zero and for whichever agent this Run is
+# using. Spec issue #73 story 32 asks for it to fail the Run loudly rather than
+# switch billing quietly, and the Termination Contract is the entire cost
+# control - there is no per-Run spend ceiling to catch it afterwards.
+#
+# The Loop does not know which names those are and must not: which environment
+# variables supersede a subscription is vendor knowledge, which ADR 0004 puts in
+# the adapter. So it asks. Every adapter answers `--metered-env-names`, and an
+# adapter that answers nothing is a Run that refuses to start rather than one
+# that quietly stopped checking - the same rule assert-credentials.sh applies to
+# the same list, for the same reason.
+#
+# The adapter checks again at its own first act, and that is not redundant: this
+# preflight covers the Run's environment, and the adapter covers a box whose
+# environment changed between the two. Neither costs a token of model time.
+metered_names="$("${LOOP_AGENT_COMMAND}" --metered-env-names 2>/dev/null || true)"
+[[ -n ${metered_names} ]] ||
+    die "${LOOP_AGENT_COMMAND} named no metered key environment variables - a Run must not start without knowing what would supersede its subscription"
+
+metered_set=()
+while IFS= read -r metered_name; do
+    [[ -n ${metered_name} ]] || continue
+    [[ -n ${!metered_name:-} ]] && metered_set+=("${metered_name}")
+done <<<"${metered_names}"
+((${#metered_set[@]} == 0)) ||
+    die "$(printf '%s ' "${metered_set[@]}")is set in this Run's environment; it would supersede the subscription and move billing to a metered key. Unset it."
+
 for bound in LOOP_MAX_ITERATIONS LOOP_ITERATION_TIMEOUT_SECONDS LOOP_MAX_TURNS \
     LOOP_RUN_TIMEOUT_SECONDS LOOP_MAX_CONSECUTIVE_NOOPS; do
     [[ ${!bound} =~ ^[1-9][0-9]*$ ]] ||

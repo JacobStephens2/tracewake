@@ -637,7 +637,8 @@ same applies in reverse:
 | `codeload.github.com:443`, `objects.githubusercontent.com:443` | Tarballs and release assets. A shallow clone of a public repository completes with `github.com:443` alone, verified. `**.githubusercontent.com` is also the wildcard a gist was reached through under `balanced` |
 | `statsig.anthropic.com:443` | Claude Code feature flags. Not in the kit set, and it does not resolve from this box even when allowed - under `balanced` the log recorded it as `<dial failed>` |
 | `api.x.ai:443` | Grok's metered API path. ADR 0004 forbids it: a bare `XAI_API_KEY` silently moves billing off the subscription |
-| `x.ai:443` | The `grok` changelog fetch. Cosmetic, and `GROK_CHANGELOG_OFFLINE` turns it off |
+| ~~`x.ai:443`~~ | Was left off as a cosmetic changelog fetch. **On the list since #84**, for a different reason: Grok Build has no `sbx` template, so the agent is installed inside the boundary each Iteration and `https://x.ai/cli/install.sh` plus the artifact beside it is where that comes from. The changelog fetch is still off - `GROK_CHANGELOG_OFFLINE=1` in the adapter - so the host is allowed for one reason rather than two |
+| `storage.googleapis.com:443` | The Grok installer's **fallback** artifact host, `grok-build-public-artifacts/cli`. `x.ai/cli` serves the channel pointer and the artifact alike, so a pinned install reaches one host and never needs this. It stays off deliberately: a GCS bucket reachable from inside an unattended agent's microVM is the exfiltration path #100 closed, and an x.ai outage becoming an install that fails loudly is the right direction to fail |
 
 One that is on the box without being declared anywhere: the `shell` kit
 attaches `openrouter.ai` to a `shell` sandbox, the way the `claude` kit
@@ -848,8 +849,10 @@ contradiction.
   remains where the list gets its real test. If a Run finds a missing host, the
   fix is a line in `loop_execution_boundary_egress_common` with a `need:`
   saying what broke without it, and a re-apply.
-- **That the Grok set is right.** It is read off the shipped binary, not off a
-  Run. #84.
+- ~~**That the Grok set is right.**~~ Established by #84 - see
+  `loop-grok-run-evidence.md`, which records what `sbx policy log` showed a Run
+  under that agent actually reaching, and what the set had to gain to make one
+  work at all.
 - **That the agent cannot exfiltrate.** It is much harder than under
   `balanced` - no object store, no gist, no arbitrary callback - but
   `github.com` is still reachable and a repository is still a place to write

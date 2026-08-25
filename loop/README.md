@@ -18,10 +18,12 @@ githubusercontent, which is a boundary against a runaway agent and not against a
 motivated one. An attended Run may run on any posture, because somebody is
 watching it. An unattended one may not.
 
-As of 2026-08-24 `loop.etadventures.com` is on `deny-all` plus a two-host
-allowlist, declared in `ansible/roles/loop_execution_boundary/defaults/main.yml`
-and reconciled by `ansible-playbook loop.yml`. If a Run fails on a host it
-needed, the fix is a line in `loop_execution_boundary_egress_common` saying what
+As of 2026-08-24 `loop.etadventures.com` is on `deny-all` plus an allowlist,
+declared in `ansible/roles/loop_execution_boundary/defaults/main.yml` and
+reconciled by `ansible-playbook loop.yml`. It is two hosts common to every agent
+plus whatever the current agent needs - nothing under Claude Code, three hosts
+under Grok Build. If a Run fails on a host it needed, the fix is a line in
+`loop_execution_boundary_egress_common` (or the current agent's set) saying what
 broke without it - not widening the profile. The posture, the probes and what
 was deliberately left off are in
 `lab/single-user-factory/notes/loop-execution-boundary-evidence.md`.
@@ -34,7 +36,8 @@ was deliberately left off are in
 | `seed-run.sh` | The setup step. One chosen task in, a Plan and a Progress Log out (#82). |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `propose.sh` | Proposal-Only Output. The push and the draft pull request (#83). |
-| `agents/claude.sh` | The agent as one substitutable command (ADR 0004), inside the Execution Boundary. |
+| `agents/claude.sh` | The first agent as one substitutable command (ADR 0004), inside the Execution Boundary. |
+| `agents/grok.sh` | The second agent (#84). Agent-less boundary, installed inside at a pin. |
 | `task-sources/github.sh` | The task source as one substitutable command. One task, by number. |
 | `pr-sources/github.sh` | The pull-request surface as one substitutable command. |
 | `check-inventory.sh` | The first task's grade. Derives its own denominator. |
@@ -50,7 +53,8 @@ was deliberately left off are in
 | `tests/fake-curl.sh` | The scripted GitHub, so `draft: true` is asserted rather than stated. |
 | `tests/propose.bats` | The proposal's offline suite, seamed separately (#83). |
 | `tests/pr-source.bats` | The pull-request surface's own suite - what one request says. |
-| `tests/boundary.bats` | The agent adapter's suite: an Iteration inside the boundary. |
+| `tests/boundary.bats` | The first adapter's suite: an Iteration inside the boundary. |
+| `tests/boundary-grok.bats` | The second adapter's suite. A sibling, not a parameterisation - ADR 0012. |
 | `tests/assert-credentials.bats` | The credential inventory's offline suite, seamed separately (#81). |
 | `tests/mutation-check.sh` | Breaks each bound and each guard, confirms the suites notice. |
 
@@ -382,10 +386,10 @@ the proposal the Iterations have already committed.
 ## The Execution Boundary
 
 Every Iteration runs inside its own hypervisor microVM, created and destroyed by
-`agents/claude.sh`. **The Loop does not know what a boundary is** - `run.sh`
+the agent adapter. **The Loop does not know what a boundary is** - `run.sh`
 launches one command per Iteration and compares the repository head before and
-after, and all of this lives in the agent adapter, which is what makes swapping
-agents (#84) a change to one file.
+after, and all of this lives in the adapter, which is what made swapping agents
+(#84) a change to one line.
 
 The sandbox is per Iteration, not per Run. That is the same forgetting the fresh
 process gives the agent's context, applied to its filesystem: anything that
@@ -396,10 +400,59 @@ guest is a commit in the checkout on the host.
 What goes inside is the model credential, the signing key, and the git identity
 that uses it. What does not is the GitHub token. The signing key being inside is
 a stated cost - an agent in the guest can read it - bounded by an egress
-allowlist of two hosts that both need the token it does not have, and by the key
-being dedicated to the Loop and revocable on its own (ADR 0005). The model
-credential is inside for a reason worth reading before assuming otherwise:
-ADR 0011.
+allowlist whose common half is two hosts that both need the token it does not
+have, and by the key being dedicated to the Loop and revocable on its own
+(ADR 0005). The model credential is inside for a reason worth reading before
+assuming otherwise: ADR 0011.
+
+## Two agents, and which properties belong to which
+
+The agent is `LOOP_AGENT_COMMAND`, one line in `run.sh`. Two adapters exist, and
+the second one (#84) is what established that the first Run's results were about
+the technique rather than about one vendor. **Do not read a property off one
+adapter and quote it of the Loop** - ADR 0012 is the rule, and this is the table.
+
+| | Claude Code | Grok Build |
+| --- | --- | --- |
+| `sbx` template | `claude`, the vendor's | none - a `shell` boundary with the agent installed inside |
+| Where the guest's agent comes from | the boundary vendor's image | the vendor's installer, per Iteration, at the adapter's pin |
+| Inference hosts | six, attached by the kit at `sandbox:` scope | three, declared globally: `cli-chat-proxy.grok.com`, `auth.x.ai`, `x.ai` |
+| Credential | OAuth session in `.credentials.json` | OAuth session in `auth.json`, expiring in six hours and refreshing mid-Run |
+| Host-proxy credential injection | no (ADR 0011) | no, and for a second reason - the credential is not a key the proxy can present |
+| Turn bound | exits 1, prints `Reached max turns (N)` | exits 1, prints `max turns reached` |
+| Metered-key doors | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | five environment names plus a per-model key in `config.toml` |
+| Permission mode that can commit | `bypassPermissions` | `bypassPermissions` |
+| GitHub token inside the boundary | no | no |
+| One microVM per Iteration, destroyed after | yes | yes |
+
+The last three rows are the structural ones, and they are asserted in both
+suites rather than inherited.
+
+**The metered-key names are the adapter's, and three things read them off it.**
+`run.sh`'s preflight refuses to start a Run while one is set; the adapter checks
+again at its own first act, before a boundary is built; and
+`assert-credentials.sh` grades the whole box against the union of what every
+adapter answers. None of the three restates a name, so they cannot disagree
+about what a metered key is called - and an adapter that answers nothing stops
+the Run rather than shortening the check.
+
+That is why the adapter's contract has one query alongside its two arguments:
+
+```
+<adapter> <prompt-file> <max-turns>     one Iteration
+<adapter> --metered-env-names           one name per line
+```
+
+Swapping is two lines, in two places, for two different jobs:
+
+```
+LOOP_AGENT_COMMAND=/home/loop/loop/agents/grok.sh          the Loop's half
+ansible-playbook loop.yml -e loop_agent_name=grok          the box's half
+```
+
+The second installs the agent for the login and allows that agent's hosts
+through the egress proxy. Nothing in `contract.sh`, `propose.sh` or the boundary
+role's structure moves for either.
 
 ## What this directory does not do
 
@@ -407,8 +460,9 @@ ADR 0011.
   `ansible/loop.yml` (role `loop_credentials`) and git is configured to sign with
   it. The three that arrive through a browser are walkthroughs rather than
   prose: `../wizards/loop-sbx-login.sh` (#78),
-  `../wizards/loop-github-credentials.sh` (#81), and
-  `../wizards/loop-claude-login.sh` (#83).
+  `../wizards/loop-github-credentials.sh` (#81), and the agent's own login -
+  `../wizards/loop-claude-login.sh` (#83) or `../wizards/loop-grok-login.sh`
+  (#84).
 - **Get itself onto the box.** `ansible/loop.yml` does that now, role
   `loop_scripts`, alongside `loop_agent` for the pinned agent - so a change here
   reaches `loop.etadventures.com` by re-applying the play, not by an rsync

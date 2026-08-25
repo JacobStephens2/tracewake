@@ -127,6 +127,21 @@ MUTATIONS = {
         "    printf '\\nViolations:\\n'",
         "    exit 0\n    printf '\\nViolations:\\n'",
     ),
+    # The metered-model-key family stops folding in what the adapters declare,
+    # so the box is graded against one vendor's names while a Run is guarded
+    # against two. The two enforcement points would disagree in silence, which
+    # is the seam reading the list off the adapters exists to close (#84).
+    "adapter-names-not-folded-in": (
+        "        forbidden_env[row_index]+=\" $(printf '%s ' \"${adapter_metered_names[@]}\")\"",
+        "        :",
+    ),
+    # An adapter that answers nothing is skipped instead of fatal, so a family
+    # quietly stops looking for the names it was supposed to look for.
+    "silent-adapter-tolerated": (
+        '    [[ -n ${adapter_names} ]] ||\n        die "${adapter} named no metered key environment variables'
+        ' - this check would silently stop looking for them"',
+        "    [[ -n ${adapter_names} ]] || continue",
+    ),
 }
 
 
