@@ -48,6 +48,11 @@ Derives every occurrence of <symbol> in the checkout's tracked application code
 and reports whether the inventory accounts for each one. Exits 0 when it does,
 2 when it does not, 1 when the check could not run.
 
+The symbol is matched case-insensitively as a substring, which counts
+`tblEmailMessageAttachment` as an occurrence of `tblEmailMessage`. That is the
+over-inclusive direction on purpose: a completeness check that silently narrows
+what it is looking for is the one failure it cannot report.
+
 The inventory is markdown. One occurrence per list item:
 
   - `path/to/file.php:123` - should-include-notes - the contact history tab
@@ -135,6 +140,14 @@ git -C "${checkout}" rev-parse --git-dir >/dev/null 2>&1 ||
 git -C "${checkout}" rev-parse HEAD >/dev/null 2>&1 ||
     die "checkout has no commits: ${checkout}"
 
+# `git grep` reports paths relative to where it ran, so a subdirectory would
+# make every declared exclusion stop matching and the denominator would quietly
+# change shape. Narrowing to part of a checkout is what --scope is for, and it
+# says so in the report.
+toplevel="$(git -C "${checkout}" rev-parse --show-toplevel)"
+[[ ${toplevel} == "${checkout}" ]] ||
+    die "--checkout is a subdirectory of ${toplevel} - point it at the checkout and narrow with --scope"
+
 excludes=("${default_excludes[@]}" ${extra_excludes+"${extra_excludes[@]}"})
 
 # --- The denominator ---------------------------------------------------------
@@ -153,41 +166,41 @@ declare -A excluded_by=()       # glob -> how many occurrences it removed
 total_all=0
 total_scope=0
 total_excluded=0
-total_out_of_scope_by_glob=0
+occurrences_outside_scope=0
 
-path_matches_any() {
+# Prints the first glob that matches, so a caller can both test and report.
+first_matching_glob() {
     local path="$1" glob
     shift
     for glob in "$@"; do
         # shellcheck disable=SC2053  # a glob compared against a path is the point
-        [[ ${path} == ${glob} ]] && return 0
+        if [[ ${path} == ${glob} ]]; then
+            printf '%s' "${glob}"
+            return 0
+        fi
     done
     return 1
 }
 
-# `git grep -z` separates path, line number and text with NUL, so a path
-# holding a colon cannot be mis-split. Bash cannot use NUL as a field
-# separator, so the NULs become tabs on the way in; the source line is the
-# last field and absorbs any tabs of its own.
+# `git grep -z` separates path, line number and text with NUL, so a path holding
+# a colon - which the source line is full of - cannot be mis-split. Bash cannot
+# use NUL as a field separator, so the NULs become tabs on the way in and the
+# source line, read last, absorbs any tabs of its own. A path containing a tab
+# would still mis-split; nothing in a PHP checkout has one.
 while IFS=$'\t' read -r path lineno text; do
     [[ -n ${path} ]] || continue
     key="${path}:${lineno}"
     occurrence_line["${key}"]="${text}"
     total_all=$((total_all + 1))
 
-    hit=""
-    for glob in "${excludes[@]}"; do
-        # shellcheck disable=SC2053
-        if [[ ${path} == ${glob} ]]; then hit="${glob}"; break; fi
-    done
-    if [[ -n ${hit} ]]; then
+    if hit="$(first_matching_glob "${path}" "${excludes[@]}")"; then
         excluded_by["${hit}"]=$(( ${excluded_by["${hit}"]:-0} + 1 ))
         total_excluded=$((total_excluded + 1))
         continue
     fi
 
-    if ((${#scopes[@]} > 0)) && ! path_matches_any "${path}" "${scopes[@]}"; then
-        total_out_of_scope_by_glob=$((total_out_of_scope_by_glob + 1))
+    if ((${#scopes[@]} > 0)) && ! first_matching_glob "${path}" "${scopes[@]}" >/dev/null; then
+        occurrences_outside_scope=$((occurrences_outside_scope + 1))
         continue
     fi
 
@@ -205,6 +218,10 @@ fi
 # reviews, grouped by owning area with headings and prose; the check picks the
 # entries out of it rather than demanding a data file that nobody would read.
 
+# `|| die` rather than letting `set -e` take it: awk exits 2 on a bad program or
+# an unreadable file, and 2 is the code that means "the inventory does not
+# account for every occurrence". A check that could not run must never report a
+# grade.
 parsed="$(
     awk \
         -v classes="${classifications[*]}" \
@@ -225,14 +242,14 @@ parsed="$(
             body = line
             sub(/^[ \t]*[-*+][ \t]+/, "", body)
 
-            has_ref = match(body, /[A-Za-z0-9_.\/-]+:[0-9]+/)
+            has_ref = match(body, /[A-Za-z0-9_./-]+:[0-9]+/)
             if (has_ref) {
                 ref = substr(body, RSTART, RLENGTH)
                 after = substr(body, RSTART + RLENGTH)
                 refpath = ref
                 sub(/:[0-9]+$/, "", refpath)
                 # A bare "note: 5" is prose, not a file reference.
-                if (refpath !~ /[\/.]/) has_ref = 0
+                if (refpath !~ /[/.]/) has_ref = 0
             }
 
             if (is_item && has_ref) {
@@ -276,7 +293,7 @@ parsed="$(
         }
         END { emit() }
         ' "${inventory}"
-)"
+)" || die "could not read the inventory: ${inventory}"
 
 # --- Reconciliation ----------------------------------------------------------
 
@@ -287,9 +304,10 @@ duplicate=()
 unclassified=()
 ambiguous=()
 unjustified=()
-out_of_scope=()
+entries_out_of_scope=()
 declare -A by_class=()
 accounted=0
+total_entries=0
 
 needs_rationale() {
     local class="$1" required
@@ -302,6 +320,7 @@ needs_rationale() {
 while IFS=$'\t' read -r path lineno class rationale; do
     [[ -n ${path} ]] || continue
     key="${path}:${lineno}"
+    total_entries=$((total_entries + 1))
 
     # Marked seen before anything else can reject it, so that one bad entry is
     # reported once - as the thing that is wrong with it - rather than twice, as
@@ -322,7 +341,7 @@ while IFS=$'\t' read -r path lineno class rationale; do
         continue
     fi
     if [[ -z ${in_scope["${key}"]:-} ]]; then
-        out_of_scope+=("${key}")
+        entries_out_of_scope+=("${key}")
         continue
     fi
 
@@ -340,15 +359,13 @@ done
 
 # --- The report --------------------------------------------------------------
 
-count() { printf '%d' "$#"; }
-
-n_missing=$(count ${missing+"${missing[@]}"})
-n_stale=$(count ${stale+"${stale[@]}"})
-n_duplicate=$(count ${duplicate+"${duplicate[@]}"})
-n_unclassified=$(count ${unclassified+"${unclassified[@]}"})
-n_ambiguous=$(count ${ambiguous+"${ambiguous[@]}"})
-n_unjustified=$(count ${unjustified+"${unjustified[@]}"})
-n_out_of_scope=$(count ${out_of_scope+"${out_of_scope[@]}"})
+n_missing=${#missing[@]}
+n_stale=${#stale[@]}
+n_duplicate=${#duplicate[@]}
+n_unclassified=${#unclassified[@]}
+n_ambiguous=${#ambiguous[@]}
+n_unjustified=${#unjustified[@]}
+n_out_of_scope=${#entries_out_of_scope[@]}
 
 faults=$((n_missing + n_stale + n_duplicate + n_unclassified + n_ambiguous + n_unjustified))
 result="complete"
@@ -357,6 +374,7 @@ result="complete"
 printf 'CHECK_RESULT=%s\n' "${result}"
 printf 'CHECK_SYMBOL=%s\n' "${symbol}"
 printf 'CHECK_OCCURRENCES=%d\n' "${total_scope}"
+printf 'CHECK_ENTRIES=%d\n' "${total_entries}"
 printf 'CHECK_ACCOUNTED=%d\n' "${accounted}"
 printf 'CHECK_MISSING=%d\n' "${n_missing}"
 printf 'CHECK_STALE=%d\n' "${n_stale}"
@@ -370,13 +388,23 @@ if ((${#scopes[@]} > 0)); then
     printf 'CHECK_SCOPE=%s\n' "${scopes[*]}"
 fi
 
+# An inventory in the wrong shape parses to nothing and would otherwise be
+# reported as an inventory that classified nothing - the same output for "the
+# work was not done" and "the check could not read the work", which is the false
+# alarm this component cannot afford.
+if ((total_entries == 0)); then
+    printf '\nThe inventory parsed to zero entries. If it is not empty, its entries are not\n'
+    printf 'in the expected shape - a list item naming path:line, then the\n'
+    printf 'classification, then the rationale. See --help.\n'
+fi
+
 printf '\nDenominator\n'
 printf '  %d occurrences of %s in tracked files\n' "${total_all}" "${symbol}"
 for glob in "${!excluded_by[@]}"; do
     printf '  -%-4d %s (not application code)\n' "${excluded_by["${glob}"]}" "${glob}"
 done
 if ((${#scopes[@]} > 0)); then
-    printf '  -%-4d outside the scope: %s\n' "${total_out_of_scope_by_glob}" "${scopes[*]}"
+    printf '  -%-4d outside the scope: %s\n' "${occurrences_outside_scope}" "${scopes[*]}"
 fi
 printf '  =%-4d to be classified\n' "${total_scope}"
 
@@ -402,14 +430,16 @@ report_list() {
 
 # Sorted so that two runs over the same checkout produce the same report and a
 # diff between them is the work that happened in between.
-sort_in_place() {
-    local -n array="$1"
-    ((${#array[@]} > 0)) || return 0
-    mapfile -t array < <(printf '%s\n' "${array[@]}" | sort)
+sorted() {
+    (($# > 0)) || return 0
+    printf '%s\n' "$@" | sort
 }
-for name in missing stale duplicate unclassified ambiguous unjustified; do
-    sort_in_place "${name}"
-done
+mapfile -t missing < <(sorted ${missing+"${missing[@]}"})
+mapfile -t stale < <(sorted ${stale+"${stale[@]}"})
+mapfile -t duplicate < <(sorted ${duplicate+"${duplicate[@]}"})
+mapfile -t unclassified < <(sorted ${unclassified+"${unclassified[@]}"})
+mapfile -t ambiguous < <(sorted ${ambiguous+"${ambiguous[@]}"})
+mapfile -t unjustified < <(sorted ${unjustified+"${unjustified[@]}"})
 
 ((n_missing == 0)) || report_list "Missing" \
     "in the checkout, not in the inventory" "${missing[@]}"

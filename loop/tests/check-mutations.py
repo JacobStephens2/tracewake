@@ -67,7 +67,7 @@ MUTATIONS = {
     # The scope stops narrowing the denominator, so a Run asked about one owning
     # area is graded against the whole checkout.
     "scope-ignored": (
-        'if ((${#scopes[@]} > 0)) && ! path_matches_any "${path}" "${scopes[@]}"; then',
+        'if ((${#scopes[@]} > 0)) && ! first_matching_glob "${path}" "${scopes[@]}" >/dev/null; then',
         "if false; then",
     ),
     # The exclusions stop being declared in the script, leaving the caller free
@@ -75,6 +75,25 @@ MUTATIONS = {
     "declared-excludes-dropped": (
         "    'mysql_files/*'            # migrations: the table's definition, not a read",
         "",
+    ),
+    # An inventory in a shape the parser does not read is reported as an
+    # inventory that classified nothing, which is the same output as work that
+    # was never done.
+    "wrong-shape-inventory-silent": (
+        "if ((total_entries == 0)); then",
+        "if false; then",
+    ),
+    # A subdirectory of a checkout is accepted, which leaves every declared
+    # exclusion matching nothing and the denominator a different shape.
+    "subdirectory-silently-rescoped": (
+        '[[ ${toplevel} == "${checkout}" ]] ||',
+        "true ||",
+    ),
+    # awk failing is read as a grade rather than as the check not running: its
+    # exit 2 is the code that means the inventory is incomplete.
+    "unreadable-inventory-graded": (
+        ')" || die "could not read the inventory: ${inventory}"',
+        ')" || true',
     ),
     # The report says how many occurrences are unaccounted for and not which,
     # which is a number rather than an actionable report.

@@ -97,9 +97,10 @@ mistyped `--scope` produces a check with nothing to check, and reporting success
 for that would be a check that passes hardest when it is most broken.
 
 **It never reads a count from the task.** Issue 648 says "78 files and 276
-occurrences"; the same checkout answers 303 in scope today, 359 before
-exclusions. A check that trusted the ticket would pass on an inventory that had
-missed everything landed since it was written. ADR 0008 records that decision
+occurrences"; against `tourbot` master on 2026-08-25 the same search answers 359
+across the tracked tree and 303 in application code. A check that trusted the
+ticket would pass on an inventory that had missed everything landed since it was
+written. ADR 0008 records that decision
 and the two things that follow from it - exclusions declared in the script
 rather than supplied by the caller, and both exclusions and scope printed with
 the count each removed, so the denominator can be audited rather than taken.
@@ -109,8 +110,15 @@ operator runs it afterwards to decide whether the Run's proposal is acceptable.
 Nothing in `run.sh` knows about it, deliberately - the Loop is task-agnostic, and
 the command belongs in the Plan that seeds the Run (#82) alongside the task.
 It reaches no network and writes nothing to the checkout, so it behaves the same
-inside the Execution Boundary on `deny-all` egress as it does on a laptop. It
-needs no host on the allowlist.
+inside the Execution Boundary on `deny-all` egress as it does here. It needs no
+host on the allowlist.
+
+Two ways it refuses to grade rather than grading wrongly, both of which cost a
+Run nothing and would otherwise be silent: a denominator of zero exits 1, and an
+inventory that parses to zero entries says the shape is wrong instead of
+reporting that nothing was classified. The second matters because "the work was
+not done" and "the check could not read the work" would otherwise produce the
+same output.
 
 ## Running the suite
 
@@ -120,9 +128,9 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Fifty-one tests, thirty seconds, no model and no network. Twenty-three drive
+Fifty-five tests, thirty seconds, no model and no network. Twenty-three drive
 `run.sh` unmodified and assert only what a Run externally produces - exit code,
-reported bound, Progress Log contents, git history. Twenty-eight drive
+reported bound, Progress Log contents, git history. Thirty-two drive
 `check-inventory.sh` against small fixture checkouts and assert its exit code and
 its report. Neither names an internal function or depends on the order of steps.
 
@@ -132,8 +140,8 @@ signal should not have its correctness established only through another
 component (spec issue #73, Seam B).
 
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
-Contract, each guard of the check - and confirms the suite goes red. Twenty-two
-deliberate breaks, twenty-two caught. It names exact lines, so a reorganisation
+Contract, each guard of the check - and confirms the suite goes red. Twenty-five
+deliberate breaks, twenty-five caught. It names exact lines, so a reorganisation
 will make a mutation stop applying; it says so and fails rather than reporting a
 false pass. `--only check-inventory.sh` runs one subject's set. The evidence is
 in `../notes/loop-termination-contract-evidence.md` and

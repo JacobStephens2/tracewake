@@ -380,6 +380,31 @@ MD
     [ "${lines[0]}" = "CHECK_RESULT=incomplete" ]
 }
 
+@test "an inventory in the wrong shape says so rather than reading as no work" {
+    seed_three_occurrences
+    write_inventory <<'MD'
+| Occurrence | Classification |
+| --- | --- |
+| mtourbot/reports/contact_history.php:2 | should-include-notes |
+MD
+
+    run_the_check
+
+    [ "${status}" -eq 2 ]
+    [[ ${output} == *"CHECK_ENTRIES=0"* ]]
+    [[ ${output} == *"parsed to zero entries"* ]]
+}
+
+@test "the entry count is reported alongside the occurrence count" {
+    seed_three_occurrences
+    seed_complete_inventory
+
+    run_the_check
+
+    [ "${status}" -eq 0 ]
+    [[ ${output} == *"CHECK_ENTRIES=3"* ]]
+}
+
 # --- Refusing to run rather than passing wrongly ----------------------------
 
 @test "a missing --checkout is a usage error" {
@@ -398,6 +423,27 @@ MD
 
     [ "${status}" -eq 1 ]
     [[ ${output} == *"not a git repository"* ]]
+}
+
+@test "a subdirectory of a checkout is refused rather than silently rescoped" {
+    seed_three_occurrences
+    seed_complete_inventory
+
+    run "${CHECK}" --checkout "${CHECKOUT}/mtourbot" --inventory "${INVENTORY}"
+
+    [ "${status}" -eq 1 ]
+    [[ ${output} == *"subdirectory"* ]]
+}
+
+@test "an unreadable inventory is an error, not a grade" {
+    seed_three_occurrences
+    seed_complete_inventory
+    chmod 000 "${INVENTORY}"
+
+    run_the_check
+
+    [ "${status}" -eq 1 ]
+    [[ ${output} == *"could not read the inventory"* ]]
 }
 
 @test "an inventory that does not exist is an error" {

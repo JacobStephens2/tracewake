@@ -11,7 +11,7 @@ Issue 648 states the size of the job as **78 files and 276 occurrences**. The
 same checkout answers differently today:
 
 ```
-$ check-inventory.sh --checkout /srv/orchestration/tourbot --inventory <empty>
+$ check-inventory.sh --checkout /srv/orchestration/tourbot --inventory /tmp/empty.md
 CHECK_OCCURRENCES=303
 CHECK_EXCLUDED=56
 
@@ -39,8 +39,16 @@ can shrink until the inventory looks complete.
 
 Spec issue #73 asks specifically that the thing the check guards be broken
 deliberately and the check confirmed to fail. Run at real scale against
-`/srv/orchestration/tourbot`, with an inventory generated mechanically from the
-checkout so that the starting state is genuinely complete.
+`/srv/orchestration/tourbot` at master on 2026-08-25, with an inventory generated
+mechanically from the checkout so that the starting state is genuinely complete:
+
+```
+git -C /srv/orchestration/tourbot grep -I -z -n -i -F -e tblEmailMessage -- . \
+  | tr '\0' '\t' | awk -F'\t' '{print "- `" $1 ":" $2 "` - write"}' > full-inventory.md
+```
+
+Classifying all 359 as `write` is not the real task's answer - it is the cheapest
+way to produce a genuinely complete inventory to break.
 
 | Mutation | Result |
 | --- | --- |
@@ -59,22 +67,30 @@ a stale denominator would hide.
 ## Mutation check, check side
 
 `tests/mutation-check.sh --only check-inventory.sh` removes one guard at a time
-and requires the suite to go red. Twelve breaks, twelve caught.
+and requires the suite to go red. Fifteen breaks, fifteen caught.
 
 ```
-zero-denominator-passes      caught,  1 red
-case-sensitive-symbol        caught,  1 red
-untracked-files-counted      caught,  1 red
-missing-not-a-fault          caught,  6 red
-stale-not-a-fault            caught,  2 red
-duplicates-ignored           caught,  1 red
-unclassified-accepted        caught,  1 red
-ambiguous-accepted           caught,  1 red
-rationale-floor-removed      caught,  2 red
-scope-ignored                caught,  2 red
-declared-excludes-dropped    caught,  1 red
-report-names-nothing         caught,  8 red
+zero-denominator-passes        caught,  1 red
+case-sensitive-symbol          caught,  1 red
+untracked-files-counted        caught,  1 red
+missing-not-a-fault            caught,  7 red
+stale-not-a-fault              caught,  2 red
+duplicates-ignored             caught,  1 red
+unclassified-accepted          caught,  1 red
+ambiguous-accepted             caught,  1 red
+rationale-floor-removed        caught,  2 red
+scope-ignored                  caught,  2 red
+declared-excludes-dropped      caught,  1 red
+wrong-shape-inventory-silent   caught,  1 red
+subdirectory-silently-rescoped caught,  1 red
+unreadable-inventory-graded    caught,  1 red
+report-names-nothing           caught,  8 red
 ```
+
+The harness earned its keep once during this: after the exclusion loop was
+refactored, `scope-ignored` no longer matched the line it names and the run
+stopped and said so rather than reporting a mutation caught that was never
+applied.
 
 `zero-denominator-passes` is the one worth naming. Without that guard a wrong
 `--symbol`, a mistyped `--scope` or a checkout that failed to clone produces a
@@ -88,7 +104,7 @@ backpressure.
 
 ## The suite
 
-Twenty-eight tests, fourteen seconds, no model and no network. They drive
+Thirty-two tests, fifteen seconds, no model and no network. They drive
 `check-inventory.sh` against small fixture checkouts - three files, three
 occurrences - and assert only its exit code and its report.
 
@@ -124,8 +140,30 @@ The check fetches nothing. It reads a checkout and a file, runs `git grep` and
 `awk`, and writes to stdout. No network, no model, no write to the checkout -
 the last of which the suite asserts, because a check that dirties the tree it is
 grading would make the Loop's No-op detection lie. It behaves identically on
-`deny-all` and on a laptop, and it adds no line to
+`deny-all` and on the orchestration VM, and it adds no line to
 `loop_execution_boundary_egress_common`.
+
+## Two failures that would have been silent
+
+Both came out of review, and both are the same shape: an output that means "the
+check could not run" being emitted as an output that means "the work is not
+done".
+
+**awk exits 2.** So does the check, when the inventory does not account for
+everything. An unreadable inventory therefore graded the Run as incomplete
+rather than saying it could not be read. It now dies with exit 1, and a test
+holds it there.
+
+**An inventory in the wrong shape parses to zero entries.** A markdown table -
+a plausible reading of issue 648's "publish the inventory grouped by the area
+that owns it" - produced "303 missing" with nothing to say the format was the
+problem. It now names the shape it expected. The `CHECK_ENTRIES` count is in the
+header for the same reason.
+
+A third, narrower one: `--checkout` pointed at a subdirectory passed
+`rev-parse --git-dir`, and `git grep` then reported paths relative to that
+subdirectory, so every declared exclusion silently stopped matching. It is
+refused, and `--scope` is the way to grade part of a checkout.
 
 ## What is not verified
 
