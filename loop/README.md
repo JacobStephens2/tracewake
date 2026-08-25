@@ -136,6 +136,13 @@ It reports **both** directions, because either alone is a half-truth: the four
 credentials the box is allowed to hold, and the four families it may not. `0`
 clean, `2` naming every violation, `1` when it could not run.
 
+**It takes two runs.** As `loop` it sees the environment a Run actually gets and
+the boundary's session, and cannot look inside `/root`; as root it can look there
+and has no `sbx` session. A probe it could not evaluate prints `[partial]`, never
+`[clear]` - `[[ -e ]]` is false both for "not there" and for "not allowed to
+look", and reporting those the same way is how a check comes to be trusted for
+something it never did.
+
 **Four, not three.** The spec says three; the Execution Boundary itself needs a
 Docker identity, so there is a fourth (ADR 0009). It is a read-only Docker token
 that reads Docker Hub and reaches nothing else, and it is a line of the inventory
@@ -160,10 +167,10 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Ninety-one tests, no model and no network. Twenty-three drive `run.sh`
+Ninety-six tests, no model and no network. Twenty-three drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history. Thirty-two drive `check-inventory.sh`
-against small fixture checkouts. Thirty-six drive `assert-credentials.sh` against
+against small fixture checkouts. Forty-one drive `assert-credentials.sh` against
 a constructed box - a home directory, a system root and a scripted fake `sbx`,
 all three of which a tmpdir can hold. None of them names an internal function or
 depends on the order of steps.
@@ -175,11 +182,13 @@ component (spec issue #73, Seam B).
 
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
 Contract, each guard of the check, each credential family - and confirms the
-suite goes red. Thirty-seven deliberate breaks, thirty-seven caught. It names
+suite goes red. Forty deliberate breaks, forty caught. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
-and fails rather than reporting a false pass. `--only check-inventory.sh` runs one subject's set. The evidence is
-in `../notes/loop-termination-contract-evidence.md` and
-`../notes/loop-completeness-check-evidence.md`.
+and fails rather than reporting a false pass. `--only check-inventory.sh` runs
+one subject's set. The evidence is in
+`../notes/loop-termination-contract-evidence.md`,
+`../notes/loop-completeness-check-evidence.md` and
+`../notes/loop-credentials-evidence.md`.
 
 `shellcheck -x *.sh agents/*.sh tests/*.sh` gates the scripts.
 

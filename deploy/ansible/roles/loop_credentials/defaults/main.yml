@@ -6,6 +6,13 @@
 loop_commit_author_name: Jacob Stephens
 loop_commit_author_email: jstephens@etadventures.com
 
+# The GitHub account a Loop commit must land as. Not cosmetic and not the same
+# fact as the email above: the email is what git writes into the commit, and
+# this is what GitHub is expected to resolve it to. The walkthrough compares
+# them, because "some account" and "the operator's account" are different
+# acceptance criteria.
+loop_github_account: JacobStephens2
+
 # The dedicated signing key. Generated ON the box (ADR 0005) and never copied
 # anywhere - the operator's laptop key never leaves the laptop, and this one
 # revokes on its own.

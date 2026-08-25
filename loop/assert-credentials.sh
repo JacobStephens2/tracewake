@@ -13,6 +13,11 @@
 # It reports BOTH directions, because either one alone is a half-truth: what the
 # box is allowed to hold and does, and what it may not hold and does not.
 #
+# It grades the box for a RUN, not for a ticket. That is why an Execution
+# Boundary whose session has lapsed is a violation rather than a note: the box
+# would still satisfy every acceptance criterion of #81 and a Run started on it
+# would have no boundary, and this script is what #83's preflight asks.
+#
 #   0  clean - every gating credential is held, and nothing forbidden is here.
 #   1  the check could not run.
 #   2  at least one violation. Every one is named; there is no first-failure
@@ -70,6 +75,7 @@ violation, 1 when the check could not run.
   --home         the Run account's home directory (default /home/loop)
   --system-root  prefix for absolute system paths, for testing (default none)
   --sbx          the Execution Boundary CLI (default sbx)
+  --list-env-names  print every forbidden environment variable name and exit
 
 Run it on the box, as the account a Run executes as:
 
@@ -117,6 +123,14 @@ forbidden_env=(
     "fleet-ssh-key SSH_AUTH_SOCK"
 )
 
+# The families, derived from the declaration above rather than written out a
+# second time. The report at the bottom walks this list, so a family added to
+# `forbidden_env` appears there without anyone remembering to add it.
+forbidden_families=()
+for row in "${forbidden_env[@]}"; do
+    forbidden_families+=("${row%% *}")
+done
+
 # Services `sbx secret set` supports that would bill per token if the proxy
 # injected one. `github` is not here: a GitHub secret in the boundary is a
 # design question for #83, not a billing collision, and it is reported.
@@ -133,6 +147,22 @@ while (($# > 0)); do
         --home) home="${2:?--home needs a path}"; shift 2 ;;
         --system-root) system_root="${2:?--system-root needs a path}"; shift 2 ;;
         --sbx) sbx_cmd="${2:?--sbx needs a command}"; shift 2 ;;
+        # Every forbidden environment variable name, one per line. The offline
+        # suite unsets exactly these before each run - it has to be runnable in
+        # a vaulted-agent session on the orchestration VM, where several of them
+        # genuinely are in the environment. Reading them from here rather than
+        # restating them is what stops the suite and the script drifting apart
+        # the first time a family gains a name.
+        --list-env-names)
+            for row in "${forbidden_env[@]}"; do
+                read -r _ names <<<"${row}"
+                # Unquoted on purpose: the row holds several names and each is
+                # wanted on its own line.
+                # shellcheck disable=SC2086
+                printf '%s\n' ${names}
+            done
+            exit 0
+            ;;
         -h | --help) usage; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
@@ -164,9 +194,19 @@ done < <(
 
 violations=()
 observations=()
+indeterminate=()
 
 violation() { violations+=("$1"); }
 observe() { observations+=("$1"); }
+
+# A probe that could not be evaluated. NOT a violation - it is the absence of
+# evidence, and calling it a violation would make the script red forever on a
+# box that is exactly right. It is emphatically not a pass either: the family it
+# belongs to prints [partial] rather than [clear], because "we looked and found
+# nothing" and "we could not look" are the same output only in a check nobody
+# should trust. The documented invocation is `su - loop`, /root is mode 0700,
+# and every probe under it lands here.
+undetermined() { indeterminate+=("$1"); }
 
 # Is NAME set and non-empty in this process's environment?
 env_is_set() { [[ -n ${!1:-} ]]; }
@@ -210,11 +250,20 @@ check_forbidden_env() {
 }
 
 check_forbidden_files() {
-    local family="$1" path
+    local family="$1" path parent
     shift
     for path in "$@"; do
-        [[ -e ${path} ]] || continue
-        violation "${family}: ${path} is on the box"
+        if [[ -e ${path} ]]; then
+            violation "${family}: ${path} is on the box"
+            continue
+        fi
+        # `[[ -e ]]` is false both for "not there" and for "cannot look", and
+        # those are different answers. If the containing directory cannot be
+        # searched, this probe found nothing because it was not allowed to.
+        parent="$(dirname -- "${path}")"
+        if [[ -d ${parent} && ! -x ${parent} ]]; then
+            undetermined "${family}: ${path} could not be checked - ${parent} is not searchable by $(id -un)"
+        fi
     done
 }
 
@@ -233,24 +282,54 @@ check_forbidden_files digitalocean-token \
 
 # Fleet SSH keys. A private key is identified by its header rather than by its
 # filename, because the filename is the one part of a key an operator renames.
+#
+# root's home is the sweep's blind spot when this runs as the Run account, which
+# is the documented way to run it. Named rather than passed over: an empty sweep
+# of a directory nobody could open is not an empty directory.
+for unreadable in "${system_root}/root" "${system_root}/root/.ssh"; do
+    if [[ -d ${unreadable} && ! -x ${unreadable} ]]; then
+        undetermined "fleet-ssh-key: ${unreadable} could not be swept - it is not searchable by $(id -un)"
+    fi
+done
+
 while IFS= read -r candidate; do
     [[ -n ${candidate} ]] || continue
     [[ ${candidate} == "${signing_key}" ]] && continue
+    # The box's own SSH host keys. Every Linux box has them, they are the box's
+    # identity rather than reach into anything, and flagging them would make
+    # this family red on a correctly-built box - which is how a check stops
+    # being read. A key parked in /etc/ssh under any other name is still caught.
+    [[ $(basename -- "${candidate}") == ssh_host_* ]] && continue
     if head -n1 -- "${candidate}" 2>/dev/null | grep -q -- '-----BEGIN .*PRIVATE KEY-----'; then
         violation "fleet-ssh-key: ${candidate} is a private key that is not the Loop's signing key"
     fi
 done < <(
-    find "${home}/.ssh" "${system_root}/root/.ssh" -maxdepth 1 -type f 2>/dev/null || true
+    # The whole home, not only ~/.ssh: a key put anywhere is a key. The
+    # Execution Boundary's own state directory is excluded because it holds
+    # guest images and sandbox state by the thousand file, and none of it is
+    # somewhere an operator drops a key. A private key is under 32k, which is
+    # what keeps this from reading the box.
+    find "${home}" -type f -size -32k \
+        -not -path "${home}/.local/state/sandboxes/*" \
+        -not -path "${home}/.cache/*" 2>/dev/null || true
+    find "${system_root}/root/.ssh" "${system_root}/etc/ssh" -maxdepth 1 -type f 2>/dev/null || true
 )
 
 # The third door: a secret the boundary holds, which is in no environment and no
 # file this script can read.
 sbx_secrets=""
-if sbx_secrets="$("${sbx_cmd}" secret ls 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')"; then
+# `timeout` on both boundary calls. As root, or on a box whose daemon is not
+# running, `sbx` can sit waiting for a keyring or a daemon that will not arrive -
+# and this script is what #83's preflight runs before an unattended Run. A
+# preflight that blocks forever is worse than one that fails: the failure is
+# reported, and the block is a Run that never starts and never says so.
+if sbx_secrets="$(timeout 30 "${sbx_cmd}" secret ls 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')"; then
     if grep -qi 'No secrets found' <<<"${sbx_secrets}"; then
         observe "the Execution Boundary stores no secrets"
     else
-        observe "the Execution Boundary stores: $(tr '\n' ' ' <<<"${sbx_secrets}" | tr -s ' ')"
+        # The table's header row is not a stored secret; listing it as one
+        # makes the observation read as one more secret than there is.
+        observe "the Execution Boundary stores: $(grep -viE '^(SCOPE|NAME)[[:space:]]' <<<"${sbx_secrets}" | tr '\n' ' ' | tr -s ' ')"
         for service in "${metered_secret_services[@]}"; do
             if grep -qiE "(^|[[:space:]])${service}([[:space:]]|$)" <<<"${sbx_secrets}"; then
                 violation "metered-model-key: the Execution Boundary stores a '${service}' secret, which the proxy would inject"
@@ -339,7 +418,7 @@ else
 fi
 
 # docker-identity
-if diagnose="$("${sbx_cmd}" diagnose 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')"; then
+if diagnose="$(timeout 30 "${sbx_cmd}" diagnose 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')"; then
     auth_line="$(grep -i 'Authentication' <<<"${diagnose}" | head -n1)"
     if [[ ${auth_line} == *authenticated* && ${auth_line} != *"not authenticated"* ]]; then
         state[docker-identity]="held"
@@ -380,6 +459,7 @@ result="clean"
 printf 'CREDENTIALS_RESULT=%s\n' "${result}"
 printf 'CREDENTIALS_HELD=%d\n' "${held}"
 printf 'CREDENTIALS_VIOLATIONS=%d\n' "${#violations[@]}"
+printf 'CREDENTIALS_INDETERMINATE=%d\n' "${#indeterminate[@]}"
 printf 'CREDENTIALS_HOME=%s\n' "${home}"
 
 printf '\nAllowed - the box holds these and nothing else:\n'
@@ -393,13 +473,23 @@ done
 printf '  %s\n' "* not gating: absent is the expected state until #83 installs the agent."
 
 printf '\nForbidden - none of these may be on the box:\n'
-for family in vault-token database-credential fleet-ssh-key digitalocean-token metered-model-key; do
+for family in "${forbidden_families[@]}"; do
     if printf '%s\n' "${violations[@]:-}" | grep -q "^${family}:"; then
         printf '  [found]   %s\n' "${family}"
+    elif printf '%s\n' "${indeterminate[@]:-}" | grep -q "^${family}:"; then
+        printf '  [partial] %s\n' "${family}"
     else
         printf '  [clear]   %s\n' "${family}"
     fi
 done
+
+if ((${#indeterminate[@]} > 0)); then
+    printf '\nCould not be checked - these are not passes:\n'
+    printf '  - %s\n' "${indeterminate[@]}"
+    printf '  Run it again as root for the paths root owns. Run it as the Run\n'
+    printf '  account for the environment a Run actually gets; neither run sees\n'
+    printf '  what the other does.\n'
+fi
 
 if ((${#observations[@]} > 0)); then
     printf '\nObserved:\n'

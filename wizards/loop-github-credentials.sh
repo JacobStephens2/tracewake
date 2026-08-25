@@ -232,35 +232,46 @@ wizard_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 role_defaults="${wizard_dir}/../../../ansible/roles/loop_credentials/defaults/main.yml"
 assert_script="${wizard_dir}/../loop/assert-credentials.sh"
 
-# The key title, the target repository and the author email are declared in the
-# role's defaults, not here. A walkthrough that carried its own copy would be a
-# second place they are decided, and the two would disagree the first time
-# either moved - the same reason stage 4 of the sbx walkthrough stopped offering
-# an egress profile.
+# The key title, the target repository, the author email and the account they
+# must resolve to are declared in the role's defaults and read from there. A
+# walkthrough carrying its own copy would be a second place they are decided,
+# and the two would disagree the first time either moved - the same reason stage
+# 4 of the sbx walkthrough stopped offering an egress profile.
+#
+# There is deliberately no fallback value. A default that quietly stood in for
+# an unreadable file is exactly the second copy this avoids, and it would be
+# discovered by a token minted for the wrong repository.
 role_default() {
-    local key="$1" fallback="$2" value=""
-    if [[ -f ${role_defaults} ]]; then
-        value="$(sed -nE "s/^${key}:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p" \
-            "${role_defaults}" | head -n1)"
-    fi
-    printf '%s' "${value:-${fallback}}"
+    local key="$1" value=""
+    [[ -f ${role_defaults} ]] ||
+        { warn "cannot read ${role_defaults}"; exit 1; }
+    value="$(sed -nE "s/^${key}:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p" \
+        "${role_defaults}" | head -n1)"
+    [[ -n ${value} ]] ||
+        { warn "${role_defaults} declares no ${key}"; exit 1; }
+    printf '%s' "${value}"
 }
 
-SIGNING_KEY_TITLE="$(role_default loop_signing_key_title 'Loop - loop.etadventures.com')"
-TARGET_REPO="$(role_default loop_target_repository 'Educational-Travel-Adventures/tourbot')"
-AUTHOR_EMAIL="$(role_default loop_commit_author_email 'jstephens@etadventures.com')"
-TOKEN_FILE=/home/loop/.config/loop/github-token
+SIGNING_KEY_TITLE="$(role_default loop_signing_key_title)"
+TARGET_REPO="$(role_default loop_target_repository)"
+AUTHOR_EMAIL="$(role_default loop_commit_author_email)"
+GITHUB_ACCOUNT="$(role_default loop_github_account)"
+TOKEN_FILE="$(role_default loop_credentials_dir)/github-token"
 
 # Every command runs on the box, as `loop` - the account a Run executes as, and
 # therefore the account whose credentials are the ones that matter. The same
 # shape the sbx walkthrough uses.
+# -n: ssh reads this wizard's stdin unless told not to, so an on_loop inside a
+# `while read` loop would swallow the loop's input. The flag is the whole
+# difference between these two functions, and a helper that sometimes consumes
+# the caller's stdin is a trap.
 on_loop() {
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "root@${LOOP_HOST}" \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "root@${LOOP_HOST}" \
         "su - loop -s /bin/bash -c $(printf '%q' "$1")"
 }
 
-# Separate from on_loop because ssh's stdin is the difference, and a helper that
-# sometimes consumes the caller's stdin is a trap.
+# The same, for the two calls that feed the box on stdin - the token, and the
+# credential assertion piped in as a script.
 on_loop_stdin() {
     ssh -o BatchMode=yes -o ConnectTimeout=10 "root@${LOOP_HOST}" \
         "su - loop -s /bin/bash -c $(printf '%q' "$1")"
@@ -500,26 +511,32 @@ printf '  %s✓%s pushed\n' "$GREEN" "$RESET"
 SHA="$(on_loop "cd ${PROOF_DIR} && git rev-parse HEAD" | tr -d '\r')"
 printf '\n'
 say "What GitHub says about ${SHA:0:12}:"
+# jq, on the box, where `loop_base` installs it. Reaching for sed here would
+# mean taking whichever "login" appeared first in the payload - the commit's
+# author object, the committer's, or the verifier's - and they are not the same
+# field. The one that answers "attributed to whom" is .author.login.
 VERDICT="$(on_loop_with_token "curl -sS -H \"Authorization: Bearer \$token\" \
     -H 'Accept: application/vnd.github+json' \
-    https://api.github.com/repos/${TARGET_REPO}/commits/${SHA}")"
+    https://api.github.com/repos/${TARGET_REPO}/commits/${SHA} |
+    jq -r '[.author.login // \"\", .commit.verification.verified, .commit.verification.reason] | @tsv'")"
 
-verified="$(sed -nE 's/.*\"verified\":[[:space:]]*(true|false).*/\1/p' <<<"${VERDICT}" | head -n1)"
-reason="$(sed -nE 's/.*\"reason\":[[:space:]]*\"([^\"]+)\".*/\1/p' <<<"${VERDICT}" | head -n1)"
-login="$(sed -nE 's/.*\"login\":[[:space:]]*\"([^\"]+)\".*/\1/p' <<<"${VERDICT}" | head -n1)"
+IFS=$'\t' read -r login verified reason <<<"${VERDICT}"
 
-printf '    author account : %s\n' "${login:-<none>}"
+printf '    author account : %s  (expected %s)\n' "${login:-<none>}" "${GITHUB_ACCOUNT}"
 printf '    author email   : %s\n' "${AUTHOR_EMAIL}"
 printf '    verified       : %s (%s)\n' "${verified:-?}" "${reason:-?}"
 printf '\n'
 
+# Compared to the operator's account, not merely non-empty. The criterion is
+# "attributed to the operator"; a commit attributed to somebody else would
+# satisfy a non-empty check and fail the ticket.
 PROOF_OK=false
-if [[ ${verified} == "true" && -n ${login} ]]; then
+if [[ ${verified} == "true" && ${login} == "${GITHUB_ACCOUNT}" ]]; then
     PROOF_OK=true
     printf '  %s✓ attributed to %s and Verified%s\n' "$GREEN" "${login}" "$RESET"
     note "Read as ADR 0005 defines it: the operator CAUSED this commit."
 else
-    warn "not verified, or not attributed."
+    warn "not verified, or not attributed to ${GITHUB_ACCOUNT}."
     note "verified=false, reason=unsigned      the key never signed - check the play."
     note "verified=false, reason=unknown_key   the key is registered as an"
     note "  AUTHENTICATION key, not a signing key. That is stage 2's trap; add it"
@@ -567,6 +584,22 @@ else
     warn "the box reports violations - read them above."
     SKIPPED+=("resolve the credential violations the box reported")
 fi
+
+printf '\n'
+pause "Press Enter for the half that run could not see."
+
+# The complement. /root is mode 0700, so the run above reports `[partial]` for
+# every family with a probe under it - it could not look, which is not the same
+# answer as looking and finding nothing. This run can look there and cannot see
+# the environment a Run actually gets. Neither run alone covers the fifth
+# acceptance criterion; the pair does.
+say "The same script as root, for the paths root owns. It will report"
+say "docker-identity as unknown - root has no sbx session, and that is correct:"
+say "the account whose boundary matters is the one a Run executes as."
+printf '\n'
+ssh -o BatchMode=yes -o ConnectTimeout=10 "root@${LOOP_HOST}" \
+    'bash -s -- --home /home/loop' <"${assert_script}" |
+    sed -n '/^Forbidden/,/^$/p;/^Could not/,/^$/p' || true
 
 printf '\n'
 note "Four credentials, not three. Spec #73 says three; sbx will not create a"

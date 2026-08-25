@@ -8,22 +8,20 @@
 #
 # shellcheck shell=bash
 
-# The environment variable names the script treats as forbidden. Listed here so
-# the suite can UNSET every one of them before each run: the suite is meant to
-# run on the Loop's box, but it also has to be runnable in a vaulted-agent
-# session on the orchestration VM, where PROD_DB_SERVER_MYSQL_PASS and friends
-# genuinely are in the environment. Without this, "a clean box" would fail on
-# the one machine most likely to run the suite, for a reason that has nothing to
-# do with the box under test.
-CREDENTIAL_ENV_NAMES=(
-    OP_SERVICE_ACCOUNT_TOKEN OP_CONNECT_TOKEN OP_API_TOKEN VAULT_TOKEN
-    MYSQL_PWD DATABASE_URL DB_PASSWORD
-    PROD_DB_SERVER_HOST PROD_DB_SERVER_MYSQL_USER PROD_DB_SERVER_MYSQL_PASS
-    DIGITALOCEAN_TOKEN DIGITALOCEAN_ACCESS_TOKEN DO_TOKEN DO_API_TOKEN
-    TF_VAR_do_token SPACES_ACCESS_KEY_ID SPACES_SECRET_ACCESS_KEY
-    ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY XAI_API_KEY
-    SSH_AUTH_SOCK
-)
+# The environment variable names the script treats as forbidden. Read FROM the
+# script rather than restated here: the suite has to unset every one of them
+# before each run, because it is meant to run on the Loop's box and also has to
+# be runnable in a vaulted-agent session on the orchestration VM, where
+# PROD_DB_SERVER_MYSQL_PASS and friends genuinely are in the environment.
+# Without that, "a clean box" would fail on the machine most likely to run the
+# suite, for a reason with nothing to do with the box under test.
+#
+# A second copy of the list here would drift the first time a family gained a
+# name, and it would drift silently - into tests that pass because the thing
+# they meant to unset was never named.
+credential_env_names() {
+    "${LOOP_SRC}/assert-credentials.sh" --list-env-names
+}
 
 setup_credential_fixture() {
     LOOP_SRC="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
@@ -33,7 +31,8 @@ setup_credential_fixture() {
 
     BOX_HOME="${BATS_TEST_TMPDIR}/home/loop"
     BOX_ROOT="${BATS_TEST_TMPDIR}/root"
-    mkdir -p "${BOX_HOME}/.ssh" "${BOX_HOME}/.config/loop" "${BOX_ROOT}/etc" "${BOX_ROOT}/root/.ssh"
+    mkdir -p "${BOX_HOME}/.ssh" "${BOX_HOME}/.config/loop" \
+        "${BOX_ROOT}/etc" "${BOX_ROOT}/etc/ssh" "${BOX_ROOT}/root/.ssh"
     export BOX_HOME BOX_ROOT
 
     # The GitHub token: fine-grained, non-empty, owner-only.
@@ -99,7 +98,7 @@ SBX
 # so a test says what it is testing and nothing else leaks in.
 run_assert() {
     local unsets=() name
-    for name in "${CREDENTIAL_ENV_NAMES[@]}"; do unsets+=(-u "${name}"); done
+    while IFS= read -r name; do unsets+=(-u "${name}"); done < <(credential_env_names)
     run env "${unsets[@]}" "$@" \
         "${ASSERT}" --home "${BOX_HOME}" --system-root "${BOX_ROOT}" --sbx "${FAKE_SBX}"
 }

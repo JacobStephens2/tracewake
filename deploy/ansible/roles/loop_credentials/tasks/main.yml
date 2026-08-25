@@ -87,8 +87,8 @@
   when: not ansible_check_mode
 
 - name: The credential helper that reads the token file
-  ansible.builtin.copy:
-    src: git-credential-loop
+  ansible.builtin.template:
+    src: git-credential-loop.j2
     dest: "{{ loop_credentials_dir }}/git-credential-loop"
     owner: loop
     group: loop

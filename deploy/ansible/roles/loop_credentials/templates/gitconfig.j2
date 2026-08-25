@@ -30,9 +30,6 @@
 	# pull request is open.
 	gpgsign = true
 
-[tag]
-	gpgsign = true
-
 [credential "https://github.com"]
 	# Reads the fine-grained token from a file mode 0600 that this role never
 	# writes. A helper rather than a URL with the token in it: a token in a
@@ -46,9 +43,3 @@
 [credential]
 	# An unattended process must never be handed a prompt it cannot answer.
 	interactive = never
-
-[init]
-	defaultBranch = main
-
-[advice]
-	detachedHead = false

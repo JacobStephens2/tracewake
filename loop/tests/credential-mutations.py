@@ -29,8 +29,8 @@ MUTATIONS = {
     ),
     # A forbidden file on the box is no longer a finding.
     "forbidden-files": (
-        '        [[ -e ${path} ]] || continue\n        violation',
-        '        [[ -e ${path} ]] || continue\n        true violation',
+        "        if [[ -e ${path} ]]; then",
+        "        if false; then",
     ),
     # Any private key that is not at the signing key's exact path is ignored -
     # which is every fleet key, since a fleet key would not be at that path.
@@ -77,6 +77,27 @@ MUTATIONS = {
     "boundary-unknown": (
         '    state[docker-identity]="unknown"',
         '    state[docker-identity]="held"',
+    ),
+    # An unreadable probe is scored as a pass rather than as an absence of
+    # evidence. The documented invocation is `su - loop` and /root is 0700, so
+    # this is the mutation that turns the whole fifth acceptance criterion into
+    # a check that reports [clear] for four families it never looked at.
+    "indeterminate-silent": (
+        "undetermined() { indeterminate+=(\"$1\"); }",
+        "undetermined() { :; }",
+    ),
+    # The box's own SSH host keys are reported as fleet keys, which makes the
+    # family red on every correctly-built box - the direction that stops a check
+    # being read at all.
+    "host-key-exception": (
+        '    [[ $(basename -- "${candidate}") == ssh_host_* ]] && continue',
+        "    :",
+    ),
+    # The sweep narrows back to ~/.ssh, so a key anywhere else in the home is
+    # invisible.
+    "home-sweep-narrowed": (
+        '    find "${home}" -type f -size -32k \\',
+        '    find "${home}/.ssh" -maxdepth 1 -type f -size -32k \\',
     ),
     # Violations are counted but the exit code stops carrying them, so every
     # caller - a Run preflight, a wizard, an operator - reads success.

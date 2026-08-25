@@ -154,8 +154,49 @@ setup() { setup_credential_fixture; }
     [[ "$output" == *"id_ed25519"* ]]
 }
 
+@test "a private key anywhere in the home is a violation, not only in .ssh" {
+    mkdir -p "${BOX_HOME}/notes/keys"
+    printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nfleet\n' >"${BOX_HOME}/notes/keys/deploy"
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fleet-ssh-key"* ]]
+}
+
+@test "a probe that could not be evaluated is reported, and is not a pass" {
+    mkdir -p "${BOX_ROOT}/root/.ssh"
+    chmod 0000 "${BOX_ROOT}/root"
+    run_assert
+    chmod 0755 "${BOX_ROOT}/root"
+    [ "$(field CREDENTIALS_INDETERMINATE)" -ge 1 ]
+    [[ "$output" == *"[partial]"* ]]
+    [[ "$output" == *"could not be checked"* ]]
+}
+
+@test "an unevaluable probe does not on its own fail the assertion" {
+    mkdir -p "${BOX_ROOT}/root/.ssh"
+    chmod 0000 "${BOX_ROOT}/root"
+    run_assert
+    chmod 0755 "${BOX_ROOT}/root"
+    [ "$status" -eq 0 ]
+}
+
 @test "a private key in root's .ssh is a violation" {
     printf -- '-----BEGIN RSA PRIVATE KEY-----\nfleet\n' >"${BOX_ROOT}/root/.ssh/id_rsa"
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fleet-ssh-key"* ]]
+}
+
+@test "the box's own SSH host keys are not fleet keys" {
+    mkdir -p "${BOX_ROOT}/etc/ssh"
+    printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nhost\n' >"${BOX_ROOT}/etc/ssh/ssh_host_ed25519_key"
+    run_assert
+    [ "$status" -eq 0 ]
+}
+
+@test "a private key parked in /etc/ssh under another name is a violation" {
+    mkdir -p "${BOX_ROOT}/etc/ssh"
+    printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nfleet\n' >"${BOX_ROOT}/etc/ssh/deploy_key"
     run_assert
     [ "$status" -eq 2 ]
     [[ "$output" == *"fleet-ssh-key"* ]]

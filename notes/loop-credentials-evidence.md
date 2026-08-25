@@ -213,15 +213,72 @@ variable is only the first way in:
 The script checks all three. On this box `sbx secret ls` answers `No secrets
 found`.
 
+Door three was exercised against the real CLI rather than only against the
+suite's fake. A throwaway secret was stored, the script was run, and the secret
+was removed:
+
+```
+$ sbx secret set anthropic --token sk-ant-NOT-A-REAL-KEY-issue81-probe
+No keychain detected - this secret will be stored on disk, protected by file permissions
+Saved secret for service "anthropic" in scope "(global)"
+
+CREDENTIALS_RESULT=violations
+  [found]   metered-model-key
+  - metered-model-key: the Execution Boundary stores a 'anthropic' secret, which the proxy would inject
+
+$ sbx secret rm anthropic --force
+Deleted secret for service "anthropic" in scope "(global)"
+```
+
+`--force` is not incidental: `sbx secret rm` prompts, and the prompt is what
+hangs an unattended caller. That is also why both boundary calls in the script
+carry a `timeout` - this script is what #83's preflight runs, and a preflight
+that blocks forever is worse than one that fails, because the failure is
+reported and the block is a Run that never starts and never says so.
+
 ### Fail closed, not open
 
-Two choices in the script are worth naming because the opposite would be easy and
-silent:
+Three choices in the script are worth naming because the opposite would be easy
+and silent:
 
 - An Execution Boundary that **cannot be asked** is a violation, not a pass. An
   assertion that could not be evaluated is not an assertion that succeeded.
+- A probe that **could not be evaluated** is reported as `[partial]`, never as
+  `[clear]`. `[[ -e ]]` is false both for "not there" and for "not allowed to
+  look", and those are different answers. Run as the Run account - the
+  documented way - `/root` is mode 0700, so every probe under it lands here.
 - A private key is identified by its **header**, not its filename, because the
-  filename is the one part of a key an operator renames.
+  filename is the one part of a key an operator renames. The one exception is
+  `/etc/ssh/ssh_host_*`: the box's own host keys are its identity rather than
+  reach into anything, and flagging them would make the family red on every
+  correctly-built box, which is how a check stops being read. A key parked in
+  `/etc/ssh` under any other name is still caught - which was found the honest
+  way, by the root run flagging three host keys.
+
+### It takes two runs, not one
+
+Neither invocation covers the fifth acceptance criterion alone, and the
+walkthrough runs both:
+
+| run as | sees | blind to |
+|---|---|---|
+| `loop` | the environment a Run actually gets, the Run account's home, the boundary's session | `/root` (0700) |
+| `root` | `/root`, `/etc/ssh` | the Run account's environment; `sbx` (root has no session, so `docker-identity` reports `unknown`) |
+
+Observed, `loop` then `root`, on 2026-08-25 with the token not yet placed:
+
+```
+loop : [clear] vault-token  [partial] database-credential  [clear] digitalocean-token
+       [clear] metered-model-key  [partial] fleet-ssh-key
+       - database-credential: /root/.my.cnf could not be checked - /root is not searchable by loop
+       - fleet-ssh-key: /root could not be swept - it is not searchable by loop
+
+root : [clear] vault-token  [clear] database-credential  [clear] digitalocean-token
+       [clear] metered-model-key  [clear] fleet-ssh-key
+```
+
+Between them, the four forbidden families are clear across both the Run
+account's world and root's.
 
 `SSH_AUTH_SOCK` is in the fleet-key family rather than with the files: a
 forwarded agent is fleet reach that leaves nothing on disk, and `ssh -A` to this
@@ -233,10 +290,15 @@ for as long as the session lasts.
 On the box, where `ansible/roles/loop_shell_suite` installs the harness:
 
 ```
-bats tests/                    91 tests, 91 passed      (36 of them this ticket's)
-tests/mutation-check.sh        37 mutations, 37 caught  (12 of them this ticket's)
+bats tests/                    96 tests, 96 passed      (41 of them this ticket's)
+tests/mutation-check.sh        40 mutations, 40 caught  (15 of them this ticket's)
 shellcheck -x *.sh agents/*.sh tests/*.sh
 ```
+
+Scope: `bats tests/` run on `loop.etadventures.com` as the `loop` account,
+against this branch's copy of `lab/single-user-factory/loop/`. The harness is on
+the box and not on the orchestration VM (`ansible/roles/loop_shell_suite`), so
+that is where the numbers come from.
 
 The credential script is seamed and tested on its own, not only through whatever
 runs it, for the same reason the completeness check is: it is itself an
@@ -248,12 +310,20 @@ a tmpdir: a home directory, a system root, and a scripted fake `sbx` that can
 answer "signed out", "an anthropic secret is stored", or nothing at all. No
 network, no box, no model.
 
-The twelve mutations break one credential family or one property of a held
-credential each. Two are worth knowing about, because they are the failures that
+The fifteen mutations break one credential family or one property of a held
+credential each. Three are worth knowing about, because each is a failure that
 would otherwise be silent for a whole Run: `signing-configured`, which leaves the
 key present and `commit.gpgsign` off - commits land unsigned and nobody finds out
-until the pull request is open - and `boundary-unknown`, which turns an
-Execution Boundary that cannot be asked into one that answered yes.
+until the pull request is open; `boundary-unknown`, which turns an Execution
+Boundary that cannot be asked into one that answered yes; and
+`indeterminate-silent`, which scores a probe nobody was allowed to run as a pass
+and turns the whole fifth acceptance criterion into four families reported
+`[clear]` that were never looked at.
+
+One mutation stopped applying when `check_forbidden_files` gained its
+unreadable-parent branch, and the harness said so and failed rather than
+reporting a false pass - which is the property that makes the mutation set worth
+having at all.
 
 ## What this does not establish
 
