@@ -54,6 +54,18 @@
 # request (propose.sh). Without it, a Run's only effect is commits on the branch
 # that is checked out - which is what the offline suite drives, and why the flag
 # is opt-in rather than a default with a way to turn it off.
+#
+# With --notify, the Run then tells the operator it has finished (#110), because
+# the premise of the whole Contract is that he walked away and a Run he has to
+# find is a Run he had to poll for. It reports separately from the Run:
+#
+#   LOOP_RUN_NOTIFIED=<state>   sent | failed | no-surface | skipped
+#
+# Nothing about it can change what the Run did. A notification that failed does
+# not move the exit code and is not written into the Progress Log - the Run is
+# the thing that happened, and telling somebody about it is not - which is also
+# why it is the last act of all, after the Progress Log has been committed and
+# pushed with the proposal.
 
 set -euo pipefail
 
@@ -66,6 +78,7 @@ source "${loop_dir}/contract.sh"
 # not need to know where it was installed.
 : "${LOOP_AGENT_COMMAND:=${loop_dir}/agents/claude.sh}"
 : "${LOOP_PROPOSE_COMMAND:=${loop_dir}/propose.sh}"
+: "${LOOP_NOTIFY_COMMAND:=${loop_dir}/notify-sources/github-pr-comment.sh}"
 
 die() {
     printf 'run.sh: %s\n' "$*" >&2
@@ -74,7 +87,7 @@ die() {
 
 usage() {
     cat <<'USAGE'
-run.sh --repo <path> [--task-ref <text>] [--propose]
+run.sh --repo <path> [--task-ref <text>] [--propose] [--notify]
 
 Executes one Run: a sequence of fresh agent processes under the Termination
 Contract declared in contract.sh. Reports the bound that ended the Run on
@@ -84,17 +97,22 @@ this file documents every exit code.
 
   --propose  push the Run's branch and open a draft pull request when the Run
              ends. The Run's only external effect.
+  --notify   tell the operator the Run has finished, through the proposal it
+             opened. Needs --propose. Per Run, so a Run in a terminal somebody
+             is watching sends nothing.
 USAGE
 }
 
 repo=""
 task_ref=""
 propose=false
+notify=false
 while (($# > 0)); do
     case "$1" in
         --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
         --task-ref) task_ref="${2:?--task-ref needs a value}"; shift 2 ;;
         --propose) propose=true; shift ;;
+        --notify) notify=true; shift ;;
         -h | --help) usage; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
@@ -140,6 +158,19 @@ if ${propose}; then
         die "propose command is not executable: ${LOOP_PROPOSE_COMMAND}"
 fi
 
+# The notification is a comment on the proposal, so a Run that opens none has
+# nowhere to send one. Refused here rather than discovered at the end, where the
+# operator would have spent a Run to learn that nothing was going to tell him
+# about it - which is the exact failure --notify exists to remove.
+if ${notify}; then
+    ${propose} ||
+        die "--notify needs --propose - the notification is a comment on the proposal, and a Run that opens none has nowhere to send one"
+    [[ -x ${LOOP_NOTIFY_COMMAND} ]] ||
+        die "notify command is not executable: ${LOOP_NOTIFY_COMMAND}"
+    [[ ${LOOP_NOTIFY_TIMEOUT_SECONDS} =~ ^[1-9][0-9]*$ ]] ||
+        die "LOOP_NOTIFY_TIMEOUT_SECONDS must be a positive integer, got '${LOOP_NOTIFY_TIMEOUT_SECONDS}'"
+fi
+
 # The metered-key collision, at second zero and for whichever agent this Run is
 # using. Spec issue #73 story 32 asks for it to fail the Run loudly rather than
 # switch billing quietly, and the Termination Contract is the entire cost
@@ -180,11 +211,21 @@ progress_log="${repo}/${LOOP_PROGRESS_LOG_PATH}"
 # two files from the Iteration in flight are left behind every time.
 prompt_file=""
 output_file=""
-cleanup_scratch() { rm -f -- "${prompt_file}" "${output_file}"; }
+notify_body=""
+cleanup_scratch() { rm -f -- "${prompt_file}" "${output_file}" "${notify_body}"; }
 trap cleanup_scratch EXIT INT TERM
 
 now() { date +%s; }
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# What the Iterations did, in one place. The Progress Log's Run-end block and
+# the notification are two readers of the same fact, and a second copy of this
+# line is two records of one Run that can come to disagree about it.
+iteration_counts_line() {
+    printf -- '- Iterations: %d (committed %d, no-op %d, killed %d, turn bound %d)\n' \
+        "${iterations_run}" "${committed_count}" "${noop_count}" "${killed_count}" \
+        "${turn_bound_count}"
+}
 
 # Commits the Run's own bookkeeping and NOTHING else. The Loop stages the Plan
 # and the Progress Log by path: an agent that left unrelated changes dirty in
@@ -444,9 +485,7 @@ fi
 {
     printf '\n### Run ended %s\n\n' "$(stamp)"
     printf -- '- Ended by: %s\n' "${ended_by}"
-    printf -- '- Iterations: %d (committed %d, no-op %d, killed %d, turn bound %d)\n' \
-        "${iterations_run}" "${committed_count}" "${noop_count}" "${killed_count}" \
-        "${turn_bound_count}"
+    iteration_counts_line
     printf -- '- Completion Promises recorded: %d\n' "${promise_count}"
     printf -- '- Faults: %s\n' "${fault_summary}"
     printf -- '- Exit code: %d\n' "${exit_code}"
@@ -517,6 +556,76 @@ if ${propose}; then
     fi
 fi
 
+# --- Telling the operator ---------------------------------------------------
+#
+# The Run's second external effect and the last thing it does, after the
+# proposal, because it carries the proposal's URL and because nothing it does
+# may change what the Run did (#110).
+#
+# It cannot: the exit code is already decided above and is not touched here, and
+# nothing below writes to the Progress Log. That is deliberate rather than
+# incidental. The log has been committed and pushed with the proposal, so a
+# commit made now would leave the branch on GitHub disagreeing with the checkout
+# on the box - and a Run's record is the Run, while whether somebody was told
+# about it is not part of what happened.
+#
+# The surface is one substitutable command (ADR 0004). The one shipped comments
+# on the proposal, which is why --notify needs --propose: the boundary's egress
+# is github.com and api.github.com and the box holds a token for exactly those,
+# so a comment on the pull request the Run just opened costs no new host on the
+# allowlist and no new credential in the inventory. Like the push, it happens
+# here on the host, after every agent process is gone. ADR 0013.
+
+notified="skipped"
+if ${notify}; then
+    proposal_url=""
+    if [[ -n ${propose_output} ]]; then
+        proposal_url="$(sed -n 's/^LOOP_PROPOSE_URL=//p' <<<"${propose_output}" | head -n 1)"
+    fi
+
+    if [[ -z ${proposal_url} ]]; then
+        # A proposal that failed left nothing to comment on, and there is no
+        # second surface: the box's whole reach is the repository. Said in one
+        # word rather than reported as a failed notification, because the two
+        # are different - one is a surface that refused, the other is a Run that
+        # had none - and the operator's next command differs.
+        notified="no-surface"
+        printf 'run.sh: the proposal produced no URL, so there is nothing to comment on.\n' >&2
+    else
+        notify_body="$(mktemp)"
+        {
+            [[ -n ${task_ref} ]] && printf -- '- Task: %s\n' "${task_ref}"
+            printf -- '- Ended by: %s\n' "${ended_by}"
+            printf -- '- Exit code: %d\n' "${exit_code}"
+            iteration_counts_line
+            printf -- '- Faults: %s\n' "${fault_summary}"
+            printf -- '- Proposal: %s\n' "${proposal_url}"
+            printf '\nNothing is merged, deployed or applied. Read %s on this branch first.\n' \
+                "${LOOP_PROGRESS_LOG_PATH}"
+        } >"${notify_body}"
+
+        # Bounded, like every other thing this script waits on. The Run has
+        # already happened and its report is written; a surface that hangs must
+        # not be able to hold that report open, and abandoning the notification
+        # costs the operator one comment while not abandoning it costs him the
+        # answer he was waiting for.
+        notify_rc=0
+        timeout --kill-after=5s "${LOOP_NOTIFY_TIMEOUT_SECONDS}s" \
+            "${LOOP_NOTIFY_COMMAND}" \
+            "Run ended: ${ended_by} (exit ${exit_code})" \
+            "${notify_body}" \
+            "${proposal_url}" >/dev/null || notify_rc=$?
+        rm -f -- "${notify_body}"
+        notify_body=""
+
+        if ((notify_rc == 0)); then
+            notified="sent"
+        else
+            notified="failed"
+        fi
+    fi
+fi
+
 # Machine-readable and first, so triage after a Run is one line rather than a
 # whole log.
 printf 'LOOP_RUN_ENDED_BY=%s\n' "${ended_by}"
@@ -524,6 +633,7 @@ printf 'LOOP_RUN_EXIT=%d\n' "${exit_code}"
 printf 'LOOP_RUN_ITERATIONS=%d\n' "${iterations_run}"
 printf 'LOOP_RUN_FAULTS=%s\n' "${fault_summary}"
 printf 'LOOP_RUN_PROPOSAL=%s\n' "${proposal}"
+printf 'LOOP_RUN_NOTIFIED=%s\n' "${notified}"
 [[ -n ${propose_output} ]] && printf '%s\n' "${propose_output}"
 
 exit "${exit_code}"

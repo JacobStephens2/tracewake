@@ -95,6 +95,13 @@
 # leaves behind.
 : "${LOOP_FAULT_OUTPUT_LINES:=20}"
 
+# How long the notification may take before it is abandoned. NOT one of the five
+# bounds - it ends nothing, and no Run reports it as the thing that ended it -
+# but a Run whose last act is a network call needs one all the same: a surface
+# that hangs would hold open the report the operator is waiting for, which is
+# the failure this file exists to make impossible everywhere else.
+: "${LOOP_NOTIFY_TIMEOUT_SECONDS:=30}"
+
 # --- The task source -------------------------------------------------------
 #
 # How seed-run.sh reaches the one task the operator chose. It is one
@@ -111,6 +118,26 @@
 # reasoning, is ADR 0010. Resolved in seed-run.sh rather than here, like the
 # agent command, because the default is a path relative to this checkout.
 : "${LOOP_TASK_SOURCE_COMMAND:=}"
+
+# --- Telling the operator the Run has finished ------------------------------
+#
+# The whole premise of the Termination Contract is that the operator has walked
+# away, so a Run that only prints its result has to be found rather than
+# received (spec issue #73, story 6). The notification is one substitutable
+# command for the same reason the agent, the task source and the pull-request
+# surface are (ADR 0004), and with the same second benefit: the offline suite
+# drives a real Run through --notify with a scripted fake, so it needs no token
+# and no network.
+#
+# Its contract is a subject, a file holding the body, and the proposal's URL -
+# printing wherever the notification landed on stdout, and exiting non-zero if it
+# could not send one. A surface that needs no target ignores the third argument.
+#
+# Whether a Run notifies at all is a per-Run choice rather than a value here: a
+# Run started in a terminal the operator is watching should not have to send
+# anything, so it is `run.sh --notify` and not a bound. Resolved in run.sh, like
+# the agent command, because the default is a path relative to this checkout.
+: "${LOOP_NOTIFY_COMMAND:=}"
 
 # --- Where the Run's state lives, relative to the repository ----------------
 : "${LOOP_PLAN_PATH:=PLAN.md}"

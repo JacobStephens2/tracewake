@@ -431,7 +431,10 @@ is the safe direction, and is not the same as being right.
 - **That a Run tells the operator it has finished.** Spec #73's user story 6
   asks not to have to poll it. A Run prints its result and exits; nothing
   notifies anybody. All three Runs here were started by hand and read
-  afterwards, which is not the same thing.
+  afterwards, which is not the same thing. (Built since, in #110: `run.sh
+  --notify` comments on the proposal it opened - ADR 0013. Held offline by the
+  suite and by a mutation set; no Run has yet sent one against real GitHub, so
+  this line still records what has been *established*.)
 - **That the box's credential inventory is checked before a Run.** It is the
   operator's and the walkthrough's, not `run.sh`'s, and `assert-credentials.sh`
   now says so - a Run's preflight checks what a Run needs and can check with no

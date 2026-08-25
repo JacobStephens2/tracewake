@@ -50,6 +50,13 @@ PLAN
     export FAKE_PROPOSE_STATE="${BATS_TEST_TMPDIR}/fake-propose"
     export FAKE_PROPOSE_BEHAVIOUR=ok
     export LOOP_PROPOSE_COMMAND="${LOOP_SRC}/tests/fake-propose.sh"
+
+    # And a scripted fake for the notification, for the same reason: telling the
+    # operator a Run has finished is the Run's second external effect, and the
+    # suite reaches it without a token or a network.
+    export FAKE_NOTIFY_STATE="${BATS_TEST_TMPDIR}/fake-notify"
+    export FAKE_NOTIFY_BEHAVIOUR=ok
+    export LOOP_NOTIFY_COMMAND="${LOOP_SRC}/tests/fake-notify.sh"
 }
 
 # What the Run asked the proposal for. One argument per line, as the fake wrote
@@ -57,6 +64,15 @@ PLAN
 proposed_with() {
     if [[ -f ${FAKE_PROPOSE_STATE} ]]; then
         cat -- "${FAKE_PROPOSE_STATE}"
+    fi
+}
+
+# What the Run told the operator. The subject, the proposal URL and the body as
+# the fake received them, so a test asserts what a finished Run said about
+# itself rather than what the notification surface did with it.
+notified_with() {
+    if [[ -f ${FAKE_NOTIFY_STATE} ]]; then
+        cat -- "${FAKE_NOTIFY_STATE}"
     fi
 }
 

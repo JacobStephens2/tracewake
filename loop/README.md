@@ -5,7 +5,7 @@ reviews. Spec: issue #73. This directory is issue #79 - the loop itself and the
 Termination Contract that makes walking away from it defensible.
 
 ```
-run.sh --repo <path> [--task-ref <text>] [--propose]
+run.sh --repo <path> [--task-ref <text>] [--propose] [--notify]
 ```
 
 ## Before a Run is left unattended
@@ -40,6 +40,7 @@ was deliberately left off are in
 | `agents/grok.sh` | The second agent (#84). Agent-less boundary, installed inside at a pin. |
 | `task-sources/github.sh` | The task source as one substitutable command. One task, by number. |
 | `pr-sources/github.sh` | The pull-request surface as one substitutable command. |
+| `notify-sources/github-pr-comment.sh` | The notification surface. A comment on the proposal (#110). |
 | `check-inventory.sh` | The first task's grade. Derives its own denominator. |
 | `assert-credentials.sh` | What the box holds, and what it may not. Both directions (#81). |
 | `tests/loop.bats` | The Loop's offline suite. No model, no network, no spend. |
@@ -49,10 +50,12 @@ was deliberately left off are in
 | `tests/fake-task-source.sh` | The scripted task source, so the seed step's suite reaches no network. |
 | `tests/fake-propose.sh` | The scripted proposal, so a Run's suite pushes nowhere. |
 | `tests/fake-pr-source.sh` | The scripted pull request, so the proposal's suite opens none. |
+| `tests/fake-notify.sh` | The scripted notification, so a Run's suite tells nobody. |
 | `tests/fake-sbx.sh` | The scripted Execution Boundary, so the adapter's suite needs no hypervisor. |
 | `tests/fake-curl.sh` | The scripted GitHub, so `draft: true` is asserted rather than stated. |
 | `tests/propose.bats` | The proposal's offline suite, seamed separately (#83). |
 | `tests/pr-source.bats` | The pull-request surface's own suite - what one request says. |
+| `tests/notify-source.bats` | The notification surface's own suite - what one comment says. |
 | `tests/boundary.bats` | The first adapter's suite: an Iteration inside the boundary. |
 | `tests/boundary-grok.bats` | The second adapter's suite. A sibling, not a parameterisation - ADR 0012. |
 | `tests/assert-credentials.bats` | The credential inventory's offline suite, seamed separately (#81). |
@@ -111,6 +114,7 @@ LOOP_RUN_EXIT=0
 LOOP_RUN_ITERATIONS=5
 LOOP_RUN_FAULTS=none
 LOOP_RUN_PROPOSAL=proposed
+LOOP_RUN_NOTIFIED=sent
 LOOP_PROPOSE_URL=https://github.com/Educational-Travel-Adventures/tourbot/pull/664
 ```
 
@@ -124,6 +128,64 @@ end and produced no proposal produced nothing the operator can review, and exit
 `0` would say the opposite. A Run that already ended on a bound keeps that
 bound's code - which bound ended it is the more useful fact - and
 `LOOP_RUN_PROPOSAL` carries the rest.
+
+**No notification moves any of those codes.** `LOOP_RUN_NOTIFIED` is reported
+beside them and nothing else changes: a Run that reached its planned end and
+could not be reported still exits `0`, because it produced everything there is
+to review and the only thing missing is that somebody was told. That is the
+difference between it and the proposal, which exit `6` exists for.
+
+## Telling the operator the Run has finished
+
+```
+run.sh --repo <path> --propose --notify
+```
+
+The premise of the Termination Contract is that the operator walked away, so a
+Run he has to come back and read is a Run he had to poll for - spec issue #73's
+user story 6, delivered by #110. A Run started with `--notify` ends by
+commenting on the draft pull request it just opened, naming the bound that ended
+it, the exit code, what its Iterations did, and the proposal.
+
+Why a pull request comment rather than something that arrives on a phone: the
+boundary's egress is `github.com` and `api.github.com`, and the box holds a
+repository-scoped token for exactly those, so this surface costs no new host on
+the allowlist and no new credential in the inventory. Every other surface costs
+both. It happens where the push and the pull request happen - on the host, after
+every agent process is gone - so an Iteration can no more send a notification
+than it can open a proposal. ADR 0013.
+
+**It depends on one thing that is not in this repository.** The token is the
+operator's, so the comment is authored by the operator, and GitHub does not
+notify you about your own activity unless you ask it to - the setting is under
+GitHub's notification settings, *your own updates, such as when you open,
+comment on, or close an issue or pull request*. Without it the comment is
+written and nothing arrives, and the Run reports `sent` truthfully. The last
+stage of `../wizards/loop-github-credentials.sh` is where it gets turned on.
+
+| `LOOP_RUN_NOTIFIED` | What happened |
+| --- | --- |
+| `sent` | The comment was made. |
+| `failed` | The surface refused. The Run is unchanged - see below. |
+| `no-surface` | The proposal failed, so there was nothing to comment on. |
+| `skipped` | The Run was not started with `--notify`. |
+
+`--notify` needs `--propose` and is refused at second zero without it, because
+the notification is a comment on the proposal and a Run that opens none has
+nowhere to send one. Discovering that at the end would mean spending a whole Run
+to learn that nothing was going to tell you about it.
+
+Nothing the notification does can change what the Run did. It moves no exit
+code, and it is written into no Progress Log: the log was committed and pushed
+with the proposal, so a commit made afterwards would leave the branch on GitHub
+disagreeing with the checkout on the box. The Run is the thing that happened;
+telling somebody about it is not part of it.
+
+It is one substitutable command (`LOOP_NOTIFY_COMMAND`, ADR 0004) like the agent
+and the proposal, which is what lets the offline suite drive a real Run through
+`--notify` with no token and no network - and what makes a real notification
+surface, if one is ever worth its host and its credential, a new file in
+`notify-sources/` rather than a change to `run.sh`.
 
 ## Seeding a Run
 
@@ -311,21 +373,25 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and twenty-three tests, no model and no network. Forty-two drive `run.sh`
+Two hundred and eighty-five tests, no model and no network. Fifty-six drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
-bound, Progress Log contents, git history. Thirty-two drive
-`check-inventory.sh` against small fixture checkouts. Forty-six drive
-`assert-credentials.sh` against a constructed box - a home directory, a system
+bound, Progress Log contents, git history, and what it told the operator.
+Thirty-two drive `check-inventory.sh` against small fixture checkouts. Forty-eight
+drive `assert-credentials.sh` against a constructed box - a home directory, a system
 root and a scripted fake `sbx`, all three of which a tmpdir can hold.
 Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
 what the Plan ends up saying, what the Progress Log is left ready for, and what
 seeding twice does. Twenty-four drive `propose.sh` against a real `git push` to
 a bare repository and a scripted fake pull request. Thirteen drive
 `pr-sources/github.sh` through a fake `curl`, which is what makes `draft: true`
-something the suite asserts rather than something the file says. Twenty-five drive
-`agents/claude.sh` through a scripted fake `sbx` and assert what an Iteration
-does to the boundary. None of them names an internal function or depends on the
-order of steps.
+something the suite asserts rather than something the file says, and nine drive
+`notify-sources/github-pr-comment.sh` through the same fake, which is how the
+comment landing on the proposal rather than on an issue is asserted rather than
+stated. Twenty-five
+drive `agents/claude.sh` through a scripted fake `sbx` and assert what an
+Iteration does to the boundary, and thirty-seven do the same for
+`agents/grok.sh` - a sibling suite rather than a parameterisation, ADR 0012.
+None of them names an internal function or depends on the order of steps.
 
 The check is seamed and tested on its own rather than only through a Run because
 it is itself the honest failure signal, and a component that is the failure
@@ -335,8 +401,11 @@ component (spec issue #73, Seam B).
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
 Contract, each guard of the check, each credential family, each guard of the
 seed step, each thing holding Proposal-Only Output up, each property of the
-boundary - and confirms the suite goes red. Eighty-four deliberate breaks,
-eighty-four caught. It names
+boundary, each thing that makes a notification honest - and confirms the suite
+goes red. A hundred and eighteen deliberate breaks. The twenty-seven covering
+`run.sh` and the notification surface were re-run whole for #110 and all
+twenty-seven were caught; the rest were caught when they were written, and each
+subject's set can be re-run on its own. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs
 one subject's set. The evidence is in
@@ -344,7 +413,7 @@ one subject's set. The evidence is in
 `../notes/loop-completeness-check-evidence.md`,
 `../notes/loop-credentials-evidence.md` and `../notes/loop-seed-evidence.md`.
 
-`shellcheck -x *.sh agents/*.sh task-sources/*.sh pr-sources/*.sh tests/*.sh`
+`shellcheck -x *.sh agents/*.sh task-sources/*.sh pr-sources/*.sh notify-sources/*.sh tests/*.sh`
 gates the scripts.
 
 ## Proposal-Only Output

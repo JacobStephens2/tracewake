@@ -101,6 +101,39 @@ MUTATIONS = {
         "((${#metered_set[@]} == 0)) ||",
         "((0)) ||",
     ),
+    # The Run stops telling the operator it has finished, so an unattended Run
+    # has to be found rather than received - which is the whole of #110.
+    "notification-not-sent": (
+        'notified="skipped"\nif ${notify}; then',
+        'notified="skipped"\nif false; then',
+    ),
+    # A notification that failed changes the Run's exit code, so what the Run
+    # reports about itself is no longer about the Run.
+    "notification-failure-is-fatal": (
+        '        else\n            notified="failed"\n        fi',
+        '        else\n            notified="failed"\n            exit_code=1\n        fi',
+    ),
+    # A notification that failed is written into the Progress Log, which was
+    # pushed with the proposal - so the branch on GitHub and the checkout on the
+    # box now disagree about what the Run's record says.
+    "notification-touches-the-record": (
+        '            notified="failed"\n        fi',
+        '            notified="failed"\n            printf -- \'- Notification failed\\n\''
+        ' >>"${progress_log}"\n        fi',
+    ),
+    # The notification is unbounded, so a surface that never answers holds open
+    # the report the operator walked away waiting for.
+    "notification-unbounded": (
+        '        timeout --kill-after=5s "${LOOP_NOTIFY_TIMEOUT_SECONDS}s" \\\n            "${LOOP_NOTIFY_COMMAND}" \\\n',
+        '        "${LOOP_NOTIFY_COMMAND}" \\\n',
+    ),
+    # A Run may be asked to notify with no proposal to notify through, so the
+    # operator learns at the end of a spent Run that nothing was going to tell
+    # him about it.
+    "notify-without-a-proposal": (
+        '    ${propose} ||\n        die "--notify needs --propose',
+        '    true ||\n        die "--notify needs --propose',
+    ),
     # The adapter's answer stops being required, so an adapter that could not
     # answer produces a preflight that passes while checking nothing.
     "metered-names-optional": (

@@ -539,3 +539,122 @@ setup() {
     [ "$status" -eq 3 ]
     [[ "$output" == *"LOOP_RUN_ENDED_BY=consecutive-noops"* ]]
 }
+
+# --- Telling the operator the Run has finished ------------------------------
+#
+# Spec issue #73's user story 6, and #110. The premise of the Termination
+# Contract is that the operator has walked away, so a Run that only prints its
+# result and exits has to be found rather than received. The notification is one
+# substitutable command (ADR 0004) exactly as the agent and the proposal are,
+# which is what lets these tests drive the real Run through it with no network.
+
+@test "a Run that was not asked to notify tells nobody, and says so" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=skipped"* ]]
+    [ -z "$(notified_with)" ]
+}
+
+@test "a finished Run reaches the operator without him looking for it" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose --notify
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=sent"* ]]
+    [ -n "$(notified_with)" ]
+}
+
+@test "the notification names the bound that ended the Run, the exit code and the proposal" {
+    export LOOP_MAX_ITERATIONS=4
+    export FAKE_AGENT_BEHAVIOURS="commit noop noop"
+    run_the_loop --propose --notify
+    [ "$status" -eq 3 ]
+    [[ "$(notified_with)" == *"consecutive-noops"* ]]
+    [[ "$(notified_with)" == *"Exit code: 3"* ]]
+    [[ "$(notified_with)" == *"https://github.com/owner/name/pull/999"* ]]
+}
+
+@test "a Run that ended on a fault notifies too - that is the one worth hearing about" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="fail"
+    run_the_loop --propose --notify
+    [ "$status" -eq 4 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=sent"* ]]
+    [[ "$(notified_with)" == *"agent-failed"* ]]
+}
+
+@test "a failed notification does not change the Run's exit code" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    export FAKE_NOTIFY_BEHAVIOUR=fail
+    run_the_loop --propose --notify
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=failed"* ]]
+    [[ "$output" == *"LOOP_RUN_ENDED_BY=iteration-cap"* ]]
+}
+
+@test "a failed notification does not change the Run's record either" {
+    # The Run is the thing that happened; telling somebody about it is not, and
+    # the Progress Log was pushed with the proposal before this ran. A commit
+    # here would leave the branch on the remote disagreeing with the checkout.
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    export FAKE_NOTIFY_BEHAVIOUR=fail
+    run_the_loop --propose --notify
+    [[ "$(progress_log)" != *"otification"* ]]
+    [ -z "$(git -C "${REPO}" status --porcelain)" ]
+}
+
+@test "a Run whose proposal failed has nowhere to comment, and does not pretend otherwise" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    export FAKE_PROPOSE_BEHAVIOUR=fail
+    run_the_loop --propose --notify
+    [ "$status" -eq 6 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=no-surface"* ]]
+    [ -z "$(notified_with)" ]
+}
+
+@test "a Run asked to notify without a proposal is refused before it spends anything" {
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --notify
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--propose"* ]]
+    [ "$(agent_invocations)" -eq 0 ]
+}
+
+@test "a notify command that is not executable stops the Run before it spends anything" {
+    export LOOP_NOTIFY_COMMAND="${BATS_TEST_TMPDIR}/absent"
+    run_the_loop --propose --notify
+    [ "$status" -eq 1 ]
+    [ "$(agent_invocations)" -eq 0 ]
+}
+
+@test "a notification that hangs does not hold the Run's own report open" {
+    # The Run has already happened by the time this is sent. A surface that
+    # never answers must cost the operator a comment, not the answer he was
+    # waiting for - which is the whole reason he was notified at all.
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    export FAKE_NOTIFY_BEHAVIOUR=hang
+    export LOOP_NOTIFY_TIMEOUT_SECONDS=1
+    run_the_loop --propose --notify
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=failed"* ]]
+}
+
+@test "a notification timeout that is not a positive integer stops the Run before it starts" {
+    export LOOP_NOTIFY_TIMEOUT_SECONDS=0
+    run_the_loop --propose --notify
+    [ "$status" -eq 1 ]
+    [ "$(agent_invocations)" -eq 0 ]
+}
+
+@test "the ending bound is still the first line when a notification was sent" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose --notify
+    [[ "${lines[0]}" == "LOOP_RUN_ENDED_BY=iteration-cap" ]]
+}

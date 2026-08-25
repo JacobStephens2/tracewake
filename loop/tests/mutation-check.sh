@@ -37,6 +37,7 @@ subjects=(
     "seed-run.sh|tests/seed-run.bats|tests/seed-mutations.py"
     "propose.sh|tests/propose.bats|tests/propose-mutations.py"
     "pr-sources/github.sh|tests/pr-source.bats|tests/pr-mutations.py"
+    "notify-sources/github-pr-comment.sh|tests/notify-source.bats|tests/notify-mutations.py"
     "agents/claude.sh|tests/boundary.bats|tests/boundary-mutations.py"
     "agents/grok.sh|tests/boundary-grok.bats|tests/boundary-grok-mutations.py"
 )
