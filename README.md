@@ -9,11 +9,12 @@ is to record *what to strip and why*, drawn from building the heavy one.
 ## Layout
 
 - `loop/` - the Loop itself: the Termination Contract, one Run, the agent
-  adapter, and an offline suite that drives all of it through a scripted fake.
-  Start at `loop/README.md`.
+  adapter, the completeness check that grades the first task, and an offline
+  suite that drives all of it through a scripted fake. Start at
+  `loop/README.md`.
 - `notes/` - design thinking, source markdown. `notes/lessons.md` is the
   synthesis these notes started from.
-- `docs/adr/` - the decisions, numbered. ADRs 0003-0007 govern the Loop.
+- `docs/adr/` - the decisions, numbered. ADRs 0003-0008 govern the Loop.
 - `research/` - the source-cited investigations the notes and ADRs rest on.
 - `wizards/` - runnable walkthroughs for the steps only a human can take.
   `loop-sbx-login.sh` signs the Loop's Execution Boundary in, which needs a

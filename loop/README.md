@@ -33,9 +33,11 @@ was deliberately left off are in
 | `contract.sh` | The Termination Contract. Five bounds, one place. |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `agents/claude.sh` | The agent as one substitutable command (ADR 0004). |
-| `tests/loop.bats` | The offline suite. No model, no network, no spend. |
+| `check-inventory.sh` | The first task's grade. Derives its own denominator. |
+| `tests/loop.bats` | The Loop's offline suite. No model, no network, no spend. |
+| `tests/check-inventory.bats` | The check's offline suite, seamed separately (#80). |
 | `tests/fake-agent.sh` | The scripted agent the suite drives the real Run through. |
-| `tests/mutation-check.sh` | Breaks each bound and confirms the suite notices. |
+| `tests/mutation-check.sh` | Breaks each bound and each guard, confirms the suites notice. |
 
 ## The Termination Contract
 
@@ -75,6 +77,49 @@ Exit codes: `0` planned end, `1` preflight failed, `2` run-clock, `3`
 consecutive-noops, `4` agent-failed, `5` cap reached with an Iteration killed.
 Why `0` exists at all, when every Run ends on a bound, is ADR 0007.
 
+## The completeness check
+
+The first task (Tourbot issue 648) is a classification exercise, and a
+classification exercise has no test suite to grade it. `check-inventory.sh` is
+the grade:
+
+```
+check-inventory.sh --checkout <tourbot> --inventory <path/to/inventory.md> \
+                   [--scope 'mtourbot/reports/*']
+```
+
+It derives every occurrence of `tblEmailMessage` from the checkout, reads the
+inventory, and exits `2` naming each occurrence the inventory does not account
+for - with the line that produced it, because "six are missing" is not something
+an Iteration can act on. `0` when the inventory is complete. `1` when it could
+not run, which includes deriving a denominator of zero: a wrong `--symbol` or a
+mistyped `--scope` produces a check with nothing to check, and reporting success
+for that would be a check that passes hardest when it is most broken.
+
+**It never reads a count from the task.** Issue 648 says "78 files and 276
+occurrences"; against `tourbot` master on 2026-08-25 the same search answers 359
+across the tracked tree and 303 in application code. A check that trusted the
+ticket would pass on an inventory that had missed everything landed since it was
+written. ADR 0008 records that decision
+and the two things that follow from it - exclusions declared in the script
+rather than supplied by the caller, and both exclusions and scope printed with
+the count each removed, so the denominator can be audited rather than taken.
+
+Same script, both roles: an Iteration runs it to find out what is left, and the
+operator runs it afterwards to decide whether the Run's proposal is acceptable.
+Nothing in `run.sh` knows about it, deliberately - the Loop is task-agnostic, and
+the command belongs in the Plan that seeds the Run (#82) alongside the task.
+It reaches no network and writes nothing to the checkout, so it behaves the same
+inside the Execution Boundary on `deny-all` egress as it does here. It needs no
+host on the allowlist.
+
+Two ways it refuses to grade rather than grading wrongly, both of which cost a
+Run nothing and would otherwise be silent: a denominator of zero exits 1, and an
+inventory that parses to zero entries says the shape is wrong instead of
+reporting that nothing was classified. The second matters because "the work was
+not done" and "the check could not read the work" would otherwise produce the
+same output.
+
 ## Running the suite
 
 On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
@@ -83,16 +128,24 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Twenty-three tests, under twenty seconds, no model and no network. Every one drives
-`run.sh` unmodified and asserts only what a Run externally produces - exit code,
-reported bound, Progress Log contents, git history. None names an internal
-function or depends on the order of steps inside the loop.
+Fifty-five tests, thirty seconds, no model and no network. Twenty-three drive
+`run.sh` unmodified and assert only what a Run externally produces - exit code,
+reported bound, Progress Log contents, git history. Thirty-two drive
+`check-inventory.sh` against small fixture checkouts and assert its exit code and
+its report. Neither names an internal function or depends on the order of steps.
 
-`tests/mutation-check.sh` breaks each bound in turn and confirms the suite goes
-red - ten deliberate breaks, ten caught. It names exact lines of `run.sh`, so a
-reorganisation of the Loop will make it stop applying; it says so and fails
-rather than reporting a false pass. The evidence is in
-`../notes/loop-termination-contract-evidence.md`.
+The check is seamed and tested on its own rather than only through a Run because
+it is itself the honest failure signal, and a component that is the failure
+signal should not have its correctness established only through another
+component (spec issue #73, Seam B).
+
+`tests/mutation-check.sh` breaks one thing at a time - each bound of the
+Contract, each guard of the check - and confirms the suite goes red. Twenty-five
+deliberate breaks, twenty-five caught. It names exact lines, so a reorganisation
+will make a mutation stop applying; it says so and fails rather than reporting a
+false pass. `--only check-inventory.sh` runs one subject's set. The evidence is
+in `../notes/loop-termination-contract-evidence.md` and
+`../notes/loop-completeness-check-evidence.md`.
 
 `shellcheck -x run.sh contract.sh agents/*.sh tests/*.sh` gates the scripts.
 
