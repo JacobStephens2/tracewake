@@ -101,9 +101,28 @@ calls() {
     [[ "$(calls)" == *"--max-turns 40"* ]]
 }
 
-@test "the agent edits without prompting, because nobody is there to answer one" {
+# `acceptEdits` gates Bash, so an Iteration under it cannot `git add` - and an
+# Iteration that cannot commit is a No-op by the Loop's own definition. The
+# first Run found that the hard way; the boundary, not a prompt, is the control
+# (ADR 0003).
+@test "the agent acts without prompting, because nobody is there to answer one" {
     run_an_iteration
-    [[ "$(calls)" == *"--permission-mode acceptEdits"* ]]
+    [[ "$(calls)" == *"--permission-mode bypassPermissions"* ]]
+}
+
+# Backpressure an Iteration cannot reach is not backpressure: a sandbox mounts
+# the workspace and nothing else, so the Plan's completeness check was outside
+# the session's allowed directories for the whole of the first Run.
+@test "the Loop's scripts are mounted so an Iteration can run the check" {
+    run_an_iteration
+    [[ "$(calls)" == *"${LOOP_SRC}:ro"* ]]
+}
+
+# Read-only, because the check is what says the work did not land, and an agent
+# that could edit it could make it say otherwise.
+@test "the Loop's scripts are mounted read-only" {
+    run_an_iteration
+    [[ "$(calls)" != *"${LOOP_SRC} "* ]]
 }
 
 @test "the agent is given the Iteration's prompt" {

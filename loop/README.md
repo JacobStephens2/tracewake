@@ -56,21 +56,41 @@ Five bounds, declared in `contract.sh` before a Run starts and written into the
 Progress Log at Run start so that reading a finished Run tells you what it was
 bound by. Four of the five exist in no published Ralph source.
 
-| Bound | First value | What it stops |
-| --- | --- | --- |
-| Iterations per Run | 5 | A stochastic system running forever. |
-| Iteration wall clock | 15 min | One hung agent process stalling the Run. |
-| Turns per Iteration | 40 | An agent thrashing *inside* an Iteration. |
-| Run wall clock | 90 min | A Run where every Iteration runs long. |
-| Consecutive No-op Iterations | 2 | An agent stuck re-reading the same task. |
+| Bound | Value | Ends | What it stops |
+| --- | --- | --- | --- |
+| Iterations per Run | 5 | the Run | A stochastic system running forever. |
+| Iteration wall clock | 15 min | the Iteration | One hung agent process stalling the Run. |
+| Turns per Iteration | 100 | the Iteration | An agent thrashing *inside* an Iteration. |
+| Run wall clock | 90 min | the Run | A Run where every Iteration runs long. |
+| Consecutive No-op Iterations | 2 | the Run | An agent stuck re-reading the same task. |
+
+**Two of them end an Iteration rather than a Run**, and the distinction cost the
+first Run to learn. Both are recorded as faults - so a Run that reached its cap
+having hit one does not exit `0` - and neither is a reason to stop: the next
+Iteration reads in the Progress Log that the last one was cut off and what it
+left behind.
+
+Reaching the turn bound is not the agent failing, and telling the two apart is
+the agent adapter's job (ADR 0004). Claude Code exits non-zero for both, so the
+adapter matches the vendor's message and exits `LOOP_AGENT_TURN_BOUND_EXIT`,
+which is a number `contract.sh` declares and the only thing `run.sh` knows about
+any of it.
 
 A **No-op Iteration** is one after which the repository head is unchanged. A
 **Completion Promise** is recorded in the Progress Log and never ends a Run:
 nothing verifies it, and Pocock documents his agent lying with it.
 
-These five numbers have no precedent to lean on. They are first guesses, and
-correcting them is the first Run's most valuable output - which is why they live
-in one file rather than scattered through `run.sh`.
+These five numbers had no precedent to lean on. **One of them has been corrected
+by a Run** and the other four have not: the turn bound was 40, which the first
+Run spent entirely on reading a 128-occurrence classification task before
+running out one step short of its own commit. Forty turns took about four and a
+half minutes against a fifteen-minute Iteration wall clock; 100 puts the two
+about four minutes apart, so whichever bites, bites alone. The evidence is in
+`../notes/loop-first-run-evidence.md`.
+
+The rest are still first guesses. One Run corrects at most the bounds that
+fired, which is why they live in one file rather than scattered through
+`run.sh`.
 
 ## How a Run reports itself
 
@@ -274,10 +294,10 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and five tests, no model and no network. Thirty-six drive `run.sh`
+Two hundred and eighteen tests, no model and no network. Forty-two drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history. Thirty-two drive
-`check-inventory.sh` against small fixture checkouts. Forty-two drive
+`check-inventory.sh` against small fixture checkouts. Forty-four drive
 `assert-credentials.sh` against a constructed box - a home directory, a system
 root and a scripted fake `sbx`, all three of which a tmpdir can hold.
 Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
@@ -285,7 +305,7 @@ what the Plan ends up saying, what the Progress Log is left ready for, and what
 seeding twice does. Twenty-four drive `propose.sh` against a real `git push` to
 a bare repository and a scripted fake pull request. Thirteen drive
 `pr-sources/github.sh` through a fake `curl`, which is what makes `draft: true`
-something the suite asserts rather than something the file says. Seventeen drive
+something the suite asserts rather than something the file says. Twenty-three drive
 `agents/claude.sh` through a scripted fake `sbx` and assert what an Iteration
 does to the boundary. None of them names an internal function or depends on the
 order of steps.
@@ -298,8 +318,8 @@ component (spec issue #73, Seam B).
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
 Contract, each guard of the check, each credential family, each guard of the
 seed step, each thing holding Proposal-Only Output up, each property of the
-boundary - and confirms the suite goes red. Seventy-five deliberate breaks,
-seventy-five caught. It names
+boundary - and confirms the suite goes red. Eighty-six deliberate breaks,
+eighty-six caught. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs
 one subject's set. The evidence is in

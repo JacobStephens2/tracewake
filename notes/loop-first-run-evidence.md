@@ -255,10 +255,158 @@ The proposal was made on a **failed** Run, which is the behaviour the design
 asks for rather than an accident: a Run that went wrong has still produced a
 Progress Log saying so, and that record is exactly what is worth reviewing.
 
+## The second Run: the No-op bound doing its job, and two more findings
+
+Same branch, same Plan, corrected Contract. It ended in eleven minutes:
+
+```
+LOOP_RUN_ENDED_BY=consecutive-noops
+LOOP_RUN_EXIT=3
+LOOP_RUN_ITERATIONS=2
+LOOP_RUN_FAULTS=none
+```
+
+`FAULTS=none` is the first thing to read: at 100 turns the turn bound did not
+fire, and both Iterations exited 0. They did substantial work - Iteration 1
+picked up the previous Run's uncommitted file, continued from step 2, classified
+32 occurrences and reconciled them mechanically against `grep -n` - and
+**neither committed**, so the head did not move twice and the bound that notices
+an agent going nowhere fired correctly.
+
+It fired on the right symptom for the wrong underlying reason, and the Progress
+Log said which, because the agent wrote it down:
+
+> **git writes are still refused.** Tried once at the start of this Iteration,
+> per the previous Iteration's advice: `git add <path>` → "This command requires
+> approval". Read-only git works.
+
+### `acceptEdits` cannot commit, and the Loop's unit of work is a commit
+
+`--permission-mode acceptEdits` auto-approves **file edits** and still gates
+Bash. Every Iteration could write the inventory and could not `git add` it. By
+the Loop's own definition that is a No-op - the head does not move - so the
+technique could not work at all under that mode: five Iterations of real work
+would always have ended as two No-ops and an uncommitted diff.
+
+The mode is now `bypassPermissions`, and the reason is ADR 0003 rather than
+convenience. A permission prompt is a control that spends a human, and the whole
+premise is that there is no human. Inside the boundary the agent has a microVM
+of its own, two allowed hosts and no GitHub token; there is nothing there for a
+prompt to protect that the boundary is not already protecting. `sbx`'s own
+`claude` image ships `defaultMode: bypassPermissions` for the same reason.
+
+The old comment in `agents/claude.sh` had the argument right - "the Execution
+Boundary rather than the permission mode is what it cannot cross" - and then
+chose the permission mode anyway.
+
+### Backpressure an Iteration cannot reach is not backpressure
+
+> **`~/loop/check-inventory.sh` still cannot be run** - outside the session's
+> allowed working directory, refused as before.
+
+A sandbox mounts its workspace and nothing else, so the completeness check named
+in the Plan sat outside the guest's allowed directories for both Runs. It worked
+perfectly as the operator's acceptance and was absent as the Run's backpressure,
+which is half of what #80 built it for.
+
+The Loop's own directory is now mounted alongside the repository, **read-only**:
+the check is what says the work did not land, and an agent that could edit it
+could make it say otherwise.
+
+## The third Run, which is the one the ticket asked for
+
+```
+LOOP_RUN_ENDED_BY=iteration-cap
+LOOP_RUN_EXIT=0
+LOOP_RUN_ITERATIONS=5
+LOOP_RUN_FAULTS=none
+LOOP_RUN_PROPOSAL=proposed
+LOOP_PROPOSE_URL=https://github.com/Educational-Travel-Adventures/tourbot/pull/665
+```
+
+Nineteen minutes, unattended, with nobody watching it. Exit `0` is the only code
+that means the Run executed its planned Iterations and every one of them ran to
+its own end - ADR 0007 - and this is the first time anything has produced it.
+
+```
+- Iterations: 5 (committed 5, no-op 0, killed 0, turn bound 0)
+- Completion Promises recorded: 4
+```
+
+**Four Completion Promises, and not one of them ended the Run.** This is user
+story 12 demonstrated rather than argued, and the Run shows why it is worth
+having: the agent claimed the work was finished at Iteration 2, and Iteration 3
+then committed "step 6: reconcile - delete the empty worklist, tick the
+criteria", which is real remaining work. A loop that exited on the Promise -
+which is what Pocock's does, and what he documents his agent lying with - would
+have stopped one Iteration short of done.
+
+### The grade
+
+Run by the operator afterwards, which is the second of the check's two roles:
+
+```
+$ check-inventory.sh --checkout . --inventory documentation/tblEmailMessage-inventory.md \
+      --scope 'mtourbot/reports/*'
+CHECK_RESULT=complete
+CHECK_OCCURRENCES=128
+CHECK_ACCOUNTED=128
+CHECK_MISSING=0
+$ echo $?
+0
+```
+
+128 of 128, against a denominator the check derived from the checkout on the day
+it ran (ADR 0008) rather than the "276" written into issue 648. Classified:
+14 `should-include-notes`, 113 `emails-only-by-design`, 1 `write`.
+
+### What the proposal contains
+
+[Draft #665](https://github.com/Educational-Travel-Adventures/tourbot/pull/665),
+`loop/648-dashboards-and-reports` → `master`, still a draft, not merged:
+
+```
+added  PLAN.md                                     +177
+added  PROGRESS.md                                 +873
+added  documentation/tblEmailMessage-inventory.md  +397
+```
+
+Three files, 1447 additions, **zero deletions, and no application code touched**
+- which is issue 648's own last acceptance criterion, and the reason it was
+chosen as the first task (user story 40): the worst possible output is a wrong
+document.
+
+Twenty commits, every one attributed to `JacobStephens2` and every one
+`verification.verified: true`, reason `valid` - the Loop's bookkeeping and the
+agent's own work alike, the latter signed inside a microVM with a key copied in
+for the Iteration and destroyed with it.
+
+`PROGRESS.md` is 873 lines and reads as a narrative rather than a changelog: each
+Iteration's own section records what it did, what it **decided** and why, and
+what it found **blocked**. Both of the findings above were found by reading it,
+not by instrumenting anything.
+
+## Which bound ended the Run, and whether the first values were right
+
+| Bound | First value | What happened |
+|---|---|---|
+| Iterations per Run | 5 | **Ended Run 3.** The value looks right for this task shape; the Promise at Iteration 2 was premature and Iteration 3 was not. |
+| Iteration wall clock | 15 min | Never fired. Longest Iteration was about 7½ minutes. |
+| Turns per Iteration | 40 → **100** | **Corrected.** 40 ended Run 1 one step short of a commit. 100 was not reached in any of the sixteen Iterations since. |
+| Run wall clock | 90 min | Never fired. Run 3 took 19 minutes. |
+| Consecutive No-op Iterations | 2 | **Ended Run 2**, correctly, on a genuine inability to make progress. |
+
+Three of the five fired across three Runs and each fired on the thing it was
+written for. One was wrong and is corrected. The Run wall clock and the
+Iteration wall clock are still untested by anything but the offline suite, and
+90 minutes against a 19-minute Run is a bound with a lot of slack in it - which
+is the safe direction, and is not the same as being right.
+
 ## What this does not establish
 
-- **That the Termination Contract's five numbers are right.** They are first
-  guesses, and one Run corrects them by at most one bound - whichever fired.
+- **That the Termination Contract's remaining four numbers are right.** Three of
+  five fired and one was corrected; the two wall clocks have never been reached
+  by a real Run.
 - **That the model does the task well.** That is what review is for, and it is
   not a property the Loop can assert.
 - **Anything about a second agent.** #84 swaps to Grok Build, whose egress needs

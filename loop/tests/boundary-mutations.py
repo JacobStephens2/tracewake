@@ -67,11 +67,25 @@ MUTATIONS = {
         '--max-turns "${max_turns}" \\',
         "--max-turns 99 \\",
     ),
-    # The agent stops accepting edits, so every Iteration stalls on a prompt
-    # nobody is there to answer.
-    "permission-mode-dropped": (
+    # Back to the mode the first Run failed under: file edits auto-approved,
+    # Bash still gated, so no Iteration can commit and every Run aborts on
+    # consecutive No-ops with its work uncommitted.
+    "permission-mode-gates-bash": (
+        "--permission-mode bypassPermissions \\",
         "--permission-mode acceptEdits \\",
-        "--permission-mode plan \\",
+    ),
+    # The Loop's scripts stop being mounted, so the Plan's completeness check is
+    # outside the session's allowed directories and an Iteration cannot grade
+    # itself.
+    "check-not-mounted": (
+        '"${sbx}" create --quiet --name "${sandbox}" claude "${workspace}" "${loop_dir}:ro"',
+        '"${sbx}" create --quiet --name "${sandbox}" claude "${workspace}"',
+    ),
+    # The scripts are mounted writable, so a Run could edit the thing that
+    # grades it.
+    "check-mounted-writable": (
+        '"${loop_dir}:ro" >&2',
+        '"${loop_dir}" >&2',
     ),
 }
 

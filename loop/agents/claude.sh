@@ -107,7 +107,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-"${sbx}" create --quiet --name "${sandbox}" claude "${workspace}" >&2 ||
+# The Loop's own scripts, mounted read-only alongside the repository. The Plan
+# names a completeness check for an Iteration to grade itself against, and the
+# first Run found it unreachable: a sandbox mounts the workspace and nothing
+# else, so `check-inventory.sh` was outside the session's allowed directories and
+# every Iteration recorded it as blocked. Backpressure an Iteration cannot reach
+# is not backpressure.
+#
+# Read-only. The check is what says the work did not land, and an agent that
+# could edit it could make it say otherwise - which is the one thing a Run's own
+# grade must not be able to do.
+loop_dir="${LOOP_SCRIPTS_DIR:-$(cd -- "${agent_dir}/.." && pwd)}"
+
+"${sbx}" create --quiet --name "${sandbox}" claude "${workspace}" "${loop_dir}:ro" >&2 ||
     die "could not create the Execution Boundary for this Iteration"
 
 # Everything the guest needs, placed after creation rather than mounted. A mount
@@ -134,9 +146,21 @@ put "${signing_key}" "${signing_key}" 0600
 put "${signing_key}.pub" "${signing_key}.pub" 0644
 put "${allowed_signers}" "${allowed_signers}" 0644
 
-# --permission-mode acceptEdits, not a bypass: the Iteration edits and commits
-# without prompting, because nobody is there to answer a prompt, and the
-# Execution Boundary rather than the permission mode is what it cannot cross.
+# --permission-mode bypassPermissions. This was `acceptEdits`, and the first Run
+# proved that choice incoherent with the technique: `acceptEdits` auto-approves
+# FILE EDITS and still gates Bash, so every Iteration did its work, wrote its
+# Progress Log entry, and was refused at `git add` with "This command requires
+# approval". An Iteration that cannot commit is a No-op by the Loop's own
+# definition - the head does not move - so every Run aborted on consecutive
+# No-ops with the whole Run's work sitting uncommitted in the working tree.
+#
+# The reason to bypass is ADR 0003 rather than convenience. A permission prompt
+# is a control that spends a human, and there is no human: the boundary is what
+# Attendedness re-earns, and inside it the agent has a microVM of its own, two
+# allowed hosts, and no GitHub token. There is nothing here for a prompt to
+# protect that the boundary is not already protecting, and `sbx`'s own image
+# ships `defaultMode: bypassPermissions` for exactly that reason.
+#
 # The turn bound is the agent's own - the Loop passes the Contract's value in
 # rather than reimplementing it.
 #
@@ -159,7 +183,7 @@ set +o pipefail
 "${sbx}" exec --workdir "${workspace}" "${sandbox}" \
     claude \
     --print \
-    --permission-mode acceptEdits \
+    --permission-mode bypassPermissions \
     --max-turns "${max_turns}" \
     "$(cat -- "${prompt_file}")" 2>&1 | tee -- "${transcript}"
 agent_rc="${PIPESTATUS[0]}"
