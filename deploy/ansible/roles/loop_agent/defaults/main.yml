@@ -1,0 +1,35 @@
+---
+# The agent, on the Loop's box. ADR 0004 makes the agent a variable rather than
+# a decision; this role is the Claude Code half of that, and #84's is the Grok
+# one.
+#
+# What this role puts on the HOST is deliberately small: the binary, and nothing
+# that runs unattended. A Run never executes it here - `loop/agents/claude.sh`
+# always goes through `sbx`, and the boundary suite is what holds that - because
+# ADR 0003 makes the Execution Boundary the one control still standing when
+# nobody is watching, and an agent that ran beside it would have none.
+#
+# It is on the host for one reason: the login. Claude Code's subscription login
+# is a browser step, and a sandbox is destroyed after every Iteration, so the
+# credential has to be established somewhere that outlives one. The alternative
+# - logging in inside a sandbox and copying the credential out - would need the
+# OAuth hosts on the boundary's allowlist, which is widening a two-host egress
+# posture (#100) to serve a step that happens once.
+
+# Pinned, not `latest`, for the reason the `sbx` version is pinned: an agent
+# that silently changes version between Runs is an agent whose behaviour nobody
+# has observed, and the Termination Contract's five numbers are calibrated
+# against a Run. Moving the pin is a one-line, reviewable commit.
+#
+# 2.1.221 is what `docker/sandbox-templates:claude-code-docker` shipped on
+# 2026-08-25, so the host and the guest agree. The guest's copy is the vendor's
+# and floats with their image; this pin is the one the operator controls.
+loop_agent_claude_version: 2.1.221
+
+# Where the installer puts things. Named here because three tasks reach for
+# them and the credential path is also what `loop/assert-credentials.sh` gates
+# on - two files agreeing on a literal by both spelling it out is a seam that
+# breaks silently.
+loop_agent_claude_bin: /home/loop/.local/bin/claude
+loop_agent_claude_config_dir: /home/loop/.claude
+loop_agent_credentials_path: /home/loop/.claude/.credentials.json

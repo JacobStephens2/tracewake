@@ -1,0 +1,22 @@
+---
+# The Loop's own scripts, and the checkout a Run works in.
+#
+# Nothing placed this directory on the box until #83. #79 built the Loop and
+# verified it entirely offline, and its README named this as the first thing an
+# end-to-end Run would find missing. It was.
+
+# Where the Loop lives on the box. Not /usr/local: these are the Run account's
+# scripts, they are edited by re-applying this play, and root has no reason to
+# be able to hand them to anything.
+loop_scripts_dir: /home/loop/loop
+
+# The checkout a Run works in. One repository, the one the box's token is scoped
+# to, cloned once and never updated by this role - see the task's own comment
+# for why updating it would be a way to lose a Run.
+loop_scripts_workspace: /home/loop/tourbot
+
+# Named here rather than reached for directly in the task, so the dependency on
+# loop_credentials is written down. Role defaults are play-scoped, so this
+# resolves wherever loop_credentials is in the play - but a reference nobody
+# declared is one nobody notices when the roles are reordered.
+loop_scripts_repository: "{{ loop_target_repository }}"

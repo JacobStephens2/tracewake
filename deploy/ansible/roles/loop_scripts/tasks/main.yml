@@ -1,0 +1,46 @@
+---
+# The Loop's scripts, and the checkout a Run works in.
+
+- name: The Loop's scripts, as the Run account holds them
+  become: true
+  become_user: loop
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../lab/single-user-factory/loop/"
+    dest: "{{ loop_scripts_dir }}/"
+    # Preserved rather than set: run.sh, the agent adapter, the task source and
+    # the pull-request command are all executable and all checked for it by
+    # something's preflight, and a role that flattened the modes would produce a
+    # Run that refuses to start with a message about the wrong thing.
+    mode: preserve
+    directory_mode: "0755"
+    owner: loop
+    group: loop
+
+# Cloned, and then left alone. `update: false` is the load-bearing word: a Run
+# leaves its work as commits on a branch in this checkout, and a play applied
+# while one is in flight - or after one, before its branch is reviewed - would
+# be a way to lose it. Refreshing the checkout is the operator's, between Runs.
+- name: The checkout a Run works in
+  become: true
+  become_user: loop
+  ansible.builtin.git:
+    repo: "https://github.com/{{ loop_scripts_repository }}.git"
+    dest: "{{ loop_scripts_workspace }}"
+    update: false
+  # The clone authenticates through the credential helper loop_credentials
+  # wrote, which reads a token file this play never writes. On a box where the
+  # human-only half has not been done there is no token, the clone fails, and
+  # that is the honest outcome: it is the same failure a Run's push would hit,
+  # arriving at apply time instead of forty-five minutes in.
+  register: loop_scripts_clone
+  failed_when:
+    - loop_scripts_clone is failed
+    - not (loop_scripts_clone.msg | default('') is search('Authentication|could not read Username|403'))
+
+- name: Say so if the checkout could not be made
+  ansible.builtin.debug:
+    msg: >-
+      {{ loop_scripts_workspace }} was not cloned - the box has no GitHub token
+      yet. Run lab/single-user-factory/wizards/loop-github-credentials.sh, then
+      apply this play again.
+  when: loop_scripts_clone is failed

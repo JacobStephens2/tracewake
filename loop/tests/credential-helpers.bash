@@ -56,6 +56,14 @@ setup_credential_fixture() {
     git config --file "${BOX_HOME}/.gitconfig" user.signingkey "${signing_key}.pub"
     git config --file "${BOX_HOME}/.gitconfig" commit.gpgsign true
 
+    # The model credential: the operator's Claude Code subscription login, which
+    # #83 put on the box. Its contents are never read - the script asserts that
+    # the box holds one, not what is in it - so an empty object is the honest
+    # fixture.
+    mkdir -p "${BOX_HOME}/.claude"
+    printf '{}\n' >"${BOX_HOME}/.claude/.credentials.json"
+    chmod 0600 "${BOX_HOME}/.claude/.credentials.json"
+
     # The fake `sbx`. Its two answers are the only things the script asks a
     # command for, and both are driven by environment variables so a test can
     # say "signed out" or "an anthropic secret is stored" in one line.

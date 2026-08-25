@@ -330,3 +330,122 @@ setup() {
     [[ "$output" == *"ANTHROPIC_API_KEY is set"* ]]
     [[ "$output" == *"metered"* ]]
 }
+
+# --- Proposal-Only Output ---------------------------------------------------
+#
+# The proposal is a Run's only external effect, and these assert what a Run does
+# about it - not what propose.sh does, which has its own suite. The seam is the
+# same one the agent uses: LOOP_PROPOSE_COMMAND, replaced by a scripted fake.
+
+@test "a Run without --propose has no external effect and says so" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_PROPOSAL=skipped"* ]]
+    [ -z "$(proposed_with)" ]
+    [[ "$(progress_log)" == *"Proposal: none"* ]]
+}
+
+@test "a Run with --propose pushes and opens a draft pull request at its end" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_PROPOSAL=proposed"* ]]
+    [[ "$output" == *"LOOP_PROPOSE_URL=https://github.com/owner/name/pull/999"* ]]
+}
+
+@test "the ending bound and the exit code reach the proposal" {
+    export LOOP_MAX_ITERATIONS=4
+    export FAKE_AGENT_BEHAVIOURS="commit noop noop"
+    run_the_loop --propose
+    [ "$status" -eq 3 ]
+    [[ "$(proposed_with)" == *"consecutive-noops"* ]]
+    [[ "$(proposed_with)" == *"--exit"* ]]
+}
+
+@test "the task reference reaches the proposal, so the pull request can name it" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose --task-ref "owner/name#648"
+    [[ "$(proposed_with)" == *"owner/name#648"* ]]
+}
+
+@test "a Run that went wrong still proposes - a failed Run is a result" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="fail"
+    run_the_loop --propose
+    [ "$status" -eq 4 ]
+    [[ "$output" == *"LOOP_RUN_PROPOSAL=proposed"* ]]
+}
+
+@test "a clean Run whose proposal failed does not exit 0" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    export FAKE_PROPOSE_BEHAVIOUR=fail
+    run_the_loop --propose
+    [ "$status" -eq 6 ]
+    [[ "$output" == *"LOOP_RUN_PROPOSAL=failed"* ]]
+    [[ "$output" == *"LOOP_RUN_ENDED_BY=iteration-cap"* ]]
+}
+
+@test "a failed proposal does not overwrite the bound that ended the Run" {
+    export LOOP_MAX_ITERATIONS=4
+    export FAKE_AGENT_BEHAVIOURS="commit noop noop"
+    export FAKE_PROPOSE_BEHAVIOUR=fail
+    run_the_loop --propose
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"LOOP_RUN_ENDED_BY=consecutive-noops"* ]]
+    [[ "$output" == *"LOOP_RUN_PROPOSAL=failed"* ]]
+}
+
+@test "the ending bound is still the first line when a proposal was made" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [[ "${lines[0]}" == "LOOP_RUN_ENDED_BY=iteration-cap" ]]
+}
+
+@test "the Progress Log records that a proposal was made, and is committed first" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [[ "$(progress_log)" == *"Proposal: pushing this branch"* ]]
+    # Committed before the push, so what lands on the remote holds the record of
+    # the Run that produced it.
+    [ -z "$(git -C "${REPO}" status --porcelain -- PROGRESS.md)" ]
+}
+
+@test "a proposal command that is not executable stops the Run before it spends anything" {
+    export LOOP_PROPOSE_COMMAND="${BATS_TEST_TMPDIR}/absent"
+    run_the_loop --propose
+    [ "$status" -eq 1 ]
+    [ "$(agent_invocations)" -eq 0 ]
+}
+
+@test "a Run on origin's default branch is refused before it commits anything" {
+    give_the_repo_a_remote
+    head_before="$(git -C "${REPO}" rev-parse HEAD)"
+    run_the_loop --propose
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"default branch"* ]]
+    [ "$(agent_invocations)" -eq 0 ]
+    [ "$(git -C "${REPO}" rev-parse HEAD)" = "${head_before}" ]
+}
+
+@test "a Run on its own branch is not refused" {
+    give_the_repo_a_remote
+    git -C "${REPO}" checkout --quiet -b loop/run-1
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+}
+
+@test "the branch refusal applies to a Run that was not going to propose either" {
+    give_the_repo_a_remote
+    run_the_loop
+    [ "$status" -eq 1 ]
+    [ "$(agent_invocations)" -eq 0 ]
+}

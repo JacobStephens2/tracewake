@@ -85,19 +85,19 @@ USAGE
 
 # --- What the box is allowed to hold ----------------------------------------
 #
-# Four lines. Three of them gate the exit code; the fourth does not, and says so
-# in its own row rather than being left out of the inventory. The model
-# credential is the agent's subscription login, and no agent is installed until
-# #83 - so requiring it here would make this script red on a box that is exactly
-# as the spec intends it. When #83 lands, `gating` on that row becomes yes and
-# nothing else about this file changes.
+# Four lines, and all four now gate the exit code. The model credential's row
+# was the one that did not, because until #83 no agent was installed and
+# requiring it would have made this script red on a box that was exactly as the
+# spec intended. #83 put the operator's subscription login on the box, so the
+# row gates like the rest of them - which was the whole plan, and the only
+# change it took.
 #
 #   name|gating|what it is
 allowed=(
     "github-token|yes|fine-grained, repository-scoped, contents + pull requests"
     "signing-key|yes|dedicated SSH signing key, registered to the operator"
     "docker-identity|yes|read-only Docker PAT the Execution Boundary requires"
-    "model-credential|no|the agent's subscription login (#83 installs the agent)"
+    "model-credential|yes|the operator's Claude Code subscription login"
 )
 
 # --- What the box may not hold ----------------------------------------------
@@ -434,12 +434,16 @@ else
 fi
 
 # model-credential
-if [[ -f "${home}/.claude/.credentials.json" || -f "${home}/.claude.json" ]]; then
+# `.credentials.json` and nothing else. `~/.claude.json` is Claude Code's
+# configuration and exists the moment the binary is installed, so accepting it
+# would report a credential on a box where the login was never completed - and
+# the Run would find out at its first Iteration.
+if [[ -f "${home}/.claude/.credentials.json" ]]; then
     state[model-credential]="held"
     detail[model-credential]="${home}/.claude"
 else
     state[model-credential]="absent"
-    detail[model-credential]="no agent login on the box yet"
+    detail[model-credential]="no agent login on the box - see wizards/loop-claude-login.sh"
 fi
 
 held=0

@@ -42,6 +42,34 @@ PLAN
     export LOOP_MAX_TURNS=40
     export LOOP_RUN_TIMEOUT_SECONDS=60
     export LOOP_MAX_CONSECUTIVE_NOOPS=2
+
+    # The proposal is the Run's only external effect, so the suite gets a
+    # scripted fake for it exactly as it gets one for the agent. A Run without
+    # --propose never reaches it; a Run with --propose reaches this and no
+    # network.
+    export FAKE_PROPOSE_STATE="${BATS_TEST_TMPDIR}/fake-propose"
+    export FAKE_PROPOSE_BEHAVIOUR=ok
+    export LOOP_PROPOSE_COMMAND="${LOOP_SRC}/tests/fake-propose.sh"
+}
+
+# What the Run asked the proposal for. One argument per line, as the fake wrote
+# them, so a test can assert that the ending bound and the exit code reached it.
+proposed_with() {
+    if [[ -f ${FAKE_PROPOSE_STATE} ]]; then
+        cat -- "${FAKE_PROPOSE_STATE}"
+    fi
+}
+
+# Give the fixture repository a remote with a recorded default branch, which is
+# what run.sh's base-branch refusal turns on. Left out of the default fixture
+# deliberately: the Loop itself does not need a remote, and a fixture that had
+# one would make that refusal untestable by making it unconditional.
+give_the_repo_a_remote() {
+    local remote="${BATS_TEST_TMPDIR}/remote.git"
+    git init --quiet --bare --initial-branch=main "${remote}"
+    git -C "${REPO}" remote add origin "${remote}"
+    git -C "${REPO}" push --quiet origin main
+    git -C "${REPO}" remote set-head origin main
 }
 
 # A ceiling well above every Contract value the suite sets, and unrelated to

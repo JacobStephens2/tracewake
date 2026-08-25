@@ -64,6 +64,23 @@ MUTATIONS = {
         '"${LOOP_AGENT_COMMAND}" "${prompt_file}" "${LOOP_MAX_TURNS}"',
         '"${LOOP_AGENT_COMMAND}" "${prompt_file}" 99',
     ),
+    # The Run never proposes, so it has no external effect and the operator has
+    # nothing to review - silently, because the Run still exits 0.
+    "proposal-never-made": (
+        "proposal=\"skipped\"\npropose_output=\"\"\nif ${propose}; then",
+        'proposal="skipped"\npropose_output=""\nif false; then',
+    ),
+    # A proposal that failed no longer moves a clean Run off exit 0, so a Run
+    # that produced nothing reviewable reports that it worked.
+    "proposal-failure-ignored": (
+        "        ((exit_code != 0)) || exit_code=6",
+        "        :",
+    ),
+    # A Run may execute on the branch its proposal was supposed to protect.
+    "base-branch-allowed": (
+        '    [[ ${run_branch} != "${run_base}" ]] ||',
+        "    [[ true ]] ||",
+    ),
 }
 
 

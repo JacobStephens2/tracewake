@@ -34,13 +34,22 @@ setup() { setup_credential_fixture; }
     [[ "$output" == *"model-credential"* ]]
 }
 
-@test "the model credential is reported but does not gate the result" {
+@test "a box with no model credential is a violation naming it" {
+    rm -rf "${BOX_HOME}/.claude"
     run_assert
-    [ "$status" -eq 0 ]
-    mkdir -p "${BOX_HOME}/.claude"
-    printf '{}\n' >"${BOX_HOME}/.claude/.credentials.json"
+    [ "$status" -eq 2 ]
+    [ "$(field CREDENTIALS_RESULT)" = "violations" ]
+    [[ "$output" == *"model-credential"* ]]
+}
+
+# Claude Code writes ~/.claude.json the moment it is installed. Accepting it as
+# a credential would report a login on a box where nobody logged in, and the Run
+# would find out at its first Iteration - after the boundary was built.
+@test "an installed agent that was never logged in is not a model credential" {
+    rm -rf "${BOX_HOME}/.claude"
+    printf '{"hasCompletedOnboarding": false}\n' >"${BOX_HOME}/.claude.json"
     run_assert
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 2 ]
     [[ "$output" == *"model-credential"* ]]
 }
 

@@ -5,7 +5,7 @@ reviews. Spec: issue #73. This directory is issue #79 - the loop itself and the
 Termination Contract that makes walking away from it defensible.
 
 ```
-run.sh --repo <path> [--task-ref <text>]
+run.sh --repo <path> [--task-ref <text>] [--propose]
 ```
 
 ## Before a Run is left unattended
@@ -33,8 +33,10 @@ was deliberately left off are in
 | `contract.sh` | The Termination Contract. Five bounds, one place. |
 | `seed-run.sh` | The setup step. One chosen task in, a Plan and a Progress Log out (#82). |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
-| `agents/claude.sh` | The agent as one substitutable command (ADR 0004). |
+| `propose.sh` | Proposal-Only Output. The push and the draft pull request (#83). |
+| `agents/claude.sh` | The agent as one substitutable command (ADR 0004), inside the Execution Boundary. |
 | `task-sources/github.sh` | The task source as one substitutable command. One task, by number. |
+| `pr-sources/github.sh` | The pull-request surface as one substitutable command. |
 | `check-inventory.sh` | The first task's grade. Derives its own denominator. |
 | `assert-credentials.sh` | What the box holds, and what it may not. Both directions (#81). |
 | `tests/loop.bats` | The Loop's offline suite. No model, no network, no spend. |
@@ -42,6 +44,9 @@ was deliberately left off are in
 | `tests/seed-run.bats` | The seed step's offline suite, seamed separately (#82). |
 | `tests/fake-agent.sh` | The scripted agent the suite drives the real Run through. |
 | `tests/fake-task-source.sh` | The scripted task source, so the seed step's suite reaches no network. |
+| `tests/propose.bats` | The proposal's offline suite, seamed separately (#83). |
+| `tests/pr-source.bats` | The pull-request surface's own suite - what one request says. |
+| `tests/boundary.bats` | The agent adapter's suite: an Iteration inside the boundary. |
 | `tests/assert-credentials.bats` | The credential inventory's offline suite, seamed separately (#81). |
 | `tests/mutation-check.sh` | Breaks each bound and each guard, confirms the suites notice. |
 
@@ -77,11 +82,20 @@ LOOP_RUN_ENDED_BY=iteration-cap
 LOOP_RUN_EXIT=0
 LOOP_RUN_ITERATIONS=5
 LOOP_RUN_FAULTS=none
+LOOP_RUN_PROPOSAL=proposed
+LOOP_PROPOSE_URL=https://github.com/Educational-Travel-Adventures/tourbot/pull/664
 ```
 
 Exit codes: `0` planned end, `1` preflight failed, `2` run-clock, `3`
-consecutive-noops, `4` agent-failed, `5` cap reached with an Iteration killed.
-Why `0` exists at all, when every Run ends on a bound, is ADR 0007.
+consecutive-noops, `4` agent-failed, `5` cap reached with an Iteration killed,
+`6` planned end with a proposal that failed. Why `0` exists at all, when every
+Run ends on a bound, is ADR 0007.
+
+`6` follows the same reasoning one step further: a Run that reached its planned
+end and produced no proposal produced nothing the operator can review, and exit
+`0` would say the opposite. A Run that already ended on a bound keeps that
+bound's code - which bound ended it is the more useful fact - and
+`LOOP_RUN_PROPOSAL` carries the rest.
 
 ## Seeding a Run
 
@@ -251,15 +265,20 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-A hundred and thirty-seven tests, no model and no network. Twenty-three drive
-`run.sh` unmodified and assert only what a Run externally produces - exit code,
-reported bound, Progress Log contents, git history. Thirty-two drive
-`check-inventory.sh` against small fixture checkouts. Forty-one drive
+Two hundred and five tests, no model and no network. Thirty-six drive `run.sh`
+unmodified and assert only what a Run externally produces - exit code, reported
+bound, Progress Log contents, git history. Thirty-two drive
+`check-inventory.sh` against small fixture checkouts. Forty-two drive
 `assert-credentials.sh` against a constructed box - a home directory, a system
 root and a scripted fake `sbx`, all three of which a tmpdir can hold.
 Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
 what the Plan ends up saying, what the Progress Log is left ready for, and what
-seeding twice does. None of them names an internal function or depends on the
+seeding twice does. Twenty-four drive `propose.sh` against a real `git push` to
+a bare repository and a scripted fake pull request. Thirteen drive
+`pr-sources/github.sh` through a fake `curl`, which is what makes `draft: true`
+something the suite asserts rather than something the file says. Seventeen drive
+`agents/claude.sh` through a scripted fake `sbx` and assert what an Iteration
+does to the boundary. None of them names an internal function or depends on the
 order of steps.
 
 The check is seamed and tested on its own rather than only through a Run because
@@ -269,8 +288,9 @@ component (spec issue #73, Seam B).
 
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
 Contract, each guard of the check, each credential family, each guard of the
-seed step - and confirms the suite goes red. Fifty-three deliberate breaks,
-fifty-three caught. It names
+seed step, each thing holding Proposal-Only Output up, each property of the
+boundary - and confirms the suite goes red. Seventy-five deliberate breaks,
+seventy-five caught. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs
 one subject's set. The evidence is in
@@ -278,19 +298,76 @@ one subject's set. The evidence is in
 `../notes/loop-completeness-check-evidence.md`,
 `../notes/loop-credentials-evidence.md` and `../notes/loop-seed-evidence.md`.
 
-`shellcheck -x *.sh agents/*.sh task-sources/*.sh tests/*.sh` gates the scripts.
+`shellcheck -x *.sh agents/*.sh task-sources/*.sh pr-sources/*.sh tests/*.sh`
+gates the scripts.
+
+## Proposal-Only Output
+
+A Run started with `--propose` ends by pushing its branch and opening a draft
+pull request that references the task it came from. That is its only external
+effect, and it is the last thing it does.
+
+```
+propose.sh --repo <path> [--task-ref <text>] [--ended-by <bound>] [--exit <code>]
+           [--remote <name>] [--base <branch>]
+```
+
+It proposes on **every** ending bound, not only a clean one. A Run that was
+killed, that stalled on No-op Iterations, or whose agent exited non-zero has
+still produced a Progress Log saying so, and that record is exactly what is
+worth reviewing when a Run went wrong.
+
+**What makes it proposal-only is not this script**, and the ordering matters
+because only the first three survive somebody editing the fourth:
+
+1. The box's fine-grained token holds Contents and Pull requests. It cannot
+   merge, cannot administer, and has no Issues permission at all (ADR 0010).
+2. The token is not inside the Execution Boundary. The push happens on the host,
+   after every agent process is gone - so an Iteration has nothing to push with,
+   whatever its prompt said.
+3. Branch protection on `master`.
+4. `draft: true`, which is what a reviewer sees and the weakest of the four:
+   anyone who can see a draft can mark it ready.
+
+Its exit codes split the two ways a proposal fails, because they leave the world
+in different states and the operator's next command differs: `2` the push failed
+and nothing external happened; `3` the branch is on GitHub and the pull request
+is not. `1` is a refusal before anything was pushed - which includes a Run on
+the base branch, the one refusal that is a safety property rather than an
+argument check. `run.sh` makes that refusal at second zero instead, because by
+the proposal the Iterations have already committed.
+
+## The Execution Boundary
+
+Every Iteration runs inside its own hypervisor microVM, created and destroyed by
+`agents/claude.sh`. **The Loop does not know what a boundary is** - `run.sh`
+launches one command per Iteration and compares the repository head before and
+after, and all of this lives in the agent adapter, which is what makes swapping
+agents (#84) a change to one file.
+
+The sandbox is per Iteration, not per Run. That is the same forgetting the fresh
+process gives the agent's context, applied to its filesystem: anything that
+survives an Iteration has to be on disk in the repository, where a reviewer sees
+it. The repository is bind-mounted at its own path, so a commit made inside the
+guest is a commit in the checkout on the host.
+
+What goes inside is the model credential, the signing key, and the git identity
+that uses it. What does not is the GitHub token. The signing key being inside is
+a stated cost - an agent in the guest can read it - bounded by an egress
+allowlist of two hosts that both need the token it does not have, and by the key
+being dedicated to the Loop and revocable on its own (ADR 0005). The model
+credential is inside for a reason worth reading before assuming otherwise:
+ADR 0011.
 
 ## What this directory does not do
 
-- **Push, or open a pull request.** Proposal-Only Output is #83.
-- **Run inside the Execution Boundary.** Wrapping the agent call in `sbx` is a
-  change to `agents/claude.sh` and nowhere else - the Loop does not know what a
-  boundary is. Also #83.
 - **Place the box's credentials.** The signing key is generated on the box by
   `ansible/loop.yml` (role `loop_credentials`) and git is configured to sign with
-  it, but registering that key to the operator's GitHub account and minting the
-  repository-scoped token are browser steps:
-  `../wizards/loop-github-credentials.sh` (#81).
-- **Get itself onto the box.** Nothing in `ansible/loop.yml` places this
-  directory on `loop.etadventures.com` yet. The first end-to-end Run needs that,
-  and it is the first thing #83 will find missing.
+  it. The three that arrive through a browser are walkthroughs rather than
+  prose: `../wizards/loop-sbx-login.sh` (#78),
+  `../wizards/loop-github-credentials.sh` (#81), and
+  `../wizards/loop-claude-login.sh` (#83).
+- **Get itself onto the box.** `ansible/loop.yml` does that now, role
+  `loop_scripts`, alongside `loop_agent` for the pinned agent - so a change here
+  reaches `loop.etadventures.com` by re-applying the play, not by an rsync
+  somebody remembers.

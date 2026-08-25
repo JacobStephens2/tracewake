@@ -25,6 +25,10 @@
 #   3  consecutive-noops: the head stopped moving.
 #   4  agent-failed: an agent process exited non-zero on its own.
 #   5  iteration-cap, but at least one Iteration was killed by its wall clock.
+#   6  the Run reached a planned end and the proposal failed. The bound that
+#      ended the Run is still reported; what failed is the Run's only external
+#      effect, and a Run whose proposal is missing has produced nothing the
+#      operator can review.
 #
 # The one place this departs from a literal reading of spec issue #73 ("exits
 # non-zero whenever any bound fired") is code 0. Every Run ends on a bound,
@@ -34,12 +38,15 @@
 # nothing failed is the Run's planned end, and it is the one thing exit 0 means.
 # Which bound ended it is still reported, always, for every code including 0.
 #
-# The Loop does not push and does not open a pull request - that is #83. Nor does
-# it seed the Plan: `seed-run.sh` does that before a Run starts, because putting
-# the task into the repository is a setup step and keeping it one is what makes
-# ADR 0003's content-trust reasoning valid (ADR 0010). This script needs a
-# repository that already has a Plan in it, and its only effect is commits on the
-# branch that is checked out.
+# The Loop does not seed the Plan: `seed-run.sh` does that before a Run starts,
+# because putting the task into the repository is a setup step and keeping it one
+# is what makes ADR 0003's content-trust reasoning valid (ADR 0010). This script
+# needs a repository that already has a Plan in it.
+#
+# With --propose, the Run's last act is to push its branch and open a draft pull
+# request (propose.sh). Without it, a Run's only effect is commits on the branch
+# that is checked out - which is what the offline suite drives, and why the flag
+# is opt-in rather than a default with a way to turn it off.
 
 set -euo pipefail
 
@@ -51,6 +58,7 @@ source "${loop_dir}/contract.sh"
 # relative to this checkout, and contract.sh is a declaration file that should
 # not need to know where it was installed.
 : "${LOOP_AGENT_COMMAND:=${loop_dir}/agents/claude.sh}"
+: "${LOOP_PROPOSE_COMMAND:=${loop_dir}/propose.sh}"
 
 die() {
     printf 'run.sh: %s\n' "$*" >&2
@@ -59,22 +67,27 @@ die() {
 
 usage() {
     cat <<'USAGE'
-run.sh --repo <path> [--task-ref <text>]
+run.sh --repo <path> [--task-ref <text>] [--propose]
 
 Executes one Run: a sequence of fresh agent processes under the Termination
 Contract declared in contract.sh. Reports the bound that ended the Run on
 stdout as LOOP_RUN_ENDED_BY, and exits 0 only when the Run reached its
 iteration cap with nothing killed and nothing failed. The header comment in
 this file documents every exit code.
+
+  --propose  push the Run's branch and open a draft pull request when the Run
+             ends. The Run's only external effect.
 USAGE
 }
 
 repo=""
 task_ref=""
+propose=false
 while (($# > 0)); do
     case "$1" in
         --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
         --task-ref) task_ref="${2:?--task-ref needs a value}"; shift 2 ;;
+        --propose) propose=true; shift ;;
         -h | --help) usage; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
@@ -101,6 +114,25 @@ git -C "${repo}" rev-parse HEAD >/dev/null 2>&1 ||
 
 git -C "${repo}" config user.email >/dev/null ||
     die "no git identity in ${repo} - the Loop commits the Progress Log itself"
+
+# A Run works on its own branch. Checked at second zero rather than at the
+# proposal, because by the proposal the Iterations have already committed: a Run
+# started on the base branch would have put an unattended agent's commits on the
+# branch the proposal exists to keep them off, and there would be nothing left
+# to propose. Skipped where there is no remote, which is every fixture the
+# offline suite builds.
+run_base=""
+if run_base="$(git -C "${repo}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+    run_base="${run_base#origin/}"
+    run_branch="$(git -C "${repo}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    [[ ${run_branch} != "${run_base}" ]] ||
+        die "the Run is on ${run_base}, origin's default branch - a Run works on its own branch so that its Iterations are a proposal rather than a change"
+fi
+
+if ${propose}; then
+    [[ -x ${LOOP_PROPOSE_COMMAND} ]] ||
+        die "propose command is not executable: ${LOOP_PROPOSE_COMMAND}"
+fi
 
 for bound in LOOP_MAX_ITERATIONS LOOP_ITERATION_TIMEOUT_SECONDS LOOP_MAX_TURNS \
     LOOP_RUN_TIMEOUT_SECONDS LOOP_MAX_CONSECUTIVE_NOOPS; do
@@ -351,10 +383,53 @@ fi
         "${iterations_run}" "${committed_count}" "${noop_count}" "${killed_count}"
     printf -- '- Completion Promises recorded: %d\n' "${promise_count}"
     printf -- '- Faults: %s\n' "${fault_summary}"
-    printf -- '- Exit code: %d\n\n' "${exit_code}"
+    printf -- '- Exit code: %d\n' "${exit_code}"
+    if ${propose}; then
+        printf -- '- Proposal: pushing this branch and opening a draft pull request\n'
+    else
+        printf -- '- Proposal: none - this Run was not started with --propose\n'
+    fi
+    printf '\n'
 } >>"${progress_log}"
 
 commit_bookkeeping "Loop: Run ended (${ended_by})"
+
+# --- The proposal ----------------------------------------------------------
+#
+# The Run's only external effect, and the last thing it does. It runs on EVERY
+# ending bound rather than only on a clean one: a Run that was killed, that
+# stalled on No-op Iterations, or whose agent exited non-zero has still produced
+# a Progress Log saying so, and that record is the thing worth reviewing when a
+# Run went wrong. A failed first Run is a result, not a blocker.
+#
+# Its output is echoed rather than parsed. propose.sh already prints
+# LOOP_PROPOSE_* lines in the same machine-readable shape as this block, so
+# forwarding them puts the branch, the base and the pull request's URL on the
+# same stdout the ending bound is on.
+
+proposal="skipped"
+propose_output=""
+if ${propose}; then
+    propose_args=(--repo "${repo}" --ended-by "${ended_by}" --exit "${exit_code}")
+    [[ -n ${task_ref} ]] && propose_args+=(--task-ref "${task_ref}")
+
+    # Captured rather than left to stream, so that the LOOP_RUN_* block stays
+    # the first thing on stdout. Stderr is not captured: a proposal that failed
+    # should say why where a human running the Run sees it.
+    propose_rc=0
+    propose_output="$("${LOOP_PROPOSE_COMMAND}" "${propose_args[@]}")" || propose_rc=$?
+
+    if ((propose_rc == 0)); then
+        proposal="proposed"
+    else
+        proposal="failed"
+        # A Run that reached its planned end and produced no proposal produced
+        # nothing to review, and exit 0 would say the opposite. A Run that
+        # already ended on a bound keeps that bound's code: which bound ended it
+        # is the more useful fact, and LOOP_RUN_PROPOSAL below says the rest.
+        ((exit_code != 0)) || exit_code=6
+    fi
+fi
 
 # Machine-readable and first, so triage after a Run is one line rather than a
 # whole log.
@@ -362,5 +437,7 @@ printf 'LOOP_RUN_ENDED_BY=%s\n' "${ended_by}"
 printf 'LOOP_RUN_EXIT=%d\n' "${exit_code}"
 printf 'LOOP_RUN_ITERATIONS=%d\n' "${iterations_run}"
 printf 'LOOP_RUN_FAULTS=%s\n' "${fault_summary}"
+printf 'LOOP_RUN_PROPOSAL=%s\n' "${proposal}"
+[[ -n ${propose_output} ]] && printf '%s\n' "${propose_output}"
 
 exit "${exit_code}"
