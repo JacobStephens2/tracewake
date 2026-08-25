@@ -22,19 +22,20 @@ MUTATIONS = {
         '    "${sbx}" rm --force "${sandbox}" >/dev/null 2>&1 || true',
         "    :",
     ),
-    # The agent is exec'd, which is what this file did before it had a boundary
-    # to clean up. `exec` replaces the shell and discards its traps, so every
-    # Iteration leaks its sandbox - including one killed at its wall clock,
-    # which is a bound of the Termination Contract rather than an anomaly.
+    # Two mutations are deliberately absent, and both absences are findings
+    # rather than gaps.
     #
-    # Narrowing the trap to EXIT alone is NOT here, and the absence is a
-    # finding: bash runs an EXIT trap when a signal arrives while it is waiting
-    # on a child, so `INT TERM` changes nothing that a test could see. It is
-    # kept in the script as a statement of intent, not as a mechanism.
-    "agent-exec-discards-cleanup": (
-        '"${sbx}" exec --workdir "${workspace}" "${sandbox}" \\',
-        'exec "${sbx}" exec --workdir "${workspace}" "${sandbox}" \\',
-    ),
+    # Narrowing `trap cleanup EXIT INT TERM` to EXIT alone: bash runs an EXIT
+    # trap when a signal arrives while it is waiting on a child, so `INT TERM`
+    # changes nothing a test could see. It stays in the script as a statement of
+    # intent, not as a mechanism.
+    #
+    # `exec`-ing the agent, which is what this file did before it had a sandbox
+    # to clean up: the agent's invocation is a pipeline now, because the turn
+    # bound has to be recognised in what it printed, and `exec` at the head of a
+    # pipeline replaces the subshell rather than this script. The trap survives
+    # it. The property is structural rather than tested, and what does test it
+    # is `sandbox-leaked` plus the killed-at-its-wall-clock case in the suite.
     # The GitHub token goes inside the boundary, and Proposal-Only Output stops
     # being a property of what the agent can reach.
     "token-inside-the-boundary": (

@@ -294,7 +294,7 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and eighteen tests, no model and no network. Forty-two drive `run.sh`
+Two hundred and nineteen tests, no model and no network. Forty-two drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history. Thirty-two drive
 `check-inventory.sh` against small fixture checkouts. Forty-four drive
@@ -318,8 +318,8 @@ component (spec issue #73, Seam B).
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
 Contract, each guard of the check, each credential family, each guard of the
 seed step, each thing holding Proposal-Only Output up, each property of the
-boundary - and confirms the suite goes red. Eighty-six deliberate breaks,
-eighty-six caught. It names
+boundary - and confirms the suite goes red. Eighty-two deliberate breaks,
+eighty-two caught. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs
 one subject's set. The evidence is in
