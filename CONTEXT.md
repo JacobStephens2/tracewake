@@ -68,6 +68,29 @@ only and never ends a Run on its own, because nothing verifies it and it is
 documented lying.
 _Avoid_: completion signal, done marker
 
+## The first task's grade
+
+**Completeness Check**:
+The mechanical grade on a task that has no test suite: it derives every
+Occurrence from the checkout, reads the Inventory, and exits non-zero when the
+Inventory does not account for one. Backpressure while a Run is happening and
+acceptance afterwards; the same script in both roles.
+_Avoid_: the linter, the validator, the audit script
+
+**Occurrence**:
+One line of tracked application code naming the symbol under audit. Line
+granularity, not match granularity: a line naming the table twice is one thing to
+decide about. The count of them is the Completeness Check's denominator, derived
+every run and never read from the task (ADR 0008).
+_Avoid_: hit, match, reference
+
+**Inventory**:
+The document the first task produces: every Occurrence classified, grouped by the
+area that owns it, each entry carrying the rationale its classification requires.
+A document a human reviews, not a data file - the Completeness Check picks the
+entries out of it.
+_Avoid_: the audit, the list, the classification file
+
 ## Trust and boundaries
 
 **Attendedness**:

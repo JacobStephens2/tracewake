@@ -68,6 +68,9 @@ MUTATIONS = {
 
 
 def main() -> int:
+    if sys.argv[1] == "--list":
+        print("\n".join(MUTATIONS))
+        return 0
     name, target = sys.argv[1], pathlib.Path(sys.argv[2])
     old, new = MUTATIONS[name]
     source = target.read_text()
