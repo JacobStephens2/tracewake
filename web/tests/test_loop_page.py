@@ -146,3 +146,151 @@ def test_a_cycle_cut_in_half_by_the_read_limit_is_not_rendered(db):
     assert "from a cycle whose start scrolled off" in body, (
         "the raw event table still shows it"
     )
+
+
+# --- The Run card (#154) ----------------------------------------------------
+
+
+def _dispatch_row(conn, cycle, **over):
+    payload = {
+        "cycle": cycle,
+        "issue": 645,
+        "title": "Widen the sync window",
+        "url": "https://example.invalid/645",
+        "branch": "loop/645-the-nightly-sync-script",
+        "task_ref": "acme/widgets#645",
+        "area": "The nightly sync script",
+        "attempt": 1,
+    }
+    payload.update(over)
+    return journal.append(conn, "run.dispatched", payload)
+
+
+def test_a_run_in_flight_has_a_card_of_its_own(db):
+    """Issue #154's viewing criterion, first half: the in-flight card appears
+    while the Run is running, which is the whole of what the page can show
+    before the box says anything."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+    body = client.get("/loop").text
+    assert "in flight" in body
+    assert "loop/645-the-nightly-sync-script" in body
+    assert "Widen the sync window" in body
+
+
+def test_the_card_ends_showing_its_proposal_link(db):
+    """The second half: when the outcome lands, the same Run reads as ended
+    and carries the Proposal a reviewer opens."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        journal.append(
+            conn,
+            "run.outcome",
+            {
+                "cycle": cycle,
+                "issue": 645,
+                "attempt": 1,
+                "outcome": "iteration-cap",
+                "ended_by": "iteration-cap",
+                "exit": 0,
+                "iterations": 5,
+                "faults": "none",
+                "notified": "sent",
+                "proposal": "https://github.invalid/acme/widgets/pull/12",
+            },
+        )
+    body = client.get("/loop").text
+    runs = body.split("<h2>Cycles</h2>")[0]
+    assert 'class="run run-in-flight"' not in runs
+    assert "iteration-cap" in runs
+    assert "https://github.invalid/acme/widgets/pull/12" in runs
+
+
+def test_a_retry_is_its_own_card(db):
+    """Paired by issue AND attempt. A retry of an issue that already has an
+    outcome is its own Run, and folding the two together would show the first
+    Run's Proposal beside the second Run's state."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle, attempt=1)
+        journal.append(
+            conn, "run.outcome",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "outcome": "agent-failed", "exit": 4, "iterations": 1,
+             "faults": "agent-failed", "notified": "sent",
+             "proposal": "https://github.invalid/acme/widgets/pull/12"},
+        )
+        _dispatch_row(conn, cycle, attempt=2)
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert runs.count('<section class="run') == 2
+    assert 'class="run run-in-flight"' in runs
+    assert "agent-failed" in runs
+    assert "attempt 2" in runs
+
+
+def test_a_dispatch_that_started_no_run_says_so(db):
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        journal.append(
+            conn, "run.outcome",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "outcome": "dispatch-failed", "error": "ssh: no route to host"},
+        )
+    body = client.get("/loop").text
+    assert "no Run was started" in body
+    assert "ssh: no route to host" in body
+
+
+def test_a_returned_issue_is_marked_on_the_skip_that_returned_it(db):
+    """The loud skip, seen: the comment and the label swap are one fact about
+    one issue, so the page shows them on the skip row rather than in a list
+    of their own."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        journal.append(
+            conn, "issue.skipped",
+            {"cycle": cycle, "number": 596, "url": "https://example.invalid/596",
+             "reason": "missing-section", "detail": "no `Owning area` section"},
+        )
+        journal.append(
+            conn, "issue.returned",
+            {"cycle": cycle, "number": 596, "reason": "missing-section",
+             "added_label": "needs-info", "removed_label": "ready-for-agent"},
+        )
+    body = client.get("/loop").text
+    assert "commented, swapped to needs-info" in body
+
+
+def test_a_return_that_failed_is_not_shown_as_a_return(db):
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        journal.append(
+            conn, "issue.skipped",
+            {"cycle": cycle, "number": 596, "url": "https://example.invalid/596",
+             "reason": "missing-section", "detail": "no `Owning area` section"},
+        )
+        journal.append(
+            conn, "issue.return-failed",
+            {"cycle": cycle, "number": 596, "error": "GitHub refused the label swap"},
+        )
+    body = client.get("/loop").text
+    assert "could not hand it back" in body
+    assert "GitHub refused the label swap" in body
+    assert "commented, swapped to needs-info" not in body
+
+
+def test_a_run_whose_dispatch_scrolled_off_the_page_is_not_rendered(db):
+    """Same rule as the cycle cards: an outcome with no dispatch above it is
+    an absence, not a nameless Run."""
+    with journal.connect(db) as conn:
+        journal.append(
+            conn, "run.outcome",
+            {"cycle": 999999, "issue": 111, "attempt": 1,
+             "outcome": "iteration-cap", "proposal": "https://example.invalid/pull/1"},
+        )
+    body = client.get("/loop").text
+    assert "<h2>Runs</h2>" not in body
+    assert "111" in body, "the raw event table still shows it"

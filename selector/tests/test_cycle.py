@@ -23,53 +23,15 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 import journal
+from conftest import BODY, hours_ago_iso as _hours_ago_iso, issue
 
 SELECTOR = Path(__file__).resolve().parents[1]
 CYCLE = SELECTOR / "cycle.py"
-
-BODY = """## Problem
-
-Something is wrong.
-
-## Acceptance criteria
-
-- [ ] It is right
-
-## Owning area
-
-The nightly sync script
-"""
-
-
-def _hours_ago_iso(hours):
-    return (
-        datetime.now(timezone.utc) - timedelta(hours=hours)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def issue(number, **over):
-    """One tracker record, eligible unless a field is overridden."""
-    record = {
-        "number": number,
-        "title": f"Issue {number}",
-        "url": f"https://example.invalid/{number}",
-        "state": "OPEN",
-        "body": BODY,
-        "labeledBy": "JacobStephens2",
-        "labeledAt": None,
-        "blockedBy": 0,
-        "openSubIssues": 0,
-        "proposals": [],
-    }
-    record.update(over)
-    return record
-
 
 @pytest.fixture
 def fakes(tmp_path):
@@ -431,10 +393,13 @@ def test_a_tracker_that_returns_nonsense_fails_the_cycle(db, fakes, tmp_path):
     assert events(db, "cycle.failed")
 
 
-def test_dispatch_is_refused_until_the_dispatch_ticket_lands(db, fakes):
-    """--dry-run is the only mode #153 built. A cycle asked to dispatch must
-    refuse and say so, rather than quietly journal a pick and stop."""
-    result = fakes.run(db, [issue(645)], dry_run=False)
-    assert result.returncode != 0
-    assert "--dry-run" in result.stderr
-    assert not events(db), "a refused cycle journals nothing"
+def test_dry_run_is_the_cycle_that_would_have_happened(db, fakes):
+    """The two modes share the deciding. A dry-run reasons its way to a pick
+    and journals it, and stops there - the tripwire above is what holds the
+    "stops there"; this is the "reasons its way to a pick"."""
+    result = fakes.run(db, [issue(645), issue(646, blockedBy=1)])
+    assert result.returncode == 0
+    assert picked(db)["number"] == 645
+    assert finished(db)["dry_run"] is True
+    assert not events(db, "run.dispatched"), "a dry run starts no Run"
+    assert not events(db, "issue.returned"), "a dry run hands nothing back"
