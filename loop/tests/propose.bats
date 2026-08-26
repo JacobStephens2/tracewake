@@ -86,6 +86,15 @@ setup() { setup_propose_fixture; }
     grep -q '^Closes #648$' "${FAKE_PR_STATE}.body"
 }
 
+@test "the Closes line does not break the metadata list in two" {
+    # A keyword that works and renders as a stray paragraph between two lists
+    # is a body a reviewer reads as broken. It goes last, after the prose.
+    run_propose
+    closes="$(grep -n '^Closes #648$' "${FAKE_PR_STATE}.body" | cut -d: -f1)"
+    last_bullet="$(grep -n '^- ' "${FAKE_PR_STATE}.body" | tail -1 | cut -d: -f1)"
+    [ "${closes}" -gt "${last_bullet}" ]
+}
+
 @test "a task in another repository gets no Closes line" {
     # GitHub's keyword closes a cross-repository reference only for an actor
     # with write access on the OTHER repository, and a line that silently does

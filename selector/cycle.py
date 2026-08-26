@@ -401,7 +401,7 @@ def _return_to_operator(
 # --- Dispatch ---------------------------------------------------------------
 
 
-def _dispatch(
+def _dispatch_pick(
     conn: psycopg.Connection,
     cycle_id: int,
     config: Config,
@@ -462,6 +462,9 @@ def _dispatch(
         raise CycleFailed(str(exc)) from exc
 
     outcome.update(summary)
+    # `outcome` beside `ended_by` rather than instead of it: a dispatch that
+    # never started a Run has no bound to name, so the page and any later
+    # reader need one key that is filled in for every row of this kind.
     outcome["outcome"] = summary["ended_by"]
     outcome["seed"] = seeded.get("LOOP_SEED_RESULT")
     outcome["criteria"] = seeded.get("LOOP_SEED_CRITERIA")
@@ -610,7 +613,7 @@ def run_cycle(
     summary["return_failures"] = return_failures
     summary["outcome"] = None
     if pick and not dry_run:
-        summary["outcome"] = _dispatch(
+        summary["outcome"] = _dispatch_pick(
             conn,
             cycle_id,
             config,

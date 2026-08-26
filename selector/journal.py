@@ -18,6 +18,13 @@ from psycopg.types.json import Jsonb
 
 CHANNEL = "journal_events"
 
+# One convention, worth stating because it looks like an inconsistency: an
+# event ABOUT AN ISSUE (`issue.skipped`, `issue.returned`) carries `number`,
+# and an event about a RUN (`run.dispatched`, `run.outcome`) carries `issue` -
+# the run is the subject there and the issue is which one it is for. A reader
+# querying for one and finding rows of the other kind empty has met this and
+# not a bug.
+
 _DEFAULT_DSN = "dbname=selector"
 
 

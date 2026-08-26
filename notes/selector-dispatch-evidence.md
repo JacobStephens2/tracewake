@@ -73,6 +73,16 @@ Loop's own seed step running here rather than there - which is ADR 0010's
 property holding through the automation. Everything above was torn down
 afterwards; nothing of it is left on the box.
 
+## The page, fed by that dispatch
+
+The Journal above is what `/loop` renders, so the Run cards were checked
+against those rows rather than against hand-seeded ones: #999's card read
+`iteration-cap`, exit 0, five Iterations, and carried its Proposal link, and a
+second dispatch row with no outcome beside it rendered as the in-flight card -
+the thicker left border being the one thing on the page that is happening now
+rather than being remembered. Screenshotted at 1280px before the throwaway
+database was dropped.
+
 ## What the offline suites cover
 
 Twenty-five tests drive the real `cycle.py` in dispatch mode against scripted
@@ -80,7 +90,7 @@ commands and a **real** bare git repository, asserting the sequence, the
 captured summary, the retry's branch handling, the loud skip's comment and
 label swap, and the two failure shapes. Thirty mutations - each Eligibility
 clause, each cap, each dispatch step, each half of the loud skip - are all
-caught. The Loop's own 287-test suite is green with `propose.sh`'s new
+caught. The Loop's own 288-test suite is green with `propose.sh`'s new
 `Closes #n` line (run as `loop` on the box; two tests fail as root, because
 root can read the unreadable files two of them construct).
 

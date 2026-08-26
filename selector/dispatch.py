@@ -65,7 +65,8 @@ class DispatchConfig:
     seed_command: str
     box_command: str
     issue_command: str
-    timeout_seconds: int
+    command_timeout_seconds: int
+    run_timeout_seconds: int
 
     @classmethod
     def from_env(cls) -> "DispatchConfig":
@@ -83,12 +84,23 @@ class DispatchConfig:
             issue_command=env(
                 "SELECTOR_ISSUE_COMMAND", str(HERE / "issue-sources" / "github.sh")
             ),
-            # Longer than the Termination Contract's run clock (90 minutes) by
-            # enough to cover the checkout and the proposal. It is a backstop
-            # for an SSH that wedged, not a second bound on the Run: the Run
-            # bounds itself, and a number here that could fire first would be
-            # a bound nobody declared in contract.sh.
-            timeout_seconds=int(env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "7200")),
+            # Two timeouts, because the two things being waited on are
+            # nothing like each other. Everything except the Run is a call
+            # that should answer in seconds - a fetch, a push, a comment - and
+            # giving those the Run's budget would let one wedged tracker call
+            # hold a cycle open for two hours.
+            command_timeout_seconds=int(
+                env("SELECTOR_COMMAND_TIMEOUT_SECONDS", "300")
+            ),
+            # The Run's own is longer than the Termination Contract's run
+            # clock (90 minutes) by enough to cover the checkout and the
+            # proposal. It is a backstop for an SSH that wedged, not a second
+            # bound on the Run: the Run bounds itself, and a number here that
+            # could fire first would be a bound nobody declared in
+            # contract.sh.
+            run_timeout_seconds=int(
+                env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "7200")
+            ),
         )
 
 
@@ -113,13 +125,26 @@ def report_fields(text: str) -> dict[str, str]:
     return fields
 
 
-def _run(argv: list[str], *, timeout: int | None = None) -> subprocess.CompletedProcess:
+def _run(argv: list[str], *, timeout: int | None = None,
+         stdin: str | None = None) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(
+            argv, input=stdin, capture_output=True, text=True, timeout=timeout
+        )
     except OSError as exc:
         raise DispatchFailed(f"could not run {argv[0]}: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise DispatchFailed(f"{argv[0]} did not finish within {timeout}s") from exc
+
+
+def _said(completed: subprocess.CompletedProcess) -> str:
+    """Whatever a failed command told us, in one place.
+
+    stderr first, stdout second, and a word rather than an empty string last:
+    a Run nobody watched has to be diagnosable from the row it left behind,
+    and "the box refused: " with nothing after it says less than "no output".
+    """
+    return completed.stderr.strip() or completed.stdout.strip() or "no output"
 
 
 def _git(config: DispatchConfig, *args: str) -> str:
@@ -127,12 +152,9 @@ def _git(config: DispatchConfig, *args: str) -> str:
     # size against a network that has gone away would otherwise hold the
     # dispatch open with nothing bounding it.
     completed = _run(["git", "-C", str(config.work_repo), *args],
-                     timeout=config.timeout_seconds)
+                     timeout=config.command_timeout_seconds)
     if completed.returncode != 0:
-        raise DispatchFailed(
-            f"git {' '.join(args)} failed: "
-            f"{completed.stderr.strip() or completed.stdout.strip() or 'no output'}"
-        )
+        raise DispatchFailed(f"git {' '.join(args)} failed: {_said(completed)}")
     return completed.stdout.strip()
 
 
@@ -166,7 +188,8 @@ def prepare_branch(config: DispatchConfig, number: int, area: str) -> str:
 
     remote_branch = f"{config.remote}/{branch}"
     if _run(["git", "-C", str(config.work_repo), "rev-parse", "--verify",
-             "--quiet", remote_branch]).returncode == 0:
+             "--quiet", remote_branch],
+            timeout=config.command_timeout_seconds).returncode == 0:
         # A retry (#155) continues the branch the first attempt left behind
         # rather than resetting it to the base, which would discard whatever
         # that attempt committed and propose an empty diff.
@@ -200,12 +223,9 @@ def seed(config: DispatchConfig, task_repo: str, number: int, area: str,
     ]
     if check:
         argv += ["--check", check]
-    completed = _run(argv, timeout=config.timeout_seconds)
+    completed = _run(argv, timeout=config.command_timeout_seconds)
     if completed.returncode != 0:
-        raise DispatchFailed(
-            f"Seeding refused #{number}: "
-            f"{completed.stderr.strip() or completed.stdout.strip() or 'no output'}"
-        )
+        raise DispatchFailed(f"Seeding refused #{number}: {_said(completed)}")
     return report_fields(completed.stdout)
 
 
@@ -238,13 +258,14 @@ def start_run(config: DispatchConfig, branch: str, task_ref: str) -> dict:
     as starting one.
     """
     completed = _run(
-        [config.box_command, branch, task_ref], timeout=config.timeout_seconds
+        [config.box_command, branch, task_ref],
+        timeout=config.run_timeout_seconds,
     )
     fields = report_fields(completed.stdout)
     if "LOOP_RUN_ENDED_BY" not in fields:
         raise DispatchFailed(
             f"the box started no Run (exit {completed.returncode}): "
-            f"{completed.stderr.strip() or completed.stdout.strip() or 'no output'}"
+            f"{_said(completed)}"
         )
     return {
         "ended_by": fields["LOOP_RUN_ENDED_BY"],
@@ -264,23 +285,17 @@ def comment(config: DispatchConfig, task_repo: str, number: int, body: str) -> N
     """One comment on the issue, body on stdin.
 
     On stdin rather than as an argument: the body is markdown with newlines
-    and backticks in it, and an argument would put the whole of it in the
-    box's - and this VM's - process listing.
+    and backticks in it, and an argument would put the whole of it in this
+    VM's process listing.
     """
-    try:
-        completed = subprocess.run(
-            [config.issue_command, task_repo, "comment", str(number)],
-            input=body, capture_output=True, text=True,
-            timeout=config.timeout_seconds,
-        )
-    except OSError as exc:
-        raise DispatchFailed(f"could not run {config.issue_command}: {exc}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise DispatchFailed(f"commenting on #{number} did not finish") from exc
+    completed = _run(
+        [config.issue_command, task_repo, "comment", str(number)],
+        timeout=config.command_timeout_seconds,
+        stdin=body,
+    )
     if completed.returncode != 0:
         raise DispatchFailed(
-            f"could not comment on #{number}: "
-            f"{completed.stderr.strip() or 'no output'}"
+            f"could not comment on #{number}: {_said(completed)}"
         )
 
 
@@ -288,10 +303,7 @@ def relabel(config: DispatchConfig, task_repo: str, number: int, *,
             add: str, remove: str) -> None:
     completed = _run(
         [config.issue_command, task_repo, "relabel", str(number), add, remove],
-        timeout=config.timeout_seconds,
+        timeout=config.command_timeout_seconds,
     )
     if completed.returncode != 0:
-        raise DispatchFailed(
-            f"could not relabel #{number}: "
-            f"{completed.stderr.strip() or 'no output'}"
-        )
+        raise DispatchFailed(f"could not relabel #{number}: {_said(completed)}")

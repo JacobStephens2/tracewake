@@ -171,7 +171,8 @@ MUTATIONS = {
     # committed and proposing an empty diff.
     "retry-discards-the-first-attempt": (DISPATCH, DISPATCH_SUITE,
         '    if _run(["git", "-C", str(config.work_repo), "rev-parse", "--verify",\n'
-        '             "--quiet", remote_branch]).returncode == 0:',
+        '             "--quiet", remote_branch],\n'
+        "            timeout=config.command_timeout_seconds).returncode == 0:",
         "    if False:",
     ),
     # The Plan never reaches the box: the branch is seeded here and the Run is
@@ -183,12 +184,10 @@ MUTATIONS = {
     # Seeding's refusal - the component that would otherwise have to guess
     # what done means - is worked around and the Run starts anyway.
     "seeding-refusal-ignored": (DISPATCH, DISPATCH_SUITE,
-        '    if completed.returncode != 0:\n'
-        '        raise DispatchFailed(\n'
-        '            f"Seeding refused #{number}: "',
+        "    if completed.returncode != 0:\n"
+        '        raise DispatchFailed(f"Seeding refused #{number}: {_said(completed)}")',
         "    if False:\n"
-        '        raise DispatchFailed(\n'
-        '            f"Seeding refused #{number}: "',
+        '        raise DispatchFailed(f"Seeding refused #{number}: {_said(completed)}")',
     ),
     # The branch stops naming the issue, so two Runs on the same area collide
     # and a branch list stops answering "what is this for?".

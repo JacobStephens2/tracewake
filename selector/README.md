@@ -65,7 +65,12 @@ the Journal answers "what would it have picked?" as well as "what did it?".
 | `SELECTOR_SEED_COMMAND` | `../loop/seed-run.sh` | the Loop's own seed step |
 | `SELECTOR_BOX_COMMAND` | `box-sources/ssh.sh` | the box, and the Run on it |
 | `SELECTOR_ISSUE_COMMAND` | `issue-sources/github.sh` | comments and label swaps |
-| `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged SSH |
+| `SELECTOR_COMMAND_TIMEOUT_SECONDS` | `300` | git, Seeding, tracker writes |
+| `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
+
+Two timeouts because the two waits are nothing like each other: everything
+except the Run should answer in seconds, and giving a comment or a fetch the
+Run's budget would let one wedged call hold a cycle open for two hours.
 
 `box-sources/ssh.sh` reads four more: `SELECTOR_BOX_HOST`
 (`root@loop.etadventures.com`), `SELECTOR_BOX_USER` (`loop`),
