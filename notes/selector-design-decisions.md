@@ -104,8 +104,21 @@ its verify block; idempotent):
 Native edges and prose now agree on all 29 issues: eligibility is a single
 GraphQL predicate with no text parsing.
 
-Follow-up for the build: add `awaiting-review` to tourbot's
-`docs/agents/triage-labels.md`.
+
+## Build-phase tasks
+
+Alongside the Selector itself:
+
+- **Write protection for the unattended-executed paths.** A direct push to
+  this repo's master can change `loop/` and the Selector's code today, while
+  tourbot - the repo a Run makes Proposals against - is PR-gated: the code
+  that runs unattended has less protection than the code it changes. Fix
+  without moving repos: a GitHub ruleset protecting
+  `lab/single-user-factory/loop/**` and the Selector's paths, or ansible
+  deploying only reviewed refs to the box. (From the from-zero repo-home
+  exercise, 2026-08-26; the repo-home answer itself was: stay in
+  orchestration.)
+- Add `awaiting-review` to tourbot's `docs/agents/triage-labels.md`.
 
 ## Deferred, explicitly
 
