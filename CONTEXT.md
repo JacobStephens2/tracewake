@@ -183,6 +183,14 @@ fourth trust axis alongside blast radius, reversibility, and trust model, and
 unlike those three it does *not* collapse at single-operator scale.
 _Avoid_: supervision, HITL
 
+**Attended Preview**:
+Unreviewed code running where a human is looking at it: one branch served from
+its own instance so it can be evaluated without being merged first. Permissible
+on the VM that holds production credentials only because Attendedness holds -
+which is what separates it from model output executing unattended, and why the
+name carries the reason rather than the deployment (ADR 0016).
+_Avoid_: staging, staging instance, preview slot, dev instance
+
 **Execution Boundary**:
 The mechanism the agent cannot cross while unattended. The one subsystem that
 Attendedness re-earns after the single-operator collapses have deleted the rest of
