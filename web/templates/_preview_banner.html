@@ -1,0 +1,24 @@
+{# The Attended Preview banner (ADR 0016). Styles are inline on purpose: this
+   renders on both the lab chrome (app.css) and the factory terminal
+   (terminal.css), whose palettes share nothing, and a banner that inherits
+   one of them would be invisible on the other. It has to look the same
+   everywhere, because "am I on a preview?" is the one question every page
+   must answer identically. #}
+{% if preview %}
+<div role="status" style="background:#7c2d12;color:#fff5ed;padding:.6rem 1rem;
+     font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+     border-bottom:3px solid #f59e0b">
+  <b>ATTENDED PREVIEW</b> &mdash; unreviewed code, running because you are
+  looking at it.
+  {%- if preview.unreadable %}
+  Its lease is unreadable, so this page cannot say which branch it is serving;
+  re-run <code>scripts/lab-preview.sh</code> to restore it.
+  {%- else %}
+  Branch <b>{{ preview.branch or "unknown" }}</b>
+  at <code>{{ preview.sha or "unknown" }}</code>,
+  started by {{ preview.started_by or "unknown" }}
+  {%- if preview.uptime %}, up {{ preview.uptime }}{% endif %}.
+  This instance exits on its own after 4 hours.
+  {%- endif %}
+</div>
+{% endif %}

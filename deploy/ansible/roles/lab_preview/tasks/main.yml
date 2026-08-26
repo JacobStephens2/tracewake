@@ -1,0 +1,140 @@
+# The Attended Preview (ADR 0016): a second lab-webapp serving one unmerged
+# branch at lab-staging.etadventures.com, so a /loop change can be looked at
+# without being merged first.
+#
+# The ruling permits it because a preview is attended. The containment below
+# is what makes that a boundary rather than a promise: `labstage` cannot reach
+# the live Journal, holds no SSH key and no vault environment, and the unit is
+# NOT enabled - a preview exists only while somebody has started one.
+
+- name: labstage runtime account
+  # No login shell and no home: this identity exists to run one uvicorn. It
+  # deliberately owns nothing - the worktree stays conductor:srvwrite, because
+  # a labstage-owned tree would need a sudo rule for every checkout and that
+  # rule would be a route around the Postgres grant below.
+  ansible.builtin.user:
+    name: labstage
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+    home: /var/lib/lab-preview
+
+- name: lease directory
+  # Written by conductor (scripts/lab-preview.sh), read by labstage.
+  ansible.builtin.file:
+    path: /var/lib/lab-preview
+    state: directory
+    owner: conductor
+    group: labstage
+    mode: "0750"
+
+# --- the Journal it may reach, and the one it may not ------------------------
+
+- name: labstage postgres role (peer auth, no CREATEDB)
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: >
+    psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='labstage'" | grep -q 1
+    && echo exists || createuser labstage
+  register: labstage_role
+  changed_when: labstage_role.stdout != 'exists'
+
+- name: selector_staging database owned by conductor
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: >
+    psql -tAc "SELECT 1 FROM pg_database WHERE datname='selector_staging'" | grep -q 1
+    && echo exists || createdb -O conductor selector_staging
+  register: staging_db
+  changed_when: staging_db.stdout != 'exists'
+
+- name: the live Journal is unreachable from anywhere but conductor
+  # THE load-bearing task. SELECTOR_JOURNAL_DSN in the unit is configuration,
+  # and the code being previewed is precisely the code that might not honour
+  # it - a branch that writes to the live Journal is a branch that ignored the
+  # env var, and schema.sql makes those rows permanent by trigger.
+  #
+  # Revoking from PUBLIC, not from labstage: CONNECT is granted to PUBLIC by
+  # default, so revoking from the role alone would leave the door open.
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: |
+    set -e
+    psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+    REVOKE CONNECT ON DATABASE selector FROM PUBLIC;
+    GRANT CONNECT ON DATABASE selector TO conductor;
+    SQL
+  changed_when: false
+
+- name: staging journal schema and fixture
+  become: true
+  become_user: conductor
+  ansible.builtin.command: >
+    psql -d selector_staging -v ON_ERROR_STOP=1
+    -f {{ srv_dir }}/lab/single-user-factory/selector/{{ item }}
+  loop:
+    - schema.sql
+    - seed.sql
+  changed_when: false
+
+- name: labstage may read the staging journal, and only read it
+  # The webapp is a window (ADR 0015). A previewed branch that tries to WRITE
+  # gets a permission error, which is the correct outcome: a preview shows
+  # what the Selector decided, it does not decide.
+  become: true
+  become_user: conductor
+  ansible.builtin.shell: |
+    set -e
+    psql -d selector_staging -v ON_ERROR_STOP=1 <<'SQL'
+    GRANT CONNECT ON DATABASE selector_staging TO labstage;
+    GRANT USAGE ON SCHEMA journal TO labstage;
+    GRANT SELECT ON ALL TABLES IN SCHEMA journal TO labstage;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA journal GRANT SELECT ON TABLES TO labstage;
+    SQL
+  changed_when: false
+
+# --- the tree it serves ------------------------------------------------------
+
+- name: staging worktree
+  # A git worktree of the shared checkout, NOT the shared checkout itself:
+  # sixteen systemd units exec from {{ srv_dir }}, including the status
+  # dashboard that gates lab.etadventures.com, so checking that tree out to a
+  # branch is a fleet-wide change rather than a preview.
+  become: true
+  become_user: conductor
+  ansible.builtin.command:
+    cmd: git -C {{ srv_dir }} worktree add --detach /srv/lab-webapp-staging origin/master
+    creates: /srv/lab-webapp-staging/.git
+
+- name: staging worktree is group-writable like the tree it came from
+  ansible.builtin.file:
+    path: /srv/lab-webapp-staging
+    state: directory
+    owner: conductor
+    group: srvwrite
+    mode: "2775"
+
+- name: staging venv + deps
+  ansible.builtin.pip:
+    requirements: /srv/lab-webapp-staging/lab/webapp/requirements.txt
+    virtualenv: /srv/lab-webapp-staging/lab/webapp/.venv
+    virtualenv_command: /usr/bin/python3.11 -m venv
+  become: true
+  become_user: conductor
+
+- name: staging systemd unit
+  ansible.builtin.copy:
+    src: "{{ srv_dir }}/deploy/systemd/lab-webapp-staging.service"
+    dest: /etc/systemd/system/lab-webapp-staging.service
+    mode: "0644"
+    remote_src: true
+  notify: reload systemd
+
+# Deliberately NOT enabled and NOT started. An Attended Preview runs only
+# while somebody has started one; enabling it would put unreviewed code back
+# up after every reboot with nobody looking, which is the whole failure mode
+# the four-hour RuntimeMaxSec exists to prevent.
+- name: staging unit is installed, disabled, and not running
+  ansible.builtin.systemd:
+    name: lab-webapp-staging
+    enabled: false

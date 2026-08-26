@@ -1,0 +1,40 @@
+[Unit]
+Description=lab-staging.etadventures.com — the Attended Preview (ADR 0016)
+Documentation=file:///srv/orchestration/lab/single-user-factory/docs/adr/0016-unreviewed-code-is-not-model-output-and-attendedness-separates-them.md
+After=network.target postgresql.service
+
+[Service]
+# NOT conductor. This process serves unreviewed branch code, and `labstage`
+# is what stops it reaching anything: no CONNECT on the live `selector`
+# database, no SSH key, no vault environment. A runtime identity only - the
+# worktree below stays conductor:srvwrite and labstage only reads it.
+User=labstage
+Group=labstage
+WorkingDirectory=/srv/lab-webapp-staging/lab/webapp
+ExecStart=/srv/lab-webapp-staging/lab/webapp/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8101
+
+# Enumerated, never an EnvironmentFile. A later edit that added one would hand
+# unreviewed code whatever the file held, quietly.
+Environment=SELECTOR_JOURNAL_DSN=dbname=selector_staging
+Environment=LAB_PREVIEW_LEASE=/var/lib/lab-preview/lease.json
+# Tracker and box edges faked, so a cycle run inside a preview reaches nothing
+# outside this VM (ADR 0016).
+Environment=SELECTOR_TRACKER_COMMAND=/srv/lab-webapp-staging/lab/single-user-factory/selector/preview-sources/tracker.sh
+Environment=SELECTOR_BOX_COMMAND=/srv/lab-webapp-staging/lab/single-user-factory/selector/preview-sources/box.sh
+Environment=SELECTOR_ISSUE_COMMAND=/srv/lab-webapp-staging/lab/single-user-factory/selector/preview-sources/issue.sh
+
+# An Attended Preview is permissible because somebody is looking at it. This
+# is the half of that which does not depend on anybody remembering: four hours
+# is longer than any review and shorter than a workday.
+RuntimeMaxSec=4h
+# So a timed-out preview is a clean stop rather than a failure that pages.
+SuccessExitStatus=143
+
+Restart=no
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

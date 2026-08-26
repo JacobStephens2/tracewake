@@ -1,0 +1,85 @@
+"""The staging Journal fixture (`selector/seed.sql`, ADR 0016).
+
+The live Journal has never held a `run.dispatched` or a `run.outcome` row, so
+a preview pointed at real data shows a page with no Run cards and proves
+nothing about a branch that changed how Run cards look. This fixture is what
+makes every state visible - which makes these tests the ones that fail when a
+branch breaks a state, and when the fixture stops covering one.
+"""
+from pathlib import Path
+
+import psycopg
+import pytest
+from fastapi.testclient import TestClient
+
+from app import app
+
+client = TestClient(app)
+
+SEED = (
+    Path(__file__).resolve().parents[2]
+    / "single-user-factory" / "selector" / "seed.sql"
+)
+
+# Every state /loop can render. A state on the page and not in this list is a
+# state nothing checks; a state here and not on the page is a broken branch.
+STATES = [
+    "in flight",
+    "awaiting-review",
+    "ready-for-human",
+    "retrying",
+    "no Run was started",
+    "picked nothing",
+    "commented, swapped to needs-info",
+]
+
+
+@pytest.fixture
+def seeded(db):
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute(SEED.read_text())
+    return db
+
+
+def test_the_fixture_renders_every_state_the_page_has(seeded):
+    body = client.get("/loop").text
+    assert "unavailable" not in body.lower()
+    for state in STATES:
+        assert state in body, f"the fixture no longer shows: {state}"
+
+
+def test_both_ends_of_the_retry_are_visible(seeded):
+    """A retried attempt and the give-up that followed it are two cards, and
+    the fixture has to hold both or the pairing rule goes untested."""
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "badge-retrying" in runs
+    assert "badge-given-up" in runs
+    assert "attempt 2" in runs
+
+
+def test_a_red_proposal_names_its_failing_checks(seeded):
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "badge-handed-to-human" in runs
+    assert "phpunit" in runs and "lint" in runs
+
+
+def test_every_skip_reason_the_selector_can_journal_is_shown(seeded):
+    body = client.get("/loop").text
+    for reason in ("blocked-by-open-dependency", "proposal-open", "missing-section"):
+        assert reason in body
+
+
+def test_seeding_twice_changes_nothing(seeded):
+    """The table is append-only, so a fixture that appended on every apply
+    would have no way back. Re-applying has to be a no-op."""
+    with psycopg.connect(seeded, autocommit=True) as conn:
+        before = conn.execute("SELECT count(*) FROM journal.events").fetchone()[0]
+        conn.execute(SEED.read_text())
+        after = conn.execute("SELECT count(*) FROM journal.events").fetchone()[0]
+    assert before == after
+
+
+def test_the_fixture_never_names_the_live_journal(seeded):
+    """A preview writes into a database it is granted; the fixture must not
+    smuggle the live one's name into anything that could be copy-pasted."""
+    assert "dbname=selector\n" not in SEED.read_text()

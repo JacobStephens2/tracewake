@@ -26,6 +26,8 @@ ADR_DIR = PROJECT / "docs" / "adr"
 sys.path.insert(0, str(PROJECT / "selector"))
 import journal  # noqa: E402
 
+import preview  # noqa: E402
+
 app = FastAPI(title="lab.etadventures.com")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 # The single-user-factory project's own files (lessons, notes, ADRs) served
@@ -36,6 +38,39 @@ app.mount(
     name="single-user-factory",
 )
 templates = Jinja2Templates(directory=BASE / "templates")
+
+def _static_base(request: Request) -> str:
+    """Where this app's static files are, as the browser should ask for them.
+
+    Deliberately relative and deliberately not `url_for`, which renders an
+    absolute URL from the request's own base. This app runs behind Caddy's TLS
+    with uvicorn started without `--proxy-headers`, so that base is `http://`
+    and every stylesheet on an https page would be blocked as mixed content.
+    Reading `root_path` instead keeps the one property a hardcoded `/static/`
+    lacks - correctness under a path prefix - without inventing a scheme.
+    """
+    return request.scope.get("root_path", "").rstrip("/") + "/static"
+
+
+def _page(request: Request, name: str, context: dict, **kwargs):
+    """Render a page with whatever every page needs.
+
+    Today that is exactly one thing: whether this instance is an Attended
+    Preview (ADR 0016). It goes in here rather than in each handler because a
+    page that forgot it would look like the live app while serving unreviewed
+    code, and the failure would be invisible - the page renders fine.
+    """
+    return templates.TemplateResponse(
+        name,
+        {
+            "request": request,
+            "preview": preview.banner(),
+            "static_base": _static_base(request),
+            **context,
+        },
+        **kwargs,
+    )
+
 
 # The pipeline a single-user factory would run. Static here — this endpoint
 # demonstrates the HTMX request -> server-rendered-fragment -> swap loop, not a
@@ -89,41 +124,30 @@ def _all_adrs() -> list[dict]:
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "stages": PIPELINE, "adrs": _all_adrs()},
-    )
+    return _page(request, "index.html", {"stages": PIPELINE, "adrs": _all_adrs()})
 
 
 @app.post("/demo/run", response_class=HTMLResponse)
 async def demo_run(request: Request):
     """HTMX POSTs here; the server returns an HTML fragment, not JSON."""
-    return templates.TemplateResponse(
-        "_run.html", {"request": request, "stages": PIPELINE}
-    )
+    return _page(request, "_run.html", {"stages": PIPELINE})
 
 
 @app.get("/adr", response_class=HTMLResponse)
 async def adr_index(request: Request):
-    return templates.TemplateResponse(
-        "adr_index.html", {"request": request, "adrs": _all_adrs()}
-    )
+    return _page(request, "adr_index.html", {"adrs": _all_adrs()})
 
 
 @app.get("/adr/{slug}", response_class=HTMLResponse)
 async def adr_detail(request: Request, slug: str):
     path = ADR_DIR / f"{slug}.md"
     if not path.is_file() or "/" in slug or ".." in slug:
-        return templates.TemplateResponse(
-            "adr_missing.html", {"request": request, "slug": slug}, status_code=404
-        )
+        return _page(request, "adr_missing.html", {"slug": slug}, status_code=404)
     adr = _parse_adr(path)
     adr["html"] = md.markdown(
         adr["body"], extensions=["fenced_code", "tables", "sane_lists"]
     )
-    return templates.TemplateResponse(
-        "adr_detail.html", {"request": request, "adr": adr}
-    )
+    return _page(request, "adr_detail.html", {"adr": adr})
 
 
 def _utc(at) -> str:
@@ -291,10 +315,10 @@ def loop_page(request: Request):
         }
         for e in events
     ]
-    return templates.TemplateResponse(
+    return _page(
+        request,
         "loop.html",
         {
-            "request": request,
             "events": view,
             "cycles": _cycles(events),
             "runs": _runs(events),
