@@ -1,0 +1,5 @@
+# Test-only additions: the suite runs the app through FastAPI's TestClient
+# (httpx) against throwaway databases from ../single-user-factory/selector/testdb.py.
+-r requirements.txt
+pytest==8.4.2
+httpx==0.28.1
