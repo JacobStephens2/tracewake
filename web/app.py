@@ -126,6 +126,55 @@ async def adr_detail(request: Request, slug: str):
     )
 
 
+def _utc(at) -> str:
+    return at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+
+
+def _cycles(events: list[dict]) -> list[dict]:
+    """Group Journal rows into one card per Selector cycle, newest first.
+
+    A cycle's events all carry the id of its `cycle.started` row in
+    `payload.cycle`, so the grouping is the Journal's own, not a guess made
+    here. This page is a window and a scribe: it re-renders what the Selector
+    decided and decides nothing itself (ADR 0015).
+    """
+    cards: dict[int, dict] = {}
+    for event in events:  # newest first
+        if event["kind"] == "cycle.started":
+            # `started` marks the card as whole. The Journal read is capped,
+            # so the oldest cycle on the page is usually cut in half by the
+            # limit, and a card built from the leftovers would render as a
+            # nameless, timeless cycle rather than as the absence it is.
+            card = cards.setdefault(event["id"], {"skips": []})
+            card.update(
+                started=True,
+                id=event["id"],
+                at=_utc(event["at"]),
+                repo=event["payload"].get("repo"),
+                label=event["payload"].get("label"),
+                dry_run=event["payload"].get("dry_run"),
+            )
+            continue
+        cycle_id = (event["payload"] or {}).get("cycle")
+        if cycle_id is None:
+            continue
+        card = cards.setdefault(cycle_id, {"skips": []})
+        if event["kind"] == "issue.skipped":
+            card["skips"].append(event["payload"])
+        elif event["kind"] == "cycle.picked":
+            card["pick"] = event["payload"]
+        elif event["kind"] == "cycle.finished":
+            card["summary"] = event["payload"]
+        elif event["kind"] == "cycle.failed":
+            card["failed"] = event["payload"].get("error")
+    whole = [card for card in cards.values() if card.get("started")]
+    for card in whole:
+        # The Journal reads newest first; a cycle's own skips read better in
+        # the order it decided them.
+        card["skips"].reverse()
+    return sorted(whole, key=lambda c: c["id"], reverse=True)
+
+
 @app.get("/loop", response_class=HTMLResponse)
 def loop_page(request: Request):
     """The Loop's window: the Selector Journal, read at request time.
@@ -142,14 +191,20 @@ def loop_page(request: Request):
     view = [
         {
             "id": e["id"],
-            "at": e["at"].astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
+            "at": _utc(e["at"]),
             "kind": e["kind"],
             "payload": e["payload"],
         }
         for e in events
     ]
     return templates.TemplateResponse(
-        "loop.html", {"request": request, "events": view, "error": error}
+        "loop.html",
+        {
+            "request": request,
+            "events": view,
+            "cycles": _cycles(events),
+            "error": error,
+        },
     )
 
 

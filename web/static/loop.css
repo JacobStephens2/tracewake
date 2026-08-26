@@ -1,0 +1,22 @@
+/* /loop only: the Selector cycle card. terminal.css (vendored, the factory's
+   visual identity) has no card component, and app.css is the lab chrome this
+   page deliberately does not wear - so the handful of rules the card needs
+   live here. */
+.cycle {
+    border: 1px solid var(--secondary-color);
+    padding: 0 1rem 1rem;
+    margin-bottom: 2rem;
+}
+.cycle .badge {
+    font-size: 0.8em;
+    border: 1px solid currentColor;
+    padding: 0 0.4em;
+    vertical-align: middle;
+}
+.cycle .cycle-target,
+.cycle .detail {
+    color: var(--secondary-color);
+}
+.cycle table.skips {
+    margin-top: 1rem;
+}
