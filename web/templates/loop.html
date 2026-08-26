@@ -1,0 +1,45 @@
+<!doctype html>
+{# Standalone on purpose: /loop wears the factory's terminal.css identity, not
+   the lab chrome in base.html. When a second terminal page arrives (queue
+   board, current-Run panel), extract the shared shell into a terminal base. #}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Loop // lab.etadventures.com</title>
+<link rel="stylesheet" href="/static/terminal.css">
+</head>
+<body class="terminal">
+<div class="container">
+  <header>
+    <div class="logo">THE LOOP // SELECTOR JOURNAL</div>
+    <nav aria-label="Lab"><a href="/">lab</a></nav>
+  </header>
+  <main>
+    <h1>Selector Journal</h1>
+    <p>Every Selector decision and Run outcome, appended and never edited
+       (ADR 0015). Newest first, read at request time.</p>
+    {% if error %}
+    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
+    {% endif %}
+    {% if events %}
+    <table>
+      <thead><tr><th>at (UTC)</th><th>id</th><th>kind</th><th>payload</th></tr></thead>
+      <tbody>
+      {% for e in events %}
+        <tr>
+          <td>{{ e.at }}</td>
+          <td>{{ e.id }}</td>
+          <td>{{ e.kind }}</td>
+          <td><code>{{ e.payload | tojson }}</code></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% elif not error %}
+    <p>No events yet. The Journal fills when the Selector runs.</p>
+    {% endif %}
+  </main>
+</div>
+</body>
+</html>

@@ -1,6 +1,6 @@
 [Unit]
 Description=lab.etadventures.com — FastAPI + Jinja2 + HTMX
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 User=conductor
