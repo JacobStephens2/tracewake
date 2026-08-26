@@ -12,6 +12,7 @@ CREATEDB (the `conductor` role has it; see selector/README.md).
 """
 import contextlib
 import secrets
+import time
 from pathlib import Path
 
 import psycopg
@@ -44,5 +45,26 @@ def throwaway_db():
             conn.execute(SCHEMA.read_text())
         yield dsn
     finally:
-        with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
-            admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+        _drop(name)
+
+
+def _drop(name: str, attempts: int = 20) -> None:
+    """Drop the throwaway database, waiting out a backend that has not quite
+    exited.
+
+    WITH (FORCE) terminates other sessions, but a connection that is already
+    on its way out can still lose the race and leave the drop reporting
+    "database is being accessed by other users". Rare, and reachable from any
+    test whose subject connects from a subprocess (the Selector's cycle tests
+    do), so it is retried here rather than left as an occasional red teardown
+    that means nothing.
+    """
+    with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
+        for attempt in range(attempts):
+            try:
+                admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+                return
+            except psycopg.errors.ObjectInUse:
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(0.1)

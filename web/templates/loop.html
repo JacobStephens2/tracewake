@@ -8,6 +8,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The Loop // lab.etadventures.com</title>
 <link rel="stylesheet" href="/static/terminal.css">
+<link rel="stylesheet" href="/static/loop.css">
 </head>
 <body class="terminal">
 <div class="container">
@@ -22,7 +23,58 @@
     {% if error %}
     <p class="terminal-alert terminal-alert-error">{{ error }}</p>
     {% endif %}
+    {% if cycles %}
+    <h2>Cycles</h2>
+    <p>One card per Selector cycle: what it picked, and every issue it passed
+       over with the reason it recorded.</p>
+    {% for c in cycles %}
+    <section class="cycle">
+      <h3>cycle {{ c.id }} &middot; {{ c.at }}
+        {% if c.dry_run %}<span class="badge">dry run</span>{% endif %}</h3>
+      <p class="cycle-target">{{ c.repo }} &middot; <code>{{ c.label }}</code></p>
+      {% if c.failed %}
+      <p class="terminal-alert terminal-alert-error">cycle failed: {{ c.failed }}</p>
+      {% endif %}
+      {% if c.pick %}
+      <p class="pick"><b>picked</b>
+        <a href="{{ c.pick.url }}">#{{ c.pick.number }}</a>
+        {{ c.pick.title }}<br>
+        <span class="detail">owning area: {{ c.pick.area }}</span><br>
+        <span class="detail">check:
+          {% if c.pick.check %}<code>{{ c.pick.check }}</code>
+          {% else %}none - the acceptance criteria are the only grade{% endif %}
+        </span>
+      </p>
+      {% elif c.summary %}
+      <p class="pick"><b>picked nothing</b> &mdash; {{ c.summary.halted }}</p>
+      {% endif %}
+      {% if c.skips %}
+      <table class="skips">
+        <thead><tr><th>issue</th><th>reason</th><th>why</th></tr></thead>
+        <tbody>
+        {% for s in c.skips %}
+          <tr>
+            <td><a href="{{ s.url }}">#{{ s.number }}</a></td>
+            <td><code>{{ s.reason }}</code></td>
+            <td>{{ s.detail }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if c.summary %}
+      <p class="detail">considered {{ c.summary.considered }},
+         eligible {{ c.summary.eligible | length }},
+         skipped {{ c.skips | length }};
+         budget {{ c.summary.dispatched_in_window }}/{{ c.summary.daily_cap }}
+         dispatches in the last 24h.</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+    {% endif %}
+
     {% if events %}
+    <h2>Every event</h2>
     <table>
       <thead><tr><th>at (UTC)</th><th>id</th><th>kind</th><th>payload</th></tr></thead>
       <tbody>

@@ -67,6 +67,15 @@ Seeding, and dispatches. It decides which task and when; it never does the work,
 and it is not an agent - no model output executes in it (ADR 0014).
 _Avoid_: scheduler, dispatcher, intake
 
+**Cycle**:
+One execution of the Selector: read the tracker, apply Eligibility to the whole
+labeled queue, order, apply the caps, journal the reasoning, and dispatch at
+most one Run. The timer's unit of work, and the Journal's unit of grouping -
+every event of one Cycle carries its id. It is emphatically not an Iteration,
+which is why "cycle" is a word the Iteration entry above tells you to avoid:
+a Cycle chooses work and an Iteration does it.
+_Avoid_: tick, sweep, poll, pass
+
 **Eligible**:
 The predicate a labeled task passes before the Selector may seed it: labeled by
 an allowlisted operator, no open blocking dependency - native tracker edges
