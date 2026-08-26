@@ -23,6 +23,43 @@
     {% if error %}
     <p class="terminal-alert terminal-alert-error">{{ error }}</p>
     {% endif %}
+    {% if runs %}
+    <h2>Runs</h2>
+    <p>One card per dispatch: the Run in flight, and every Run that has
+       ended, with the Proposal it left behind.</p>
+    {% for r in runs %}
+    <section class="run{% if r.in_flight %} run-in-flight{% endif %}">
+      <h3>#{{ r.issue }}
+        {% if r.in_flight %}<span class="badge">in flight</span>
+        {% else %}<span class="badge">{{ r.outcome }}</span>{% endif %}
+        {% if r.attempt and r.attempt > 1 %}<span class="badge">attempt {{ r.attempt }}</span>{% endif %}
+      </h3>
+      <p class="run-task">
+        <a href="{{ r.url }}">{{ r.title or r.task_ref }}</a><br>
+        <span class="detail">branch <code>{{ r.branch }}</code>
+          &middot; owning area: {{ r.area }}
+          &middot; dispatched {{ r.at }}</span>
+      </p>
+      {% if r.in_flight %}
+      <p class="detail">Started on the box with <code>--propose --notify</code>.
+         The outcome lands here when the Run ends; until then this Run holds
+         the Selector's in-flight lock and no second Run is dispatched.</p>
+      {% elif r.outcome == "dispatch-failed" %}
+      <p class="terminal-alert terminal-alert-error">no Run was started: {{ r.error }}</p>
+      {% else %}
+      <p class="detail">ended by <code>{{ r.outcome }}</code>,
+         exit {{ r.exit }}, {{ r.iterations }} iteration(s),
+         faults {{ r.faults }}, notified {{ r.notified }},
+         finished {{ r.ended_at }}.</p>
+      <p class="pick"><b>proposal</b>
+        {% if r.proposal %}<a href="{{ r.proposal }}">{{ r.proposal }}</a>
+        {% else %}none - the Run produced nothing to review{% endif %}
+      </p>
+      {% endif %}
+    </section>
+    {% endfor %}
+    {% endif %}
+
     {% if cycles %}
     <h2>Cycles</h2>
     <p>One card per Selector cycle: what it picked, and every issue it passed
@@ -56,7 +93,13 @@
           <tr>
             <td><a href="{{ s.url }}">#{{ s.number }}</a></td>
             <td><code>{{ s.reason }}</code></td>
-            <td>{{ s.detail }}</td>
+            <td>{{ s.detail }}{% if c.returned and s.number in c.returned %}
+              {% if c.returned[s.number] is string %}
+              <br><span class="terminal-alert terminal-alert-error">could not hand it back: {{ c.returned[s.number] }}</span>
+              {% else %}
+              <br><span class="badge">commented, swapped to needs-info</span>
+              {% endif %}
+            {% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>

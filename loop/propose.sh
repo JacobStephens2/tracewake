@@ -187,6 +187,14 @@ and that is the whole of what it did outside its own repository.
 
 HEAD
     [[ -n ${task_ref} ]] && printf -- '- Task: %s\n' "${task_ref}"
+    # `Closes #n` so that merging the proposal retires the task from the queue
+    # (spec #151, story 18). Only when the task lives in the repository the
+    # proposal is opened against: GitHub's keyword closes cross-repository
+    # references too, but only for an actor with write access on the OTHER
+    # repository, and a line that silently does nothing is worse than none.
+    if [[ -n ${task_ref} && ${task_ref} == "${target_repo}#"* ]]; then
+        printf -- '\nCloses #%s\n\n' "${task_ref##*#}"
+    fi
     [[ -n ${area} ]] && printf -- '- Owning area this Run was scoped to: %s\n' "${area}"
     [[ -n ${ended_by} ]] && printf -- '- Ended by: %s\n' "${ended_by}"
     [[ -n ${run_exit} ]] && printf -- '- Run exit code: %s\n' "${run_exit}"

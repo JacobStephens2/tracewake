@@ -76,6 +76,24 @@ which is why "cycle" is a word the Iteration entry above tells you to avoid:
 a Cycle chooses work and an Iteration does it.
 _Avoid_: tick, sweep, poll, pass
 
+**Dispatch**:
+The Selector's act of turning one picked task into a started Run: the Run
+branch, Seeding, the push, and the start on the box with propose-and-notify.
+Mechanical and holding no judgement - what to work is the Cycle's decision and
+how to work it is the Run's. A Dispatch blocks for the length of its Run,
+because the box persists no record of one and the summary exists only while
+something is holding the process.
+_Avoid_: trigger, kick off, schedule, launch
+
+**Loud Skip**:
+Skipping a labeled task by handing it back rather than by passing over it: a
+comment naming what the task is missing, a swap to `needs-info`, and a
+journaled skip. Reserved for a task that broke the promise the label makes -
+today, a missing `Acceptance criteria` or `Owning area` section. Every other
+skip is quiet, because a blocked task commented on every half hour is a queue
+nobody reads.
+_Avoid_: rejection, bounce, failing an issue
+
 **Eligible**:
 The predicate a labeled task passes before the Selector may seed it: labeled by
 an allowlisted operator, no open blocking dependency - native tracker edges

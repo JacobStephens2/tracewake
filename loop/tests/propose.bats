@@ -81,6 +81,19 @@ setup() { setup_propose_fixture; }
     grep -q 'PROGRESS.md' "${FAKE_PR_STATE}.body"
 }
 
+@test "the proposal closes the task when it is merged" {
+    run_propose
+    grep -q '^Closes #648$' "${FAKE_PR_STATE}.body"
+}
+
+@test "a task in another repository gets no Closes line" {
+    # GitHub's keyword closes a cross-repository reference only for an actor
+    # with write access on the OTHER repository, and a line that silently does
+    # nothing is worse than none.
+    run_propose --task-ref "someone/else#1"
+    ! grep -q '^Closes ' "${FAKE_PR_STATE}.body"
+}
+
 @test "a task reference given on the command line wins over the Plan's" {
     run_propose --task-ref "someone/else#1"
     grep -q 'someone/else#1' "${FAKE_PR_STATE}.body"
