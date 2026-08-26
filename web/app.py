@@ -167,11 +167,61 @@ def _cycles(events: list[dict]) -> list[dict]:
             card["summary"] = event["payload"]
         elif event["kind"] == "cycle.failed":
             card["failed"] = event["payload"].get("error")
+        elif event["kind"] in ("issue.returned", "issue.return-failed"):
+            # The loud skip's second half. Kept beside the skip it belongs to
+            # rather than in a list of its own: "skipped, and handed back" is
+            # one fact about one issue.
+            card.setdefault("returned", {})[event["payload"].get("number")] = (
+                event["payload"].get("error") or True
+            )
     whole = [card for card in cards.values() if card.get("started")]
     for card in whole:
         # The Journal reads newest first; a cycle's own skips read better in
         # the order it decided them.
         card["skips"].reverse()
+    return sorted(whole, key=lambda c: c["id"], reverse=True)
+
+
+def _runs(events: list[dict]) -> list[dict]:
+    """One card per dispatch, newest first: the Run in flight, and the Runs
+    that have ended with what they produced.
+
+    A dispatch and its outcome are paired by issue and attempt, which is the
+    pair the Selector journals them with - a retry of an issue that already
+    has an outcome is its own Run and gets its own card. A dispatch with no
+    outcome yet is the Run in flight; that gap is the same one the Selector
+    reads as its in-flight lock, so the page shows the lock rather than
+    guessing at it.
+    """
+    cards: dict[tuple, dict] = {}
+    for event in events:  # newest first
+        payload = event["payload"] or {}
+        if event["kind"] not in ("run.dispatched", "run.outcome"):
+            continue
+        if payload.get("issue") is None:
+            continue
+        key = (payload["issue"], payload.get("attempt"))
+        card = cards.setdefault(key, {"in_flight": True})
+        if event["kind"] == "run.dispatched":
+            card.update(
+                dispatched=True,
+                id=event["id"],
+                at=_utc(event["at"]),
+                **{k: payload.get(k) for k in
+                   ("issue", "title", "url", "branch", "task_ref", "area",
+                    "check", "attempt", "cycle")},
+            )
+        else:
+            card.update(
+                in_flight=False,
+                ended_at=_utc(event["at"]),
+                **{k: payload.get(k) for k in
+                   ("outcome", "exit", "iterations", "faults", "proposal",
+                    "notified", "error")},
+            )
+    # Same rule as the cycle cards: a card whose `run.dispatched` scrolled off
+    # the read limit is an absence, not a nameless Run.
+    whole = [card for card in cards.values() if card.get("dispatched")]
     return sorted(whole, key=lambda c: c["id"], reverse=True)
 
 
@@ -203,6 +253,7 @@ def loop_page(request: Request):
             "request": request,
             "events": view,
             "cycles": _cycles(events),
+            "runs": _runs(events),
             "error": error,
         },
     )

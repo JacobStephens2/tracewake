@@ -373,7 +373,7 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and eighty-five tests, no model and no network. Fifty-six drive `run.sh`
+Two hundred and eighty-eight tests, no model and no network. Fifty-six drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history, and what it told the operator.
 Thirty-two drive `check-inventory.sh` against small fixture checkouts. Forty-eight
@@ -381,8 +381,11 @@ drive `assert-credentials.sh` against a constructed box - a home directory, a sy
 root and a scripted fake `sbx`, all three of which a tmpdir can hold.
 Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
 what the Plan ends up saying, what the Progress Log is left ready for, and what
-seeding twice does. Twenty-four drive `propose.sh` against a real `git push` to
-a bare repository and a scripted fake pull request. Thirteen drive
+seeding twice does. Twenty-seven drive `propose.sh` against a real `git push` to
+a bare repository and a scripted fake pull request - three of them on the
+`Closes #n` line the Selector's dispatch relies on (#151, story 18): that it
+is there for a same-repository task, that a cross-repository one gets none,
+and that it does not land between the body's bullets and split the list. Thirteen drive
 `pr-sources/github.sh` through a fake `curl`, which is what makes `draft: true`
 something the suite asserts rather than something the file says, and nine drive
 `notify-sources/github-pr-comment.sh` through the same fake, which is how the
