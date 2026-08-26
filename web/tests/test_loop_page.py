@@ -30,3 +30,9 @@ def test_terminal_css_is_served():
     resp = client.get("/static/terminal.css")
     assert resp.status_code == 200
     assert "--global-font-size" in resp.text
+
+
+def test_home_links_to_loop():
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'href="/loop"' in resp.text
