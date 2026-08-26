@@ -21,7 +21,7 @@
 # with newlines and backticks in it, and an argument would put the whole of it
 # in this VM's process listing.
 #
-# `checks` prints one JSON object - {"state": "green"|"red"|"pending",
+# `checks` prints one JSON object - {"state": "green"|"red"|"pending"|"none",
 # "failing": [...]} - and that shape, not gh's, is the Selector's contract.
 # The translation lives here so that a different tracker is a different script
 # and no change to cycle.py (ADR 0004).
@@ -90,10 +90,17 @@ case "${action}" in
                    --json name,state 2>"${checks_err}")" || true
         if [[ -z ${rows} ]]; then
             if grep -q 'no checks reported' "${checks_err}"; then
-                # No check is configured on this Proposal, so there is none
-                # that can still fail. Green rather than pending: calling it
-                # pending would park every such Proposal at the wait bound.
-                rows='[]'
+                # No check is configured on this Proposal. Reported as its
+                # own state, NOT as green: "every check passed" and "no
+                # check ran" are opposite facts about how far a Proposal has
+                # been verified, and on a repository that does have CI - which
+                # tourbot does - this answer means something went wrong
+                # upstream (a broken workflow file, Actions disabled) rather
+                # than that there was nothing to run. Sending that to review
+                # as though it had passed is the same false pass as the one
+                # above, arrived at by a different road.
+                printf '{"state": "none", "failing": []}\n'
+                exit 0
             else
                 die "could not read the checks on ${task_repo}#${number}: $(tr '\n' ' ' < "${checks_err}")"
             fi

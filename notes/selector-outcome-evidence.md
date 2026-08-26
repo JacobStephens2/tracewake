@@ -1,7 +1,7 @@
 # Outcomes move the labels: what was verified, and the one thing that blocks
 
 *2026-08-26, issue #155. The offline suites are the bulk of the evidence and
-they are in the repository (`selector/tests/test_outcomes.py`, 29 scenarios).
+they are in the repository (`selector/tests/test_outcomes.py`, 33 scenarios).
 What is written down here is what only the real GitHub could say - including a
 false-pass this ticket found and fixed, and a token permission the live
 Selector does not yet have.*
@@ -61,14 +61,18 @@ not accessible by personal access token ...
 exit=1
 
 $ ./issue-sources/github.sh Educational-Travel-Adventures/orchestration checks 170
-{"state":"green","failing":[]}
+{"state": "none", "failing": []}
 exit=0
 ```
 
-The second is a Proposal on a repository with no CI at all, which is the
-genuine no-checks case and is green on purpose: there is no check that can
-still fail, and calling it pending would park every such Proposal at the wait
-bound for nothing.
+The second is a Proposal on a repository with no CI at all. It was first
+written as **green** - "no check can fail, so nothing is wrong" - and the code
+review was right that this is the same false pass by another road: on a
+repository that does have CI, "no checks reported" usually means a workflow
+did not trigger, and story 16 authorises `awaiting-review` for *green checks*,
+not for the absence of any. It is now its own state, `none`, routed to the
+operator with a comment saying that no check ran and that this is not the same
+as passing.
 
 ## The blocker: the token cannot read tourbot's checks
 
@@ -95,7 +99,7 @@ which read checks.
 
 ## What the offline suite covers, and what it deliberately does not
 
-29 scenarios in `tests/test_outcomes.py` drive the real `cycle.py` and assert
+33 scenarios in `tests/test_outcomes.py` drive the real `cycle.py` and assert
 only what a route can be seen to do from outside - which label swap was
 issued, what the comment said, which Journal row was appended. The four routes
 are covered, and so are the two that matter most for safety:
@@ -107,13 +111,16 @@ are covered, and so are the two that matter most for safety:
 - **Pending is not green.** CI is scripted to answer `pending`, `pending`,
   then `green`, and the Selector's polling is driven rather than assumed - the
   test counts three `checks` invocations.
+- **The journaled label is the label that was applied.** One value reaches
+  both the tracker and the Journal, so a row cannot say one queue while the
+  issue sits in another. Mutating it apart turns five tests red.
 
 What the suite cannot grade is the jq translation from `gh pr checks` rows to
 `{state, failing}`, because no test here runs `gh`. Its eight branches were
 checked by hand against canned rows:
 
 ```
-no checks         -> {"state":"green","failing":[]}
+no checks         -> {"state":"none","failing":[]}
 all SUCCESS       -> {"state":"green","failing":[]}
 one FAILURE       -> {"state":"red","failing":["lint"]}
 IN_PROGRESS       -> {"state":"pending","failing":[]}

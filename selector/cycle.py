@@ -93,6 +93,15 @@ RUN_FAILURE_BOUNDS = ("run-clock", "consecutive-noops", "agent-failed")
 # second attempt on the same branch may well produce one.
 NO_PROPOSAL = "no-proposal"
 
+# Every comment the Selector posts ends with this. One copy, because four
+# comments that each carried their own would drift, and the line is a claim
+# about what wrote the comment - the thing a reader is entitled to see said
+# the same way every time.
+SIGNATURE = (
+    "\n\n*Posted by the Selector. Deterministic code, not an agent - no model"
+    " wrote this and none read the issue.*"
+)
+
 # Rolling rather than calendar. "4 Runs a day" is a spend bound, and a
 # calendar boundary lets eight Runs happen inside three hours across midnight
 # while every one of them is within its day.
@@ -362,9 +371,7 @@ def _missing_section_comment(config: Config, detail: str) -> str:
 
 Optionally `## Check` - a command that grades the work, run by the Run as it goes and by you afterwards.
 
-The label has been swapped to `{config.needs_info_label}`. Add what is missing and re-apply `{config.label}`: that is a fresh Handover, with a fresh retry budget, and the next cycle picks it up.
-
-*Posted by the Selector. Deterministic code, not an agent - no model wrote this and none read the issue.*"""
+The label has been swapped to `{config.needs_info_label}`. Add what is missing and re-apply `{config.label}`: that is a fresh Handover, with a fresh retry budget, and the next cycle picks it up."""
 
 
 def _return_to_operator(
@@ -399,7 +406,7 @@ def _return_to_operator(
             dispatch_config,
             config.task_repo,
             number,
-            _missing_section_comment(config, detail),
+            _missing_section_comment(config, detail) + SIGNATURE,
         )
         dispatch.relabel(
             dispatch_config,
@@ -525,9 +532,7 @@ def _failure_comment(config: Config, outcome: str, attempt: int,
 
 The retry budget is {MAX_ATTEMPTS} attempts per Handover, and it is now spent, so the label has been swapped to `{config.human_label}`. No further Run will be started for this issue: a third dispatch is refused whatever the label says.{where}
 
-If the failure was transient, or you have changed something that fixes it, re-apply `{config.label}`: that is a fresh Handover with a fresh retry budget.
-
-*Posted by the Selector. Deterministic code, not an agent - no model wrote this and none read the issue.*"""
+If the failure was transient, or you have changed something that fixes it, re-apply `{config.label}`: that is a fresh Handover with a fresh retry budget."""
 
 
 def _red_checks_comment(config: Config, proposal: str,
@@ -547,20 +552,109 @@ Failing:
 
 {named}
 
-No repair Run will be started - committing CI output back into the branch for a fix-up Run is deliberately out of the Selector's scope. The label has been swapped to `{config.human_label}`.
-
-*Posted by the Selector. Deterministic code, not an agent - no model wrote this and none read the issue.*"""
+No repair Run will be started - committing CI output back into the branch for a fix-up Run is deliberately out of the Selector's scope. The label has been swapped to `{config.human_label}`."""
 
 
 def _unsettled_checks_comment(config: Config, proposal: str,
                               waited: int) -> str:
+    """CI had not decided by the time the Selector stopped waiting.
+
+    The surprising half of this path, so it says the wait out loud: pending is
+    not green, and a Proposal whose checks are merely slow is handed over
+    rather than held. It also says the checks may have finished since, because
+    they usually will have - the operator is being asked to look, not told the
+    work is broken.
+    """
     return f"""The Run ended cleanly and left a Proposal, but its checks did not finish within the {waited}s the Selector waits.
 
 {proposal}
 
-Unverified work is not put in the review queue, so the label has been swapped to `{config.human_label}` rather than `{config.review_label}`. The checks may well have gone green since; read them on the Proposal.
+Unverified work is not put in the review queue, so the label has been swapped to `{config.human_label}` rather than `{config.review_label}`. The checks may well have gone green since; read them on the Proposal."""
 
-*Posted by the Selector. Deterministic code, not an agent - no model wrote this and none read the issue.*"""
+
+def _no_checks_comment(config: Config, proposal: str) -> str:
+    """A Proposal that no check ran against at all.
+
+    Deliberately not green. "Every check passed" and "no check ran" are
+    opposite facts about how far a Proposal has been verified, and on a
+    repository that does have CI - which the task repository does - this
+    answer usually means something went wrong upstream: a workflow file that
+    will not parse, Actions disabled, a run that never triggered. Sending that
+    to review as though it had passed would be the same false pass as a
+    permission error read as an all-clear, reached by a different road.
+    """
+    return f"""The Run ended cleanly and left a Proposal, but no check ran against it at all.
+
+{proposal}
+
+That is not the same as passing. On a repository with CI it usually means a workflow did not trigger - a file that will not parse, Actions disabled, or a run that never started - so the Proposal is unverified rather than clean. The label has been swapped to `{config.human_label}` rather than `{config.review_label}`."""
+
+
+@dataclass(frozen=True)
+class Route:
+    """Where an outcome puts the issue: one name, one label, one event kind.
+
+    The three travelled together as separate arguments and the label was
+    named twice at every call site - once to relabel with, and once inside the
+    journaled payload. Two spellings of one fact is two chances for the label
+    the Journal records to differ from the label GitHub actually carries, and
+    nothing downstream could have told which was true. Here they are one
+    value, the payload's `label` is derived from it, and the page's CSS class
+    comes from `name` rather than from taking the event kind apart again.
+    """
+
+    name: str
+    label: str
+
+    @property
+    def kind(self) -> str:
+        return f"issue.{self.name}"
+
+
+def AWAITING_REVIEW(config: Config) -> Route:
+    return Route("awaiting-review", config.review_label)
+
+
+def GIVEN_UP(config: Config) -> Route:
+    return Route("given-up", config.human_label)
+
+
+def HANDED_TO_HUMAN(config: Config) -> Route:
+    return Route("handed-to-human", config.human_label)
+
+
+def _hand_over(
+    conn: psycopg.Connection,
+    config: Config,
+    dispatch_config: dispatch.DispatchConfig,
+    number: int,
+    body: str | None,
+    payload: dict,
+    route: Route,
+) -> str:
+    """Comment (when there is something to say), swap the label, journal it.
+
+    The comment goes first, for the same reason it does in the loud skip: a
+    swap that landed with no comment takes the issue out of the agent queue
+    with nothing on it saying why. The green route passes no body - the
+    Proposal is the artifact and a comment restating that it exists is noise
+    on an issue the operator is about to open anyway.
+    """
+    payload = {**payload, "label": route.label}
+    try:
+        if body is not None:
+            dispatch.comment(
+                dispatch_config, config.task_repo, number, body + SIGNATURE
+            )
+        dispatch.relabel(
+            dispatch_config, config.task_repo, number,
+            add=route.label, remove=config.label,
+        )
+    except dispatch.DispatchFailed as exc:
+        journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})
+        raise CycleFailed(str(exc)) from exc
+    journal.append(conn, route.kind, payload)
+    return route.name
 
 
 def _route(
@@ -582,13 +676,15 @@ def _route(
     number = pick["number"]
     proposal = outcome.get("proposal")
     ended_by = outcome["outcome"]
-    # A Run that reached its cap but proposed nothing is a failed attempt.
-    # Recorded under its own name rather than the bound, because "iteration-cap
-    # with nothing to show" and "iteration-cap with a Proposal" are opposite
-    # results and a Journal that called them the same thing would be unreadable.
     failure = ended_by in RUN_FAILURE_BOUNDS or not proposal
-    result = NO_PROPOSAL if (not proposal and ended_by not in RUN_FAILURE_BOUNDS) \
-        else ended_by
+    # What the Journal records this attempt as, which is not always the bound
+    # that ended it: a Run that reached its cap and proposed nothing gets its
+    # own name, because "iteration-cap with a Proposal" and "iteration-cap
+    # with nothing to show" are opposite results and a Journal that called
+    # them the same thing could not be read back.
+    journaled_as = ended_by if ended_by in RUN_FAILURE_BOUNDS else (
+        ended_by if proposal else NO_PROPOSAL
+    )
 
     payload = {
         "cycle": cycle_id,
@@ -596,7 +692,7 @@ def _route(
         "title": pick.get("title"),
         "url": pick.get("url"),
         "attempt": attempt,
-        "outcome": result,
+        "outcome": journaled_as,
         "proposal": proposal,
     }
 
@@ -609,11 +705,10 @@ def _route(
         return "retrying"
 
     if failure:
-        body = _failure_comment(config, result, attempt, proposal)
         return _hand_over(
-            conn, config, dispatch_config, number, body,
-            {**payload, "label": config.human_label},
-            kind="issue.given-up", label=config.human_label,
+            conn, config, dispatch_config, number,
+            _failure_comment(config, journaled_as, attempt, proposal),
+            payload, GIVEN_UP(config),
         )
 
     try:
@@ -630,71 +725,40 @@ def _route(
         )
         raise CycleFailed(str(exc)) from exc
 
-    payload["checks"] = answer["state"]
-    if answer["state"] == "green":
+    state = answer["state"]
+    payload = {**payload, "checks": state}
+
+    if state == "green":
         # The only route into the review queue, and the only one that posts no
         # comment. Everything else lands on the operator.
         return _hand_over(
             conn, config, dispatch_config, number, None,
-            {**payload, "label": config.review_label},
-            kind="issue.awaiting-review", label=config.review_label,
+            payload, AWAITING_REVIEW(config),
         )
 
-    if answer["state"] == "pending":
-        # The wait is spent and CI still has not decided. Unverified work does
-        # not go in the review queue, so this joins the red route rather than
-        # the green one - with a body that says which of the two happened,
-        # because "CI failed" and "CI never answered" need different actions
-        # from the operator.
-        return _hand_over(
-            conn, config, dispatch_config, number,
-            _unsettled_checks_comment(
-                config, proposal, dispatch_config.checks_timeout_seconds
-            ),
-            {**payload, "label": config.human_label, "failing": []},
-            kind="issue.handed-to-human", label=config.human_label,
+    # Everything below hands the issue to the operator with the same label,
+    # and differs only in what the comment says - because "CI failed", "CI
+    # never answered" and "no CI ran" call for three different next actions
+    # from the person reading the issue.
+    if state == "pending":
+        body = _unsettled_checks_comment(
+            config, proposal, dispatch_config.checks_timeout_seconds
         )
+        failing = []
+    elif state == "none":
+        body = _no_checks_comment(config, proposal)
+        failing = []
+    else:
+        # Red, and anything a future check state adds: not green is not
+        # reviewable, and an unrecognised state must never reach the review
+        # queue as though it had passed.
+        body = _red_checks_comment(config, proposal, answer["failing"])
+        failing = answer["failing"]
 
-    # Red, and anything a future check state adds: not green is not reviewable.
     return _hand_over(
-        conn, config, dispatch_config, number,
-        _red_checks_comment(config, proposal, answer["failing"]),
-        {**payload, "label": config.human_label, "failing": answer["failing"]},
-        kind="issue.handed-to-human", label=config.human_label,
+        conn, config, dispatch_config, number, body,
+        {**payload, "failing": failing}, HANDED_TO_HUMAN(config),
     )
-
-
-def _hand_over(
-    conn: psycopg.Connection,
-    config: Config,
-    dispatch_config: dispatch.DispatchConfig,
-    number: int,
-    body: str | None,
-    payload: dict,
-    *,
-    kind: str,
-    label: str,
-) -> str:
-    """Comment (when there is something to say), swap the label, journal it.
-
-    The comment goes first, for the same reason it does in the loud skip: a
-    swap that landed with no comment takes the issue out of the agent queue
-    with nothing on it saying why. The green route passes no body - the
-    Proposal is the artifact and a comment restating that it exists is noise
-    on an issue the operator is about to open anyway.
-    """
-    try:
-        if body is not None:
-            dispatch.comment(dispatch_config, config.task_repo, number, body)
-        dispatch.relabel(
-            dispatch_config, config.task_repo, number,
-            add=label, remove=config.label,
-        )
-    except dispatch.DispatchFailed as exc:
-        journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})
-        raise CycleFailed(str(exc)) from exc
-    journal.append(conn, kind, payload)
-    return kind.split(".", 1)[1]
 
 
 # --- The cycle --------------------------------------------------------------

@@ -180,6 +180,7 @@ the bookkeeping the box deliberately cannot do (ADR 0010).
 | reached its `iteration-cap` with a Proposal | green | swap to `awaiting-review`, no comment |
 | reached its `iteration-cap` with a Proposal | red | comment naming the failing checks, swap to `ready-for-human` |
 | reached its `iteration-cap` with a Proposal | still pending when the wait is spent | comment saying so, swap to `ready-for-human` |
+| reached its `iteration-cap` with a Proposal | no check ran at all | comment saying so, swap to `ready-for-human` |
 | reached its `iteration-cap` and proposed nothing | not read | a failed attempt: retried once, then given up |
 
 A few of those deserve their reasoning stated.
@@ -206,6 +207,14 @@ queued; reading once and calling that final would route nearly every green Run
 to a human. The Selector polls for `SELECTOR_CHECKS_TIMEOUT_SECONDS` and, if
 CI still has not decided, hands the issue to the operator rather than putting
 unverified work in the review queue.
+
+**"No check ran" is not "every check passed".** They are opposite facts about
+how far a Proposal has been verified, so `none` is its own state rather than a
+flavour of green. On a repository that has CI - which tourbot does - it usually
+means something went wrong upstream: a workflow file that will not parse,
+Actions disabled, a run that never triggered. Sending that to review as though
+it had passed would be the same false pass as a permission error read as an
+all-clear, reached by a different road.
 
 **Red is the fallthrough.** `issue-sources/github.sh` maps an unrecognised
 check state to red, and so does `cycle.py`. An unknown state must never reach

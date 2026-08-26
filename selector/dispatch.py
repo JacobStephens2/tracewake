@@ -328,11 +328,16 @@ def relabel(config: DispatchConfig, task_repo: str, number: int, *,
 def checks(config: DispatchConfig, task_repo: str, proposal: str) -> dict:
     """What CI makes of one Proposal: `{"state", "failing"}`.
 
-    `state` is `green`, `red` or `pending`, and `failing` names the checks
-    that are red. The translation from whatever the tracker actually reports
-    lives in the substitutable command, not here - which is what lets a
-    different tracker be a different script (ADR 0004), and what lets the
-    offline suite answer with a file.
+    `state` is `green`, `red`, `pending` or `none`, and `failing` names the
+    checks that are red. `none` is its own answer rather than a flavour of
+    green: "every check passed" and "no check ran" are opposite facts about
+    how much a Proposal has been verified, and a reader that collapsed them
+    could not tell them apart afterwards.
+
+    The translation from whatever the tracker actually reports lives in the
+    substitutable command, not here - which is what lets a different tracker
+    be a different script (ADR 0004), and what lets the offline suite answer
+    with a file.
     """
     completed = _run(
         [config.issue_command, task_repo, "checks", proposal],
@@ -350,13 +355,12 @@ def checks(config: DispatchConfig, task_repo: str, proposal: str) -> dict:
         raise DispatchFailed(
             f"the checks on {proposal} did not parse: {exc}"
         ) from exc
-    if state not in ("green", "red", "pending"):
+    if state not in ("green", "red", "pending", "none"):
         raise DispatchFailed(f"unknown check state {state!r} on {proposal}")
     return {"state": state, "failing": failing}
 
 
-def settled_checks(config: DispatchConfig, task_repo: str, proposal: str,
-                   *, sleep=time.sleep) -> dict:
+def settled_checks(config: DispatchConfig, task_repo: str, proposal: str) -> dict:
     """The same, waited on until CI has decided or the wait is spent.
 
     Polled rather than watched because the seam is a command that answers and
@@ -375,4 +379,4 @@ def settled_checks(config: DispatchConfig, task_repo: str, proposal: str,
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return answer
-        sleep(min(config.checks_poll_seconds, remaining))
+        time.sleep(min(config.checks_poll_seconds, remaining))

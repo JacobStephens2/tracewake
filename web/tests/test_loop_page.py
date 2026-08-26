@@ -414,3 +414,21 @@ def test_an_unrouted_run_shows_no_label_badge(db):
     runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
     assert "badge-awaiting-review" not in runs
     assert "badge-handed-to-human" not in runs
+
+
+def test_a_no_proposal_run_reads_as_no_proposal_not_as_its_bound(db):
+    """The route renamed the outcome, and the card says what the operator was
+    told on the issue. Events arrive newest first, so the `run.outcome` row is
+    read after the route's and would otherwise overwrite it with the bound."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _ended(conn, cycle, outcome="iteration-cap", proposal=None)
+        journal.append(
+            conn, "issue.retrying",
+            {"cycle": cycle, "issue": 645, "attempt": 1, "of": 2,
+             "outcome": "no-proposal"},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "no-proposal" in runs
+    assert "iteration-cap" not in runs

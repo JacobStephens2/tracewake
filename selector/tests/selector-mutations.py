@@ -232,14 +232,14 @@ MUTATIONS = {
     ),
     # Checks are never consulted: every clean Run goes to review, red or not.
     "checks-ignored": (CYCLE, OUTCOMES_SUITE,
-        'if answer["state"] == "green":',
-        "if True:",
+        '    if state == "green":',
+        "    if True:",
     ),
     # CI that has not finished is treated as CI that passed, so unverified
     # work is put in the review queue - the failure the wait bound exists for.
     "pending-treated-as-decided": (CYCLE, OUTCOMES_SUITE,
-        'if answer["state"] == "pending":',
-        "if False:",
+        '    if state == "pending":',
+        "    if False:",
     ),
     # The Selector waits for nothing, so a Proposal whose checks are merely
     # slow is routed to a human as though CI had stalled.
@@ -247,18 +247,31 @@ MUTATIONS = {
         'if answer["state"] != "pending":',
         "if True:",
     ),
+    # A Proposal that no check ran against is called green, so unverified
+    # work reaches the review queue - the false pass a permission error once
+    # produced, arrived at by a different road.
+    "no-checks-treated-as-green": (CYCLE, OUTCOMES_SUITE,
+        '    if state == "green":',
+        '    if state in ("green", "none"):',
+    ),
+    # The journaled label stops being the label that was applied, so the
+    # Journal can say one queue while the tracker says another.
+    "journaled-label-is-not-the-applied-one": (CYCLE, OUTCOMES_SUITE,
+        '    payload = {**payload, "label": route.label}',
+        '    payload = {**payload, "label": None}',
+    ),
     # Bookkeeping the tracker refused is swallowed, so a Run whose result
     # never reached the issue looks like a cycle that worked (story 31).
     "route-failure-not-paged": (CYCLE, OUTCOMES_SUITE,
         'journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})\n        raise CycleFailed(str(exc)) from exc',
-        'journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})\n        return "route-failed"',
+        'journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})\n        return route.name',
     ),
     # The comment is posted after the swap rather than before, so a swap that
     # landed and a comment that failed leaves the issue out of every queue
     # with nothing on it saying why.
     "handover-relabels-before-commenting": (CYCLE, OUTCOMES_SUITE,
-        "        if body is not None:\n            dispatch.comment(dispatch_config, config.task_repo, number, body)\n        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=label, remove=config.label,\n        )",
-        "        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=label, remove=config.label,\n        )\n        if body is not None:\n            dispatch.comment(dispatch_config, config.task_repo, number, body)",
+        "        if body is not None:\n            dispatch.comment(\n                dispatch_config, config.task_repo, number, body + SIGNATURE\n            )\n        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=route.label, remove=config.label,\n        )",
+        "        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=route.label, remove=config.label,\n        )\n        if body is not None:\n            dispatch.comment(\n                dispatch_config, config.task_repo, number, body + SIGNATURE\n            )",
     ),
 }
 

@@ -129,6 +129,9 @@ LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/13
 GREEN_CHECKS = '{"state": "green", "failing": []}\n'
 RED_CHECKS = '{"state": "red", "failing": ["phpunit", "lint"]}\n'
 PENDING_CHECKS = '{"state": "pending", "failing": []}\n'
+# No check ran against the Proposal at all - its own answer, deliberately not
+# a flavour of green.
+NO_CHECKS = '{"state": "none", "failing": []}\n'
 
 SELECTOR = Path(__file__).resolve().parents[1]
 CYCLE = SELECTOR / "cycle.py"

@@ -185,12 +185,18 @@ def _cycles(events: list[dict]) -> list[dict]:
 # The Journal rows that say where an outcome put the issue (#155). One kind
 # per route so that the Journal is greppable by outcome, which means the page
 # has to know the set rather than matching a prefix.
-ROUTE_KINDS = {
-    "issue.awaiting-review",
-    "issue.handed-to-human",
-    "issue.given-up",
-    "issue.retrying",
+# kind -> the route name the card is styled and worded by. Spelled out rather
+# than derived by splitting the kind apart, because the name reaches the page
+# as a CSS class (`badge-awaiting-review`): a mapping that is wrong fails when
+# this file is read, where deriving it would have failed silently the day an
+# event kind was renamed and a badge quietly lost its colour.
+ROUTE_NAMES = {
+    "issue.awaiting-review": "awaiting-review",
+    "issue.handed-to-human": "handed-to-human",
+    "issue.given-up": "given-up",
+    "issue.retrying": "retrying",
 }
+ROUTE_KINDS = set(ROUTE_NAMES)
 
 # Every kind a Run card is built from, so the membership test is one lookup
 # rather than a set union rebuilt per event.
@@ -224,10 +230,15 @@ def _runs(events: list[dict]) -> list[dict]:
             # the routing event or shows no badge at all, which is what an
             # in-flight Run and a route the tracker refused both look like.
             card.update(
-                route=event["kind"].split(".", 1)[1],
+                route=ROUTE_NAMES[event["kind"]],
                 label=payload.get("label"),
                 failing=payload.get("failing"),
                 checks=payload.get("checks"),
+                # The route's own reading of how the Run ended. A Run that hit
+                # its cap and proposed nothing is journaled `no-proposal` here
+                # while `run.outcome` still carries the bound, and the card
+                # should say the thing the operator was told on the issue.
+                routed_outcome=payload.get("outcome"),
             )
         elif event["kind"] == "run.dispatched":
             card.update(
@@ -246,6 +257,12 @@ def _runs(events: list[dict]) -> list[dict]:
                    ("outcome", "exit", "iterations", "faults", "proposal",
                     "notified", "error")},
             )
+            # Events arrive newest first, so the route was read BEFORE this
+            # row and this update would otherwise overwrite its reading with
+            # the raw bound. Where the route renamed the outcome, its name
+            # wins: it is what the operator was told on the issue.
+            if card.get("routed_outcome"):
+                card["outcome"] = card["routed_outcome"]
     # Same rule as the cycle cards: a card whose `run.dispatched` scrolled off
     # the read limit is an absence, not a nameless Run.
     whole = [card for card in cards.values() if card.get("dispatched")]

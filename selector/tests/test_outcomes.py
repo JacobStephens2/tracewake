@@ -26,6 +26,7 @@ accepted the label swap that was supposed to take it out of the queue.
 import json
 
 from conftest import (
+    NO_CHECKS,
     CLEAN_RUN,
     FAILED_RUN,
     GREEN_CHECKS,
@@ -414,3 +415,52 @@ def test_a_wait_that_is_spent_stops_re_reading(db, box):
     box.checks(PENDING_CHECKS)
     box.run(db, [issue(645)], SELECTOR_CHECKS_TIMEOUT_SECONDS=0)
     assert checks_calls(box) == 1
+
+
+# --- A Proposal nothing ran against -------------------------------------------
+
+
+def test_a_proposal_with_no_checks_does_not_reach_the_review_queue(db, box):
+    """"Every check passed" and "no check ran" are opposite facts about how far
+    a Proposal has been verified. On a repository that has CI - which the task
+    repository does - the second usually means a workflow did not trigger, and
+    routing it to review as though it had passed is the same false pass as a
+    permission error read as an all-clear."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(NO_CHECKS)
+    result = box.run(db, [issue(645)])
+    assert result.returncode == 0, result.stderr
+    assert relabels(box) == [("645", "ready-for-human", "ready-for-agent")]
+    assert one(db, "issue.handed-to-human")["checks"] == "none"
+
+
+def test_the_no_checks_comment_says_it_is_not_the_same_as_passing(db, box):
+    box.run_summary(CLEAN_RUN)
+    box.checks(NO_CHECKS)
+    box.run(db, [issue(645)])
+    body = comment_bodies(box)[0]
+    assert "no check ran against it" in body
+    assert "not the same as passing" in body
+
+
+def test_every_comment_the_selector_posts_is_signed(db, box):
+    """One signature, appended where the comment is posted rather than written
+    into each body - so a route added later cannot forget it."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(RED_CHECKS)
+    box.run(db, [issue(645)])
+    assert comment_bodies(box)[0].rstrip().endswith(
+        "*Posted by the Selector. Deterministic code, not an agent - no model"
+        " wrote this and none read the issue.*"
+    )
+
+
+def test_the_journaled_label_is_the_label_that_was_applied(db, box):
+    """One spelling of one fact. The label reached the tracker and the label
+    the Journal recorded came from the same value, so a reader can trust the
+    row to say which queue the issue is actually in."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(GREEN_CHECKS)
+    box.run(db, [issue(645)])
+    applied = relabels(box)[0][1]
+    assert one(db, "issue.awaiting-review")["label"] == applied
