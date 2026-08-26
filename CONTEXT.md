@@ -49,8 +49,37 @@ The setup step that turns one task the operator chose, fetched by number, into a
 Plan and an initialized Progress Log. It is a human handing over a task he
 authored, which is what makes ADR 0003's content-trust collapse valid - and it is
 emphatically *not* issue intake, which would have the Loop read text the operator
-never saw. ADR 0010.
+never saw. ADR 0010. Since ADR 0014 the Handover happens at the label, and the
+Selector performs Seeding mechanically for a task the operator has labeled.
 _Avoid_: intake, ingestion, triage, importing an issue
+
+**Handover**:
+The operator's attestation that he authored or read a task and authorizes an
+unattended Run on it. ADR 0010 located it at the seed command; ADR 0014 moves it
+to applying `ready-for-agent`, which is why the Selector may seed with nobody at
+a keyboard.
+_Avoid_: approval, sign-off, triage
+
+**Selector**:
+The deterministic automation, off the box, that turns a Handover into a started
+Run: it reads the tracker as the operator, applies Eligibility, performs
+Seeding, and dispatches. It decides which task and when; it never does the work,
+and it is not an agent - no model output executes in it (ADR 0014).
+_Avoid_: scheduler, dispatcher, intake
+
+**Eligible**:
+The predicate a labeled task passes before the Selector may seed it: labeled by
+an allowlisted operator, no open blocking dependency - native tracker edges
+only - no open sub-issues (a parent spec is not a unit of work), no open
+Proposal, retry budget unspent.
+_Avoid_: unblocked, ready (the labels already own that word)
+
+**Selector Journal**:
+The append-only record of the Selector's decisions and of Run outcomes: what was
+eligible, what was picked, what was skipped and why, how each Run ended. Read by
+the dashboard and by nothing that decides work - the tracker remains the only
+work source.
+_Avoid_: ledger, log, queue
 
 **Owning Area**:
 The one part of a task a single Run is scoped to, named in the Plan at Seeding.
