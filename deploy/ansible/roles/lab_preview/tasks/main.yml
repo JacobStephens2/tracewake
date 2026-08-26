@@ -102,8 +102,14 @@
   # branch is a fleet-wide change rather than a preview.
   become: true
   become_user: conductor
-  ansible.builtin.command:
-    cmd: git -C {{ srv_dir }} worktree add --detach /srv/lab-webapp-staging origin/master
+  ansible.builtin.shell: |
+    set -e
+    # A deleted directory leaves a stale registration behind, and `worktree
+    # add` refuses on it - so prune before adding, or this task can never
+    # recover the tree it is supposed to create.
+    git -C {{ srv_dir }} worktree prune
+    git -C {{ srv_dir }} worktree add --detach /srv/lab-webapp-staging origin/master
+  args:
     creates: /srv/lab-webapp-staging/.git
 
 - name: staging worktree is group-writable like the tree it came from
@@ -122,6 +128,12 @@
   become: true
   become_user: conductor
 
+# selinux_labels declares the fcontext; the venv is created above, after that
+# role has run, so the relabel has to happen here or the unit dies 203/EXEC.
+- name: relabel the staging tree so systemd may exec its venv
+  ansible.builtin.command: restorecon -R /srv/lab-webapp-staging
+  changed_when: false
+
 - name: staging systemd unit
   ansible.builtin.copy:
     src: "{{ srv_dir }}/deploy/systemd/lab-webapp-staging.service"
@@ -138,3 +150,4 @@
   ansible.builtin.systemd:
     name: lab-webapp-staging
     enabled: false
+    daemon_reload: true   # the handler has not flushed yet on a first run

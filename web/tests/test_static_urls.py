@@ -1,4 +1,10 @@
-"""Static assets are addressed through `url_for`, not by a hardcoded path.
+"""Static assets are addressed through a root_path-aware base, not a hardcoded path.
+
+Deliberately not `url_for`: Starlette's renders an absolute URL from the
+request's own base, and uvicorn here runs without `--proxy-headers`, so behind
+Caddy's TLS that base is `http://` and every stylesheet on an https page would
+be blocked as mixed content. `_static_base` keeps the property a hardcoded
+path lacks without inventing a scheme.
 
 ADR 0016 rejects serving a preview under a path prefix on the live host, so
 nothing today depends on this. It is still a latent bug: four templates

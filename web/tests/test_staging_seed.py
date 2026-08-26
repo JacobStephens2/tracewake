@@ -31,6 +31,11 @@ STATES = [
     "no Run was started",
     "picked nothing",
     "commented, swapped to needs-info",
+    # The three the fixture missed on the first pass, each rendered by
+    # loop.html and each previously invisible in a preview.
+    "cycle failed:",
+    "could not hand it back",
+    "did not finish",
 ]
 
 

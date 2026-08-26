@@ -17,6 +17,8 @@ ExecStart=/srv/lab-webapp-staging/lab/webapp/.venv/bin/uvicorn app:app --host 12
 # unreviewed code whatever the file held, quietly.
 Environment=SELECTOR_JOURNAL_DSN=dbname=selector_staging
 Environment=LAB_PREVIEW_LEASE=/var/lib/lab-preview/lease.json
+# Read by the banner so it quotes the bound below rather than a copy of it.
+Environment=LAB_PREVIEW_MAX_AGE_SECONDS=14400
 # Tracker and box edges faked, so a cycle run inside a preview reaches nothing
 # outside this VM (ADR 0016).
 Environment=SELECTOR_TRACKER_COMMAND=/srv/lab-webapp-staging/lab/single-user-factory/selector/preview-sources/tracker.sh
@@ -27,8 +29,11 @@ Environment=SELECTOR_ISSUE_COMMAND=/srv/lab-webapp-staging/lab/single-user-facto
 # is the half of that which does not depend on anybody remembering: four hours
 # is longer than any review and shorter than a workday.
 RuntimeMaxSec=4h
-# So a timed-out preview is a clean stop rather than a failure that pages.
-SuccessExitStatus=143
+# Note what this looks like afterwards: systemd terminates a unit that exceeds
+# RuntimeMaxSec and puts it in `failed (Result: timeout)`, and no exit-status
+# setting changes that. So an expired preview reads as failed, which is
+# correct - it did not stop because anyone was finished with it. Nothing pages
+# on it: this unit deliberately carries no OnFailure=.
 
 Restart=no
 NoNewPrivileges=true

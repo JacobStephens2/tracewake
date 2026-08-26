@@ -86,3 +86,13 @@ def test_an_unreadable_lease_does_not_break_the_page(monkeypatch, tmp_path):
     resp = client.get("/loop")
     assert resp.status_code == 200
     assert "lease is unreadable" in resp.text.lower()
+
+
+def test_the_banner_quotes_the_bound_that_is_configured(monkeypatch, tmp_path):
+    """Four hours lives in RuntimeMaxSec on the unit. A banner that hardcoded
+    its own copy would keep saying "4 hours" the day the unit said six."""
+    monkeypatch.setenv("LAB_PREVIEW_LEASE", str(_lease(tmp_path)))
+    monkeypatch.setenv("LAB_PREVIEW_MAX_AGE_SECONDS", str(6 * 60 * 60))
+    body = client.get("/loop").text
+    assert "after 6 hours" in body
+    assert "after 4 hours" not in body

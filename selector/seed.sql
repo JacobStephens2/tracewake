@@ -202,4 +202,59 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'branch', 'loop/661-traveler-search', 'task_ref', repo || '#661',
         'area', 'Traveler search'));
 
+-- 8. A cycle that failed outright: the tracker could not be read, so there
+--    was no queue to reason about.
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '25 minutes', 'cycle.started',
+     jsonb_build_object('repo', repo, 'label', 'ready-for-agent', 'dry_run', false))
+    RETURNING id INTO cycle_id;
+
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '25 minutes' + interval '4 seconds', 'cycle.failed',
+     jsonb_build_object('cycle', cycle_id,
+        'error', 'tracker command exited 1: gh: API rate limit exceeded'));
+
+-- 9. A loud skip the tracker refused: the Selector could not hand the issue
+--    back, so the page must show the attempt AND its failure rather than the
+--    tidy "commented, swapped to needs-info" of case 1.
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '20 minutes', 'cycle.started',
+     jsonb_build_object('repo', repo, 'label', 'ready-for-agent', 'dry_run', false))
+    RETURNING id INTO cycle_id;
+
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '20 minutes' + interval '2 seconds', 'issue.skipped',
+     jsonb_build_object('cycle', cycle_id, 'number', 663,
+        'url', 'https://github.com/' || repo || '/issues/663',
+        'reason', 'missing-section',
+        'detail', 'no `Acceptance criteria` section')),
+    (now() - interval '20 minutes' + interval '3 seconds', 'issue.return-failed',
+     jsonb_build_object('cycle', cycle_id, 'number', 663,
+        'error', 'GitHub refused the label swap: resource not accessible'));
+
+-- 10. A Proposal whose checks never settled inside the Selector's wait. It is
+--     NOT the same card as red checks: nothing is known to be wrong, so the
+--     page names no failing check and says the wait ran out.
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '15 minutes', 'cycle.started',
+     jsonb_build_object('repo', repo, 'label', 'ready-for-agent', 'dry_run', false))
+    RETURNING id INTO cycle_id;
+
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '15 minutes' + interval '2 seconds', 'run.dispatched',
+     jsonb_build_object('cycle', cycle_id, 'issue', 658, 'attempt', 1,
+        'title', 'Invoices: show the deposit line before the balance',
+        'url', 'https://github.com/' || repo || '/issues/658',
+        'branch', 'loop/658-deposit-line', 'task_ref', repo || '#658',
+        'area', 'Invoice rendering')),
+    (now() - interval '10 minutes', 'run.outcome',
+     jsonb_build_object('cycle', cycle_id, 'issue', 658, 'attempt', 1,
+        'outcome', 'iteration-cap', 'ended_by', 'iteration-cap', 'exit', 0,
+        'iterations', 4, 'faults', 'none', 'notified', 'sent',
+        'proposal', 'https://github.com/' || repo || '/pull/703')),
+    (now() - interval '9 minutes', 'issue.handed-to-human',
+     jsonb_build_object('cycle', cycle_id, 'issue', 658, 'attempt', 1,
+        'label', 'ready-for-human', 'checks', 'pending',
+        'proposal', 'https://github.com/' || repo || '/pull/703'));
+
 END $$;

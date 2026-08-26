@@ -8,7 +8,7 @@
 <div role="status" style="background:#7c2d12;color:#fff5ed;padding:.6rem 1rem;
      font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
      border-bottom:3px solid #f59e0b">
-  <b>ATTENDED PREVIEW</b> &mdash; unreviewed code, running because you are
+  <b>ATTENDED PREVIEW</b> - unreviewed code, running because you are
   looking at it.
   {%- if preview.unreadable %}
   Its lease is unreadable, so this page cannot say which branch it is serving;
@@ -18,7 +18,7 @@
   at <code>{{ preview.sha or "unknown" }}</code>,
   started by {{ preview.started_by or "unknown" }}
   {%- if preview.uptime %}, up {{ preview.uptime }}{% endif %}.
-  This instance exits on its own after 4 hours.
+  This instance exits on its own after {{ preview.max_age_hours }} hours.
   {%- endif %}
 </div>
 {% endif %}

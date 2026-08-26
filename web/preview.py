@@ -23,6 +23,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ENV_VAR = "LAB_PREVIEW_LEASE"
+# The unit's RuntimeMaxSec, so the banner quotes the bound that is actually
+# configured rather than a number written twice and drifted once.
+MAX_AGE_VAR = "LAB_PREVIEW_MAX_AGE_SECONDS"
+DEFAULT_MAX_AGE_SECONDS = 4 * 60 * 60
 
 # Long enough to compare against `git log --oneline`, short enough not to be
 # noise in a banner that has to be read every time.
@@ -49,6 +53,14 @@ def _uptime(started_at: str | None) -> str | None:
     return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m"
 
 
+def _max_age_hours() -> int:
+    try:
+        seconds = int(os.environ.get(MAX_AGE_VAR, DEFAULT_MAX_AGE_SECONDS))
+    except ValueError:
+        seconds = DEFAULT_MAX_AGE_SECONDS
+    return max(1, seconds // 3600)
+
+
 def banner() -> dict | None:
     """What the banner should say, or None on the live app.
 
@@ -64,10 +76,11 @@ def banner() -> dict | None:
         if not isinstance(lease, dict):
             raise ValueError("lease is not an object")
     except (OSError, ValueError):
-        return {"unreadable": True}
+        return {"unreadable": True, "max_age_hours": _max_age_hours()}
     sha = str(lease.get("sha") or "")
     return {
         "unreadable": False,
+        "max_age_hours": _max_age_hours(),
         "branch": lease.get("branch"),
         "sha": sha[:SHA_CHARS] or None,
         "started_by": lease.get("started_by"),

@@ -359,10 +359,21 @@ tourbot queue and dispatches a real Run against it.
 
 `preview-cycle.sh` points every outward reach at `preview-sources/` - a canned
 queue of three issues covering eligible, blocked and missing-section; a box
-that starts nothing and reports a plausible ended Run; issue bookkeeping that
-writes nothing - and the Journal at `selector_staging`. It refuses outright if
-`SELECTOR_JOURNAL_DSN` names the live Journal, because a cycle appends and
-those appends would be permanent.
+that starts nothing and reports a plausible ended Run; Seeding that fetches
+nothing; issue bookkeeping that writes nothing - and the Journal at
+`selector_staging`. It refuses outright if `SELECTOR_JOURNAL_DSN` resolves to
+the live Journal, because a cycle appends and those appends would be permanent.
+
+**"Every outward reach" includes two that are not commands**, and they are the
+easy ones to miss. `SELECTOR_WORK_REPO` defaults to a real tourbot checkout,
+and `dispatch.py`'s `push()` runs `git push --set-upstream origin <branch>`
+against it *before* the box is ever reached - so faking the tracker and the
+box while leaving that alone still puts a branch on the real repository.
+`SELECTOR_SEED_COMMAND` defaults to the Loop's real `seed-run.sh`. The wrapper
+redirects both, at a throwaway work repo whose `origin` is a local bare repo
+under `/var/lib/lab-preview/work`, and
+`tests/test_preview_cycle.py::test_no_outward_reach_is_left_on_its_default`
+fails if a new one is ever added and left alone.
 
 ### The staging Journal
 

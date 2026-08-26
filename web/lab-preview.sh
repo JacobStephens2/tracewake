@@ -23,6 +23,11 @@ URL="${LAB_PREVIEW_URL:-https://lab-staging.etadventures.com}"
 # Matches RuntimeMaxSec on the unit: past this the preview is not running, so
 # its lease is not held by anything.
 MAX_AGE="${LAB_PREVIEW_MAX_AGE_SECONDS:-14400}"
+# Whether a preview is actually up. The lease says WHICH branch; this says
+# WHETHER. Both are needed: a lease alone reads as free when it is corrupt or
+# missing, which is precisely when a running preview would be taken out from
+# under whoever is looking at it.
+STATUS_COMMAND="${LAB_PREVIEW_STATUS_COMMAND:-systemctl is-active --quiet lab-webapp-staging}"
 OPERATOR="${LAB_PREVIEW_OPERATOR:-${SUDO_USER:-$(id -un)}}"
 
 usage() {
@@ -104,7 +109,16 @@ print(f'{lease.get("branch", "unknown")}\t{lease.get("started_by", "unknown")}')
 PY
 }
 
+preview_is_running() {
+    read -ra status_argv <<< "$STATUS_COMMAND"
+    "${status_argv[@]}" >/dev/null 2>&1
+}
+
 holder="$(lease_holder)"
+if [[ -z "$holder" ]] && preview_is_running; then
+    # Up, but the lease cannot say whose. Still somebody's preview.
+    holder=$'unknown\tunknown'
+fi
 if [[ -n "$holder" && "$force" -eq 0 ]]; then
     held_branch="${holder%%$'\t'*}"
     held_by="${holder##*$'\t'}"
@@ -117,12 +131,10 @@ if [[ -n "$holder" && "$force" -eq 0 ]]; then
 fi
 
 # --- take it ----------------------------------------------------------------
-# Detached and forced. This tree is machine-owned - nobody edits it by hand and
-# `labstage` cannot - so discarding whatever was there is the correct read of
-# "check out this branch", and detaching keeps the preview from accumulating
-# local branches that drift from origin.
-git -C "$WORKTREE" checkout -q -f --detach "$sha"
-
+# The lease is STAGED before the checkout and moved into place after it, so
+# there is no window in which the tree and the banner disagree. A banner
+# naming one branch over a checkout of another is the worst outcome here: it
+# is the failure the banner exists to prevent, wearing the banner's authority.
 mkdir -p "$(dirname "$LEASE")"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 tmp="$(mktemp "${LEASE}.XXXXXX")"
@@ -135,7 +147,20 @@ with open(path, "w") as fh:
     fh.write("\n")
 PY
 chmod 0644 "$tmp"
-# Rename so the banner never reads a half-written lease.
+
+# Detached and forced. This tree is machine-owned - nobody edits it by hand and
+# `labstage` cannot - so discarding whatever was there is the correct read of
+# "check out this branch", and detaching keeps the preview from accumulating
+# local branches that drift from origin.
+if ! git -C "$WORKTREE" checkout -q -f --detach "$sha"; then
+    rm -f "$tmp"
+    echo "could not check out $sha in $WORKTREE; the running preview is untouched" >&2
+    exit 5
+fi
+
+# One rename: atomic, so the banner never reads a half-written lease, and the
+# only step left after it is the restart - whose failure leaves the tree and
+# the lease agreeing about a preview that is simply not up.
 mv -f "$tmp" "$LEASE"
 
 read -ra restart_argv <<< "$RESTART"

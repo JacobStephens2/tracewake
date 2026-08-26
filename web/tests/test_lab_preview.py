@@ -75,6 +75,8 @@ class PreviewTestCase(unittest.TestCase):
             "LAB_PREVIEW_URL": "https://lab-staging.example.invalid",
             "LAB_PREVIEW_MAX_AGE_SECONDS": str(MAX_AGE),
             "LAB_PREVIEW_OPERATOR": "jstephens",
+            # No preview is running unless a test says one is.
+            "LAB_PREVIEW_STATUS_COMMAND": "/bin/false",
         }
         environ.update(env or {})
         return subprocess.run(
@@ -191,6 +193,75 @@ class TestTheLease(PreviewTestCase):
         result = self.run_script("feat/queue-board")
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("feat/queue-board", json.loads(self.lease.read_text())["branch"])
+
+
+class TestLivenessBacksTheLease(PreviewTestCase):
+    """The lease says WHICH branch; the unit says WHETHER one is running.
+
+    Reading the lease alone gets this wrong in the one case that matters: a
+    lease that is corrupt or missing reads as free, so a preview somebody is
+    actively looking at gets taken out from under them with no --force and no
+    warning.
+    """
+
+    def test_a_running_preview_with_no_lease_is_still_a_running_preview(self):
+        result = self.run_script(
+            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"}
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("--force", result.stderr)
+        self.assertFalse(self.restarted())
+
+    def test_a_running_preview_with_an_unreadable_lease_is_refused(self):
+        self.lease.write_text("{not json")
+        result = self.run_script(
+            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"}
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse(self.restarted())
+
+    def test_force_still_takes_a_running_preview(self):
+        result = self.run_script(
+            "--force", "feat/queue-board",
+            env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(self.restarted())
+
+
+class TestNothingHalfTaken(PreviewTestCase):
+    """The tree and the lease must never disagree.
+
+    A banner naming one branch over a checkout of another is the worst
+    outcome available here: it is the failure mode the banner exists to
+    prevent, wearing the banner's own authority.
+    """
+
+    def test_a_failing_restart_still_leaves_tree_and_lease_agreeing(self):
+        import json
+        failing = Path(self.tmp.name) / "failing-restart.sh"
+        failing.write_text("#!/bin/bash\necho 'unit failed to start' >&2\nexit 1\n")
+        failing.chmod(0o755)
+        result = self.run_script(
+            "feat/queue-board",
+            env={"LAB_PREVIEW_RESTART_COMMAND": str(failing)},
+        )
+        self.assertNotEqual(0, result.returncode)
+        lease = json.loads(self.lease.read_text())
+        self.assertEqual(self.checked_out(), lease["sha"])
+        self.assertEqual("feat/queue-board", lease["branch"])
+
+    def test_a_lease_that_cannot_be_written_stops_before_the_checkout(self):
+        """The lease is staged first on purpose. If it cannot be written, the
+        tree must still be on whatever the previous preview was serving."""
+        before = self.checked_out()
+        result = self.run_script(
+            "feat/queue-board",
+            env={"LAB_PREVIEW_LEASE": "/proc/definitely/not/writable/lease.json"},
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(before, self.checked_out())
+        self.assertFalse(self.restarted())
 
 
 if __name__ == "__main__":
