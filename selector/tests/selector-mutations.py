@@ -23,6 +23,7 @@ CYCLE = "cycle.py"
 DISPATCH = "dispatch.py"
 CYCLE_SUITE = "tests/test_cycle.py"
 DISPATCH_SUITE = "tests/test_dispatch.py"
+OUTCOMES_SUITE = "tests/test_outcomes.py"
 
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
@@ -158,8 +159,10 @@ MUTATIONS = {
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
     "every-dispatch-is-the-first": (CYCLE, DISPATCH_SUITE,
-        '            spend.attempts(pick["number"], picked_record.get("labeledAt")) + 1,',
-        "            1,",
+        '        attempt = spend.attempts(\n'
+        '            pick["number"], picked_record.get("labeledAt")\n'
+        '        ) + 1',
+        "        attempt = 1",
     ),
     # A Run that ended on a bound is reported as a dispatch failure, so the
     # Termination Contract working pages the operator every time.
@@ -194,6 +197,68 @@ MUTATIONS = {
     "branch-does-not-name-the-issue": (DISPATCH, DISPATCH_SUITE,
         'return f"{config.branch_prefix}{number}-{slug}" if slug else \\',
         'return f"{config.branch_prefix}{slug}" if slug else \\',
+    ),
+
+    # --- Outcome routing (#155) ---------------------------------------------
+    #
+    # The half after the Run. Each of these is a way for work to end up in the
+    # wrong queue silently, which on an unattended Selector means either the
+    # operator never learns a Run failed or unreviewed work is presented as
+    # ready to merge.
+
+    # A Run cut short by the Termination Contract is read as a success, so a
+    # failed Run's branch is offered for review as though it had finished.
+    "run-failures-not-detected": (CYCLE, OUTCOMES_SUITE,
+        'RUN_FAILURE_BOUNDS = ("run-clock", "consecutive-noops", "agent-failed")',
+        "RUN_FAILURE_BOUNDS = ()",
+    ),
+    # A Run that proposed nothing is treated as one that did, so the Selector
+    # reads checks for a Proposal that does not exist.
+    "no-proposal-treated-as-a-proposal": (CYCLE, OUTCOMES_SUITE,
+        "failure = ended_by in RUN_FAILURE_BOUNDS or not proposal",
+        "failure = ended_by in RUN_FAILURE_BOUNDS",
+    ),
+    # The retry budget is never spent on failures, so a Run that fails every
+    # time is retried forever and the operator is never told.
+    "failure-retried-forever": (CYCLE, OUTCOMES_SUITE,
+        "if failure and attempt < MAX_ATTEMPTS:",
+        "if failure:",
+    ),
+    # The first failure gives up immediately, so story 14's self-healing
+    # retry never happens and every transient failure reaches the operator.
+    "first-failure-never-retried": (CYCLE, OUTCOMES_SUITE,
+        "if failure and attempt < MAX_ATTEMPTS:",
+        "if False:",
+    ),
+    # Checks are never consulted: every clean Run goes to review, red or not.
+    "checks-ignored": (CYCLE, OUTCOMES_SUITE,
+        'if answer["state"] == "green":',
+        "if True:",
+    ),
+    # CI that has not finished is treated as CI that passed, so unverified
+    # work is put in the review queue - the failure the wait bound exists for.
+    "pending-treated-as-decided": (CYCLE, OUTCOMES_SUITE,
+        'if answer["state"] == "pending":',
+        "if False:",
+    ),
+    # The Selector waits for nothing, so a Proposal whose checks are merely
+    # slow is routed to a human as though CI had stalled.
+    "checks-never-waited-for": (DISPATCH, OUTCOMES_SUITE,
+        'if answer["state"] != "pending":',
+        "if True:",
+    ),
+    # Bookkeeping the tracker refused is swallowed, so a Run whose result
+    # never reached the issue looks like a cycle that worked (story 31).
+    "route-failure-not-paged": (CYCLE, OUTCOMES_SUITE,
+        'journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})\n        raise CycleFailed(str(exc)) from exc',
+        'journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})\n        return "route-failed"',
+    ),
+    # The comment is posted after the swap rather than before, so a swap that
+    # landed and a comment that failed leaves the issue out of every queue
+    # with nothing on it saying why.
+    "handover-relabels-before-commenting": (CYCLE, OUTCOMES_SUITE,
+        "        if body is not None:\n            dispatch.comment(dispatch_config, config.task_repo, number, body)\n        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=label, remove=config.label,\n        )",
+        "        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=label, remove=config.label,\n        )\n        if body is not None:\n            dispatch.comment(dispatch_config, config.task_repo, number, body)",
     ),
 }
 

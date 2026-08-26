@@ -4,6 +4,7 @@
 #
 #   github.sh <owner/repo> comment <number>            # body on stdin
 #   github.sh <owner/repo> relabel <number> <add> <remove>
+#   github.sh <owner/repo> checks <proposal-url-or-number>
 #
 # The default SELECTOR_ISSUE_COMMAND. This is the half of the Selector the
 # Loop's box deliberately cannot do: the box's fine-grained token holds no
@@ -19,6 +20,11 @@
 # The comment body arrives on stdin rather than as an argument. It is markdown
 # with newlines and backticks in it, and an argument would put the whole of it
 # in this VM's process listing.
+#
+# `checks` prints one JSON object - {"state": "green"|"red"|"pending",
+# "failing": [...]} - and that shape, not gh's, is the Selector's contract.
+# The translation lives here so that a different tracker is a different script
+# and no change to cycle.py (ADR 0004).
 #
 # Exit codes: 0 done, 1 could not run or GitHub refused.
 
@@ -59,6 +65,60 @@ case "${action}" in
         gh issue edit "${number}" --repo "${task_repo}" \
             --add-label "${add}" --remove-label "${remove}" >/dev/null ||
             die "GitHub refused the label swap on ${task_repo}#${number}"
+        ;;
+    checks)
+        command -v jq >/dev/null 2>&1 ||
+            die "jq is required to read a Proposal's checks"
+        # `gh pr checks` exits non-zero to MEAN something - 8 while checks are
+        # still running, 1 when one has failed - so its exit code alone cannot
+        # say whether the call worked, and the state is read from the rows.
+        #
+        # The dangerous case is an empty stdout, because THREE different things
+        # produce it, all of them with exit 1: a Proposal with no checks
+        # configured, a token that may not read check runs, and any other API
+        # failure. Only the first is green. Treating them alike - which an
+        # `|| true` and a default of `[]` does - routes unverified work to
+        # `awaiting-review` the moment a token loses a permission, which is
+        # exactly the silent false-pass this whole path exists to prevent.
+        # So the three are told apart by what gh said on stderr, and anything
+        # that is not "no checks reported" is a failure the Selector pages for.
+        checks_err="$(mktemp)"
+        # shellcheck disable=SC2064
+        trap "rm -f -- '${checks_err}'" EXIT
+        rows=""
+        rows="$(gh pr checks "${number}" --repo "${task_repo}" \
+                   --json name,state 2>"${checks_err}")" || true
+        if [[ -z ${rows} ]]; then
+            if grep -q 'no checks reported' "${checks_err}"; then
+                # No check is configured on this Proposal, so there is none
+                # that can still fail. Green rather than pending: calling it
+                # pending would park every such Proposal at the wait bound.
+                rows='[]'
+            else
+                die "could not read the checks on ${task_repo}#${number}: $(tr '\n' ' ' < "${checks_err}")"
+            fi
+        fi
+        printf '%s' "${rows}" | jq -c '
+            # gh reports one row per check with a state. PENDING/QUEUED/
+            # IN_PROGRESS are not decided yet; FAILURE/ERROR/TIMED_OUT/
+            # CANCELLED are red; SUCCESS/NEUTRAL/SKIPPED are green. Anything
+            # unrecognised counts as red, which is the safe direction: an
+            # unknown state must never route work to review as if it passed.
+            def red: ["FAILURE","ERROR","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"];
+            def green: ["SUCCESS","NEUTRAL","SKIPPED"];
+            def waiting: ["PENDING","QUEUED","IN_PROGRESS","REQUESTED","WAITING"];
+            (map(select(.state as $s | waiting | index($s))) | length) as $pending
+            | [ .[] | select(.state as $s | green | index($s) | not)
+                    | select(.state as $s | waiting | index($s) | not)
+                    | .name ] as $failing
+            | if ($failing | length) > 0 then
+                  {state: "red", failing: $failing}
+              elif $pending > 0 then
+                  {state: "pending", failing: []}
+              else
+                  {state: "green", failing: []}
+              end' ||
+            die "could not read the checks on ${task_repo} ${number}"
         ;;
     *)
         die "unknown action: ${action}"

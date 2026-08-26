@@ -36,9 +36,11 @@ that the Journal's shape is decided in one file rather than two.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,6 +69,8 @@ class DispatchConfig:
     issue_command: str
     command_timeout_seconds: int
     run_timeout_seconds: int
+    checks_timeout_seconds: int
+    checks_poll_seconds: int
 
     @classmethod
     def from_env(cls) -> "DispatchConfig":
@@ -101,6 +105,18 @@ class DispatchConfig:
             run_timeout_seconds=int(
                 env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "7200")
             ),
+            # How long a Proposal's checks may stay pending before the
+            # Selector stops waiting (#155). CI starts when the Run pushes,
+            # so at the moment the box hands back its summary the checks have
+            # almost always only just been queued - reading once and calling
+            # the answer final would route nearly every green Run to a human.
+            # Fifteen minutes is tourbot's suite with room, and what is on the
+            # other side of the bound is a comment to the operator rather than
+            # a guess, so erring short is safe.
+            checks_timeout_seconds=int(
+                env("SELECTOR_CHECKS_TIMEOUT_SECONDS", "900")
+            ),
+            checks_poll_seconds=int(env("SELECTOR_CHECKS_POLL_SECONDS", "30")),
         )
 
 
@@ -307,3 +323,56 @@ def relabel(config: DispatchConfig, task_repo: str, number: int, *,
     )
     if completed.returncode != 0:
         raise DispatchFailed(f"could not relabel #{number}: {_said(completed)}")
+
+
+def checks(config: DispatchConfig, task_repo: str, proposal: str) -> dict:
+    """What CI makes of one Proposal: `{"state", "failing"}`.
+
+    `state` is `green`, `red` or `pending`, and `failing` names the checks
+    that are red. The translation from whatever the tracker actually reports
+    lives in the substitutable command, not here - which is what lets a
+    different tracker be a different script (ADR 0004), and what lets the
+    offline suite answer with a file.
+    """
+    completed = _run(
+        [config.issue_command, task_repo, "checks", proposal],
+        timeout=config.command_timeout_seconds,
+    )
+    if completed.returncode != 0:
+        raise DispatchFailed(
+            f"could not read the checks on {proposal}: {_said(completed)}"
+        )
+    try:
+        payload = json.loads(completed.stdout)
+        state = payload["state"]
+        failing = list(payload.get("failing") or [])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise DispatchFailed(
+            f"the checks on {proposal} did not parse: {exc}"
+        ) from exc
+    if state not in ("green", "red", "pending"):
+        raise DispatchFailed(f"unknown check state {state!r} on {proposal}")
+    return {"state": state, "failing": failing}
+
+
+def settled_checks(config: DispatchConfig, task_repo: str, proposal: str,
+                   *, sleep=time.sleep) -> dict:
+    """The same, waited on until CI has decided or the wait is spent.
+
+    Polled rather than watched because the seam is a command that answers and
+    exits; a command that blocked until CI finished would be a second timeout
+    to reason about and would hide the waiting from the Journal.
+
+    A wait of zero reads exactly once, which is both what the offline suite
+    wants and the honest reading of "do not wait": the answer is whatever CI
+    says right now.
+    """
+    deadline = time.monotonic() + config.checks_timeout_seconds
+    while True:
+        answer = checks(config, task_repo, proposal)
+        if answer["state"] != "pending":
+            return answer
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return answer
+        sleep(min(config.checks_poll_seconds, remaining))

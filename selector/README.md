@@ -56,6 +56,8 @@ the Journal answers "what would it have picked?" as well as "what did it?".
 | `SELECTOR_TASK_REPO` | `Educational-Travel-Adventures/tourbot` | |
 | `SELECTOR_LABEL` | `ready-for-agent` | the Handover |
 | `SELECTOR_NEEDS_INFO_LABEL` | `needs-info` | where a loud skip sends an issue |
+| `SELECTOR_REVIEW_LABEL` | `awaiting-review` | a green Proposal waiting on the operator |
+| `SELECTOR_HUMAN_LABEL` | `ready-for-human` | a give-up, or red checks |
 | `SELECTOR_LABELER_ALLOWLIST` | `JacobStephens2` | comma-separated |
 | `SELECTOR_DAILY_CAP` | `4` | dispatches per rolling 24h |
 | `SELECTOR_JOURNAL_DSN` | `dbname=selector` | |
@@ -67,6 +69,8 @@ the Journal answers "what would it have picked?" as well as "what did it?".
 | `SELECTOR_ISSUE_COMMAND` | `issue-sources/github.sh` | comments and label swaps |
 | `SELECTOR_COMMAND_TIMEOUT_SECONDS` | `300` | git, Seeding, tracker writes |
 | `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
+| `SELECTOR_CHECKS_TIMEOUT_SECONDS` | `900` | how long a Proposal's checks may stay pending |
+| `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
 
 Two timeouts because the two waits are nothing like each other: everything
 except the Run should answer in seconds, and giving a comment or a fetch the
@@ -162,6 +166,66 @@ tourbot issue carried the `Owning area` section the label started promising on
 2026-08-26, so on that day every otherwise-ready issue in the queue was one
 the loud skip above would hand straight back.
 
+## The outcome
+
+The Run has ended, its summary is in the Journal, and the issue is still
+sitting in the agent queue. What happens next is decided from two facts and
+nothing else - the Run's ending bound, and the Proposal's checks - and it is
+the bookkeeping the box deliberately cannot do (ADR 0010).
+
+| the Run | the checks | what the Selector does |
+| --- | --- | --- |
+| cut short by `run-clock`, `consecutive-noops` or `agent-failed`, first attempt | not read | nothing to the issue. It keeps `ready-for-agent`, and the next cycle dispatches it again **on the same branch** |
+| cut short again, second attempt | not read | comment saying what happened, swap to `ready-for-human` |
+| reached its `iteration-cap` with a Proposal | green | swap to `awaiting-review`, no comment |
+| reached its `iteration-cap` with a Proposal | red | comment naming the failing checks, swap to `ready-for-human` |
+| reached its `iteration-cap` with a Proposal | still pending when the wait is spent | comment saying so, swap to `ready-for-human` |
+| reached its `iteration-cap` and proposed nothing | not read | a failed attempt: retried once, then given up |
+
+A few of those deserve their reasoning stated.
+
+**`iteration-cap` is not a failure.** A Run that reached its cap did what it
+was designed to do, faults or no faults, and it is judged on the Proposal it
+left rather than on the bound that ended it. Everything else is the
+Termination Contract cutting a Run short, which is what story 14's retry is
+for.
+
+**The retry is the queue working, not a second code path.** A first failure
+swaps no label, so the issue is simply picked again by the ordinary route, and
+`prepare_branch` continues the branch the first attempt left behind rather than
+resetting it - which is what stops a retry proposing an empty diff.
+
+**Nothing is dispatched a third time.** Two guards, deliberately independent:
+the give-up swaps the label out of the queue, and Eligibility refuses an issue
+whose Journal already holds `MAX_ATTEMPTS` dispatches since it was last
+labeled. The second is what holds when GitHub refuses the first.
+
+**Pending checks are not green.** CI starts when the Run pushes, so at the
+moment the box hands back its summary the checks have usually only just been
+queued; reading once and calling that final would route nearly every green Run
+to a human. The Selector polls for `SELECTOR_CHECKS_TIMEOUT_SECONDS` and, if
+CI still has not decided, hands the issue to the operator rather than putting
+unverified work in the review queue.
+
+**Red is the fallthrough.** `issue-sources/github.sh` maps an unrecognised
+check state to red, and so does `cycle.py`. An unknown state must never reach
+`awaiting-review` as though it had passed.
+
+**The green path needs a token permission it does not yet have.** Reading a
+Proposal's checks needs **Checks: Read** on the fine-grained PAT, and the
+operator's token does not hold it for tourbot today. Until it does, a clean
+Run's route fails loudly - `issue.route-failed`, cycle exit 1, the timer pages
+- rather than mislabelling unverified work. The other three routes do not read
+checks and are unaffected. See `../notes/selector-outcome-evidence.md`.
+
+Each route appends its own Journal row - `issue.retrying`, `issue.given-up`,
+`issue.awaiting-review`, `issue.handed-to-human` - so the Journal is greppable
+by outcome, and `/loop` reads them to badge each Run card with the label the
+issue actually carries. Bookkeeping the tracker refused is journaled as
+`issue.route-failed` and exits the cycle non-zero, so the timer's `OnFailure`
+pages (story 31). The `run.outcome` row is written before any of this, so a
+label swap GitHub rejected never erases the Journal's record that a Run ran.
+
 ## Files
 
 - `cycle.py` - the cycle above: Eligibility, ordering, caps, and the
@@ -174,7 +238,8 @@ the loud skip above would hand straight back.
   native blocker count, open sub-issues, open Proposals). Substitutable, and
   the seam the offline suite drives.
 - `issue-sources/github.sh` - the default `SELECTOR_ISSUE_COMMAND`: one
-  comment, or one label swap, as the operator. This is the half of the work
+  comment, one label swap, or one read of a Proposal's checks, as the
+  operator. This is the half of the work
   the box deliberately cannot do - its token holds no Issues permission at
   all - so every write to the tracker happens here.
 - `box-sources/ssh.sh` - the default `SELECTOR_BOX_COMMAND`: one SSH hop that

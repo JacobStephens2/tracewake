@@ -33,6 +33,11 @@
         {% if r.in_flight %}<span class="badge">in flight</span>
         {% else %}<span class="badge">{{ r.outcome }}</span>{% endif %}
         {% if r.attempt and r.attempt > 1 %}<span class="badge">attempt {{ r.attempt }}</span>{% endif %}
+        {# Where the outcome put the issue (#155). The label badge is the one
+           that should match what the operator sees on the issue itself, so it
+           carries the label string verbatim rather than a friendlier word. #}
+        {% if r.label %}<span class="badge badge-{{ r.route }}">{{ r.label }}</span>
+        {% elif r.route == "retrying" %}<span class="badge badge-retrying">retrying</span>{% endif %}
       </h3>
       <p class="run-task">
         <a href="{{ r.url }}">{{ r.title or r.task_ref }}</a><br>
@@ -55,6 +60,26 @@
         {% if r.proposal %}<a href="{{ r.proposal }}">{{ r.proposal }}</a>
         {% else %}none - the Run produced nothing to review{% endif %}
       </p>
+      {% if r.route == "retrying" %}
+      <p class="detail">The retry budget is not spent, so the issue keeps its
+         <code>ready-for-agent</code> label and the next cycle dispatches it
+         again on this branch.</p>
+      {% elif r.route == "given-up" %}
+      <p class="detail">The retry budget is spent. The issue was commented on
+         and swapped to <code>{{ r.label }}</code>; it will not be dispatched
+         again under this Handover.</p>
+      {% elif r.route == "handed-to-human" %}
+      <p class="detail">
+        {% if r.checks == "pending" %}The Proposal's checks did not finish
+        inside the Selector's wait, so it was not put in the review queue.
+        {% else %}The Proposal's checks are red:
+        {% for name in r.failing %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+        {% endif %}
+        Swapped to <code>{{ r.label }}</code>; no repair Run is started.</p>
+      {% elif r.route == "awaiting-review" %}
+      <p class="detail">Checks green. The issue is swapped to
+         <code>{{ r.label }}</code> and is waiting on you.</p>
+      {% endif %}
       {% endif %}
     </section>
     {% endfor %}

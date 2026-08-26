@@ -80,6 +80,19 @@ REQUIRED_SECTIONS = ("Acceptance criteria", "Owning area")
 # budget, which is how an operator says "try that again".
 MAX_ATTEMPTS = 2
 
+# The ending bounds that mean the Run failed rather than finished (#155,
+# story 14). `iteration-cap` is the Run doing what it was designed to do -
+# with faults or without them - and everything else is the Termination
+# Contract cutting a Run short. A failure is retried once; a Run that reached
+# its cap is judged on the Proposal it left instead.
+RUN_FAILURE_BOUNDS = ("run-clock", "consecutive-noops", "agent-failed")
+
+# A Run that ended within its bounds and proposed nothing is recorded under
+# this instead of an ending bound. It is treated as a failed attempt: there is
+# no Proposal to read checks for and nothing for the operator to review, and a
+# second attempt on the same branch may well produce one.
+NO_PROPOSAL = "no-proposal"
+
 # Rolling rather than calendar. "4 Runs a day" is a spend bound, and a
 # calendar boundary lets eight Runs happen inside three hours across midnight
 # while every one of them is within its day.
@@ -100,6 +113,8 @@ class Config:
     task_repo: str
     label: str
     needs_info_label: str
+    review_label: str
+    human_label: str
     allowlist: tuple[str, ...]
     daily_cap: int
     tracker_command: str
@@ -113,6 +128,8 @@ class Config:
             ),
             label=env("SELECTOR_LABEL", "ready-for-agent"),
             needs_info_label=env("SELECTOR_NEEDS_INFO_LABEL", "needs-info"),
+            review_label=env("SELECTOR_REVIEW_LABEL", "awaiting-review"),
+            human_label=env("SELECTOR_HUMAN_LABEL", "ready-for-human"),
             allowlist=tuple(
                 name.strip()
                 for name in env("SELECTOR_LABELER_ALLOWLIST", "JacobStephens2").split(",")
@@ -472,6 +489,214 @@ def _dispatch_pick(
     return outcome
 
 
+# --- Routing the outcome ----------------------------------------------------
+#
+# The Run has ended and the Journal has its outcome row. What is left is the
+# bookkeeping the box deliberately cannot do (ADR 0010): move the issue into
+# the queue its result puts it in, and say why on the issue itself.
+#
+# Four routes, from spec #151's stories 14-17. Which one is taken is decided
+# from two facts only - the Run's ending bound, and the Proposal's checks -
+# so that the reasoning is readable in one function rather than spread
+# through the dispatch.
+
+
+def _failure_comment(config: Config, outcome: str, attempt: int,
+                     proposal: str | None) -> str:
+    """What the operator reads when the Selector has stopped trying.
+
+    The bound that ended this attempt, then what that means, then where the
+    work got to. It names the branch's Proposal when there is one: a Run that
+    failed can still have left a partial diff worth reading, and a give-up
+    that mentioned no artifact would send the operator looking for one.
+    """
+    # Only ever what this cycle actually saw. The earlier attempt ended in its
+    # own cycle and may have ended differently; a comment that spoke for it
+    # would be the Selector asserting something it did not observe, and the
+    # Journal is where the whole sequence can be read back.
+    ran = "ended with no Proposal" if outcome == NO_PROPOSAL else \
+        f"was cut short by `{outcome}`"
+    where = (
+        f"\n\nWhat this attempt left behind: {proposal}"
+        if proposal else
+        "\n\nThis attempt left no Proposal."
+    )
+    return f"""The Selector has now dispatched this issue {attempt} times. The last Run {ran}.
+
+The retry budget is {MAX_ATTEMPTS} attempts per Handover, and it is now spent, so the label has been swapped to `{config.human_label}`. No further Run will be started for this issue: a third dispatch is refused whatever the label says.{where}
+
+If the failure was transient, or you have changed something that fixes it, re-apply `{config.label}`: that is a fresh Handover with a fresh retry budget.
+
+*Posted by the Selector. Deterministic code, not an agent - no model wrote this and none read the issue.*"""
+
+
+def _red_checks_comment(config: Config, proposal: str,
+                        failing: list[str]) -> str:
+    """The failing check names, and why no repair Run is coming.
+
+    Deliberately not a repair loop (spec #151, out of scope): CI output
+    reaches the operator and the fix is a human's. Saying so on the issue is
+    what stops the silence being read as "the Selector will handle it".
+    """
+    named = "\n".join(f"- `{name}`" for name in failing)
+    return f"""The Run ended cleanly and left a Proposal, but its checks are red.
+
+{proposal}
+
+Failing:
+
+{named}
+
+No repair Run will be started - committing CI output back into the branch for a fix-up Run is deliberately out of the Selector's scope. The label has been swapped to `{config.human_label}`.
+
+*Posted by the Selector. Deterministic code, not an agent - no model wrote this and none read the issue.*"""
+
+
+def _unsettled_checks_comment(config: Config, proposal: str,
+                              waited: int) -> str:
+    return f"""The Run ended cleanly and left a Proposal, but its checks did not finish within the {waited}s the Selector waits.
+
+{proposal}
+
+Unverified work is not put in the review queue, so the label has been swapped to `{config.human_label}` rather than `{config.review_label}`. The checks may well have gone green since; read them on the Proposal.
+
+*Posted by the Selector. Deterministic code, not an agent - no model wrote this and none read the issue.*"""
+
+
+def _route(
+    conn: psycopg.Connection,
+    cycle_id: int,
+    config: Config,
+    dispatch_config: dispatch.DispatchConfig,
+    pick: dict,
+    outcome: dict,
+    attempt: int,
+) -> str:
+    """Decide the route, act on it, journal it. Returns the route's name.
+
+    Raises CycleFailed when the tracker refused the bookkeeping: a Run whose
+    result could not be recorded on the issue leaves the operator with a
+    Proposal nothing points at, which is exactly the silent failure story 31
+    asks to be paged for.
+    """
+    number = pick["number"]
+    proposal = outcome.get("proposal")
+    ended_by = outcome["outcome"]
+    # A Run that reached its cap but proposed nothing is a failed attempt.
+    # Recorded under its own name rather than the bound, because "iteration-cap
+    # with nothing to show" and "iteration-cap with a Proposal" are opposite
+    # results and a Journal that called them the same thing would be unreadable.
+    failure = ended_by in RUN_FAILURE_BOUNDS or not proposal
+    result = NO_PROPOSAL if (not proposal and ended_by not in RUN_FAILURE_BOUNDS) \
+        else ended_by
+
+    payload = {
+        "cycle": cycle_id,
+        "issue": number,
+        "title": pick.get("title"),
+        "url": pick.get("url"),
+        "attempt": attempt,
+        "outcome": result,
+        "proposal": proposal,
+    }
+
+    if failure and attempt < MAX_ATTEMPTS:
+        # No label swap and no comment. The issue keeps `ready-for-agent`, so
+        # the next cycle picks it up again by the ordinary route - the retry
+        # is the queue working rather than a second dispatch path - and
+        # prepare_branch continues the branch this attempt left behind.
+        journal.append(conn, "issue.retrying", {**payload, "of": MAX_ATTEMPTS})
+        return "retrying"
+
+    if failure:
+        body = _failure_comment(config, result, attempt, proposal)
+        return _hand_over(
+            conn, config, dispatch_config, number, body,
+            {**payload, "label": config.human_label},
+            kind="issue.given-up", label=config.human_label,
+        )
+
+    try:
+        answer = dispatch.settled_checks(
+            dispatch_config, config.task_repo, proposal
+        )
+    except dispatch.DispatchFailed as exc:
+        # A tracker that will not say whether CI passed is not a green light,
+        # and guessing either way would be the Selector inventing a fact. It
+        # is journaled and paged like any other refusal.
+        journal.append(
+            conn, "issue.route-failed",
+            {**payload, "label": None, "error": str(exc)},
+        )
+        raise CycleFailed(str(exc)) from exc
+
+    payload["checks"] = answer["state"]
+    if answer["state"] == "green":
+        # The only route into the review queue, and the only one that posts no
+        # comment. Everything else lands on the operator.
+        return _hand_over(
+            conn, config, dispatch_config, number, None,
+            {**payload, "label": config.review_label},
+            kind="issue.awaiting-review", label=config.review_label,
+        )
+
+    if answer["state"] == "pending":
+        # The wait is spent and CI still has not decided. Unverified work does
+        # not go in the review queue, so this joins the red route rather than
+        # the green one - with a body that says which of the two happened,
+        # because "CI failed" and "CI never answered" need different actions
+        # from the operator.
+        return _hand_over(
+            conn, config, dispatch_config, number,
+            _unsettled_checks_comment(
+                config, proposal, dispatch_config.checks_timeout_seconds
+            ),
+            {**payload, "label": config.human_label, "failing": []},
+            kind="issue.handed-to-human", label=config.human_label,
+        )
+
+    # Red, and anything a future check state adds: not green is not reviewable.
+    return _hand_over(
+        conn, config, dispatch_config, number,
+        _red_checks_comment(config, proposal, answer["failing"]),
+        {**payload, "label": config.human_label, "failing": answer["failing"]},
+        kind="issue.handed-to-human", label=config.human_label,
+    )
+
+
+def _hand_over(
+    conn: psycopg.Connection,
+    config: Config,
+    dispatch_config: dispatch.DispatchConfig,
+    number: int,
+    body: str | None,
+    payload: dict,
+    *,
+    kind: str,
+    label: str,
+) -> str:
+    """Comment (when there is something to say), swap the label, journal it.
+
+    The comment goes first, for the same reason it does in the loud skip: a
+    swap that landed with no comment takes the issue out of the agent queue
+    with nothing on it saying why. The green route passes no body - the
+    Proposal is the artifact and a comment restating that it exists is noise
+    on an issue the operator is about to open anyway.
+    """
+    try:
+        if body is not None:
+            dispatch.comment(dispatch_config, config.task_repo, number, body)
+        dispatch.relabel(
+            dispatch_config, config.task_repo, number,
+            add=label, remove=config.label,
+        )
+    except dispatch.DispatchFailed as exc:
+        journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})
+        raise CycleFailed(str(exc)) from exc
+    journal.append(conn, kind, payload)
+    return kind.split(".", 1)[1]
+
+
 # --- The cycle --------------------------------------------------------------
 
 
@@ -612,14 +837,22 @@ def run_cycle(
 
     summary["return_failures"] = return_failures
     summary["outcome"] = None
+    summary["route"] = None
     if pick and not dry_run:
+        attempt = spend.attempts(
+            pick["number"], picked_record.get("labeledAt")
+        ) + 1
         summary["outcome"] = _dispatch_pick(
-            conn,
-            cycle_id,
-            config,
-            dispatch_config,
-            pick,
-            spend.attempts(pick["number"], picked_record.get("labeledAt")) + 1,
+            conn, cycle_id, config, dispatch_config, pick, attempt,
+        )
+        # Routing is separate from dispatching, and after it, because the two
+        # answer different questions: `_dispatch_pick` records what the Run
+        # did, and this decides what that means for the issue. Keeping the
+        # outcome row unconditional is what stops a label swap GitHub refused
+        # from erasing the Journal's record that a Run ever ran.
+        summary["route"] = _route(
+            conn, cycle_id, config, dispatch_config, pick,
+            summary["outcome"], attempt,
         )
     return summary
 
@@ -648,6 +881,8 @@ def _report(summary: dict) -> None:
             f" faults {outcome.get('faults', '?')})"
         )
         print(f"proposal     {outcome.get('proposal') or 'none'}")
+    if summary.get("route"):
+        print(f"routed       {summary['route']}")
     print(
         f"budget       {summary['dispatched_in_window']}/{summary['daily_cap']}"
         f" dispatches in the last {CAP_WINDOW_HOURS}h"

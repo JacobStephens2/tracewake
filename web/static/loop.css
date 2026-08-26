@@ -34,3 +34,20 @@
 .cycle table.skips {
     margin-top: 1rem;
 }
+
+/* Where an outcome put the issue (#155). The route badges carry the meaning
+   the operator acts on - green is the only one that means "nothing to do but
+   review" - so they are the only badges on the card that are coloured. */
+.run .badge-awaiting-review {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+.run .badge-handed-to-human,
+.run .badge-given-up {
+    border-color: var(--error-color);
+    color: var(--error-color);
+}
+.run .badge-retrying {
+    border-color: var(--secondary-color);
+    color: var(--secondary-color);
+}

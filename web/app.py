@@ -182,6 +182,21 @@ def _cycles(events: list[dict]) -> list[dict]:
     return sorted(whole, key=lambda c: c["id"], reverse=True)
 
 
+# The Journal rows that say where an outcome put the issue (#155). One kind
+# per route so that the Journal is greppable by outcome, which means the page
+# has to know the set rather than matching a prefix.
+ROUTE_KINDS = {
+    "issue.awaiting-review",
+    "issue.handed-to-human",
+    "issue.given-up",
+    "issue.retrying",
+}
+
+# Every kind a Run card is built from, so the membership test is one lookup
+# rather than a set union rebuilt per event.
+RUN_KINDS = ROUTE_KINDS | {"run.dispatched", "run.outcome"}
+
+
 def _runs(events: list[dict]) -> list[dict]:
     """One card per dispatch, newest first: the Run in flight, and the Runs
     that have ended with what they produced.
@@ -196,13 +211,25 @@ def _runs(events: list[dict]) -> list[dict]:
     cards: dict[tuple, dict] = {}
     for event in events:  # newest first
         payload = event["payload"] or {}
-        if event["kind"] not in ("run.dispatched", "run.outcome"):
+        if event["kind"] not in RUN_KINDS:
             continue
         if payload.get("issue") is None:
             continue
         key = (payload["issue"], payload.get("attempt"))
         card = cards.setdefault(key, {"in_flight": True})
-        if event["kind"] == "run.dispatched":
+        if event["kind"] in ROUTE_KINDS:
+            # Where the outcome put the issue (#155). Journaled as its own row
+            # rather than folded into `run.outcome`, because the route is
+            # decided after that row is written - so the card learns it from
+            # the routing event or shows no badge at all, which is what an
+            # in-flight Run and a route the tracker refused both look like.
+            card.update(
+                route=event["kind"].split(".", 1)[1],
+                label=payload.get("label"),
+                failing=payload.get("failing"),
+                checks=payload.get("checks"),
+            )
+        elif event["kind"] == "run.dispatched":
             card.update(
                 dispatched=True,
                 id=event["id"],

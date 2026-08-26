@@ -94,6 +94,17 @@ skip is quiet, because a blocked task commented on every half hour is a queue
 nobody reads.
 _Avoid_: rejection, bounce, failing an issue
 
+**Route**:
+What the Selector does to the issue once its Run has ended: the swap to
+`awaiting-review` (a Proposal with green checks), to `ready-for-human` (red
+checks, checks that never settled, or a second failed Run), or the deliberate
+non-swap of a first failure, which leaves the task in the queue to be picked
+again. Decided from two facts only - the Run's ending bound and the Proposal's
+checks - and journaled under its own event kind, so the Journal is readable by
+outcome. A Route is bookkeeping, not judgement: it moves a card, it never
+decides whether the work is good.
+_Avoid_: triage, verdict, disposition, grading the Run
+
 **Eligible**:
 The predicate a labeled task passes before the Selector may seed it: labeled by
 an allowlisted operator, no open blocking dependency - native tracker edges
@@ -103,9 +114,11 @@ _Avoid_: unblocked, ready (the labels already own that word)
 
 **Selector Journal**:
 The append-only record of the Selector's decisions and of Run outcomes: what was
-eligible, what was picked, what was skipped and why, how each Run ended. Read by
-the dashboard and by nothing that decides work - the tracker remains the only
-work source.
+eligible, what was picked, what was skipped and why, how each Run ended, and
+where its Route put the task. Read by the dashboard and by nothing that decides
+work - the tracker remains the only work source. It is also where the retry
+budget is counted from, which is why a Route that GitHub refused still leaves a
+task that cannot be dispatched a third time.
 _Avoid_: ledger, log, queue
 
 **Owning Area**:

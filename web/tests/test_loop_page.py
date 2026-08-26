@@ -294,3 +294,123 @@ def test_a_run_whose_dispatch_scrolled_off_the_page_is_not_rendered(db):
     body = client.get("/loop").text
     assert "<h2>Runs</h2>" not in body
     assert "111" in body, "the raw event table still shows it"
+
+
+# --- Where the outcome put the issue (#155) ---------------------------------
+
+
+def _ended(conn, cycle, outcome="iteration-cap", **over):
+    payload = {
+        "cycle": cycle, "issue": 645, "attempt": 1, "outcome": outcome,
+        "exit": 0, "iterations": 5, "faults": "none", "notified": "sent",
+        "proposal": "https://github.invalid/acme/widgets/pull/12",
+    }
+    payload.update(over)
+    return journal.append(conn, "run.outcome", payload)
+
+
+def test_a_green_run_shows_the_awaiting_review_badge(db):
+    """Issue #155's viewing criterion. The badge carries the label string
+    verbatim, because its job is to match what the operator sees on the issue
+    - a friendlier word here would be a second vocabulary for one state."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _ended(conn, cycle)
+        journal.append(
+            conn, "issue.awaiting-review",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "label": "awaiting-review", "checks": "green",
+             "proposal": "https://github.invalid/acme/widgets/pull/12"},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert '<span class="badge badge-awaiting-review">awaiting-review</span>' in runs
+    assert "waiting on you" in runs
+
+
+def test_a_red_run_names_the_failing_checks_on_its_card(db):
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _ended(conn, cycle)
+        journal.append(
+            conn, "issue.handed-to-human",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "label": "ready-for-human", "checks": "red",
+             "failing": ["phpunit", "lint"]},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert '<span class="badge badge-handed-to-human">ready-for-human</span>' in runs
+    assert "phpunit" in runs and "lint" in runs
+
+
+def test_a_run_waiting_on_a_retry_says_so(db):
+    """A retry has no label swap, so the card has to say why an issue with a
+    failed Run is still in the agent queue."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _ended(conn, cycle, outcome="agent-failed", exit=4)
+        journal.append(
+            conn, "issue.retrying",
+            {"cycle": cycle, "issue": 645, "attempt": 1, "of": 2,
+             "outcome": "agent-failed"},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert '<span class="badge badge-retrying">retrying</span>' in runs
+    assert "ready-for-agent" in runs
+
+
+def test_a_given_up_run_shows_the_human_label(db):
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle, attempt=2)
+        _ended(conn, cycle, outcome="agent-failed", exit=4, attempt=2)
+        journal.append(
+            conn, "issue.given-up",
+            {"cycle": cycle, "issue": 645, "attempt": 2,
+             "label": "ready-for-human", "outcome": "agent-failed"},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert '<span class="badge badge-given-up">ready-for-human</span>' in runs
+    assert "will not be dispatched" in runs
+
+
+def test_a_route_is_paired_to_its_own_attempt(db):
+    """Same pairing rule as the outcome. A first attempt that was retried and
+    a second that was given up are two cards, and the give-up badge belongs on
+    the second."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle, attempt=1)
+        _ended(conn, cycle, outcome="agent-failed", exit=4, attempt=1)
+        journal.append(
+            conn, "issue.retrying",
+            {"cycle": cycle, "issue": 645, "attempt": 1, "of": 2,
+             "outcome": "agent-failed"},
+        )
+        _dispatch_row(conn, cycle, attempt=2)
+        _ended(conn, cycle, outcome="agent-failed", exit=4, attempt=2)
+        journal.append(
+            conn, "issue.given-up",
+            {"cycle": cycle, "issue": 645, "attempt": 2,
+             "label": "ready-for-human", "outcome": "agent-failed"},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert runs.count('<section class="run') == 2
+    # Newest first, so the given-up card is the one above the retried one.
+    given, retried = runs.split('<section class="run')[1:3]
+    assert "badge-given-up" in given and "badge-retrying" not in given
+    assert "badge-retrying" in retried and "badge-given-up" not in retried
+
+
+def test_an_unrouted_run_shows_no_label_badge(db):
+    """A Run whose bookkeeping the tracker refused has an outcome and no
+    route. The card shows what is known rather than inventing a queue."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _ended(conn, cycle)
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "badge-awaiting-review" not in runs
+    assert "badge-handed-to-human" not in runs
