@@ -95,6 +95,18 @@
 
 # --- the tree it serves ------------------------------------------------------
 
+- name: staging worktree directory, conductor:srvwrite like the tree it came from
+  # Before the worktree add below, not after it: /srv is root-owned and mode
+  # 0755, so `conductor` cannot create a directory there and `git worktree add`
+  # fails "could not create leading directories". Root makes the directory,
+  # conductor fills it. `worktree add` accepts an existing empty directory.
+  ansible.builtin.file:
+    path: /srv/lab-webapp-staging
+    state: directory
+    owner: conductor
+    group: srvwrite
+    mode: "2775"
+
 - name: staging worktree
   # A git worktree of the shared checkout, NOT the shared checkout itself:
   # sixteen systemd units exec from {{ srv_dir }}, including the status
@@ -111,14 +123,6 @@
     git -C {{ srv_dir }} worktree add --detach /srv/lab-webapp-staging origin/master
   args:
     creates: /srv/lab-webapp-staging/.git
-
-- name: staging worktree is group-writable like the tree it came from
-  ansible.builtin.file:
-    path: /srv/lab-webapp-staging
-    state: directory
-    owner: conductor
-    group: srvwrite
-    mode: "2775"
 
 - name: staging venv + deps
   ansible.builtin.pip:
