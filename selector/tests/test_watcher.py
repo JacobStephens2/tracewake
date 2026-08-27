@@ -1,0 +1,301 @@
+"""The Iteration watcher at two boundaries (issue #157).
+
+The first half is the parser, driven with Progress Log snapshots exactly as
+`run.sh` writes them: what an Iteration record is, which Run's records count,
+and which half-written record does not count yet.
+
+The second half is the real `cycle.py` dispatching a real Run against a
+scripted box that WRITES A PROGRESS LOG WHILE IT RUNS, with the watch interval
+collapsed from a minute to a fraction of a second. Nothing here reads Selector
+internals: what is asserted is the rows that ended up in the Journal, which is
+the same thing `/loop` reads.
+
+The offline acceptance criterion is that exactly the new Iteration records are
+journaled and never a duplicate, so the fake box below deliberately holds each
+snapshot still for several polls: a watcher that journaled what it read rather
+than what is new would leave five rows where there is one Iteration.
+"""
+import pathlib
+import textwrap
+
+import pytest
+
+import watcher
+from conftest import _script, events, issue
+
+FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
+
+
+# --- Progress Log snapshots -------------------------------------------------
+#
+# Written by hand rather than captured, and kept verbatim: they are the shape
+# `run.sh` appends (loop/run.sh, the Iteration record block), and the point of
+# the parser is that it reads THAT rather than something this suite invented.
+
+SEEDED = """# Progress Log
+
+Task: acme/widgets#645 - Widen the sync window
+Owning area: The nightly sync script
+
+Seeded by seed-run.sh. No Iteration has run yet.
+"""
+
+RUN_HEADER = """
+## Run started {stamp}
+
+Task: acme/widgets#645
+
+Termination Contract:
+
+- Iterations: at most 5
+"""
+
+ITERATION_ONE = """
+### Iteration 1 - 2026-08-27T12:00:05Z
+
+- Agent exit: 0
+- Turn bound: 100
+- Head: 111111111111 -> 222222222222
+- Completion Promise: not recorded
+
+"""
+
+ITERATION_TWO = """
+### Iteration 2 - 2026-08-27T12:10:05Z
+
+- Agent exit: 124 (killed at its 900s wall clock)
+- Turn bound: 100
+- No-op Iteration: head unchanged at 222222222222
+- Completion Promise: recorded (advisory - the Run continues)
+- Uncommitted changes left in the working tree
+
+Agent output, last 40 lines:
+
+    something the agent said
+
+"""
+
+
+def log(stamp="2026-08-27T12:00:00Z", *iterations):
+    return SEEDED + RUN_HEADER.format(stamp=stamp) + "".join(iterations)
+
+
+# --- The parser -------------------------------------------------------------
+
+
+def test_a_seeded_log_holds_no_iterations():
+    assert watcher.iteration_records(SEEDED) == []
+
+
+def test_an_iteration_record_is_read_whole():
+    (record,) = watcher.iteration_records(log("2026-08-27T12:00:00Z", ITERATION_ONE))
+    assert record["iteration"] == 1
+    assert record["started"] == "2026-08-27T12:00:05Z"
+    assert record["agent_exit"] == 0
+    assert record["noop"] is False
+    assert record["head_before"] == "111111111111"
+    assert record["head_after"] == "222222222222"
+    assert record["promise"] is False
+    assert record["dirty"] is False
+    assert record["run_started"] == "2026-08-27T12:00:00Z"
+
+
+def test_a_cut_off_iteration_carries_what_cut_it_off():
+    records = watcher.iteration_records(
+        log("2026-08-27T12:00:00Z", ITERATION_ONE, ITERATION_TWO)
+    )
+    assert [r["iteration"] for r in records] == [1, 2]
+    second = records[1]
+    assert second["agent_exit"] == 124
+    assert second["exit_note"] == "killed at its 900s wall clock"
+    assert second["noop"] is True
+    assert second["head_before"] == "222222222222"
+    assert second["promise"] is True
+    assert second["dirty"] is True
+
+
+def test_only_the_current_runs_iterations_are_read():
+    """A retry reads a log the first attempt already wrote into. Its records
+    are that Run's, not this one's, and journaling them under this attempt
+    would put another Run's Iterations on this card."""
+    two_runs = (
+        log("2026-08-27T12:00:00Z", ITERATION_ONE, ITERATION_TWO)
+        + RUN_HEADER.format(stamp="2026-08-27T14:00:00Z")
+        + ITERATION_ONE.replace("Iteration 1 - 2026-08-27T12:00:05Z",
+                                "Iteration 1 - 2026-08-27T14:00:05Z")
+    )
+    records = watcher.iteration_records(two_runs)
+    assert [r["started"] for r in records] == ["2026-08-27T14:00:05Z"]
+    assert records[0]["run_started"] == "2026-08-27T14:00:00Z"
+
+
+def test_a_half_written_record_is_not_a_record_yet():
+    """The log is read while it is being appended to. A heading with no
+    `Agent exit` under it is a write in progress, and journaling it would put
+    a row on the page that says nothing and can never be corrected - the
+    Journal is append-only."""
+    partial = log("2026-08-27T12:00:00Z", ITERATION_ONE) + \
+        "\n### Iteration 2 - 2026-08-27T12:10:05Z\n"
+    assert [r["iteration"] for r in watcher.iteration_records(partial)] == [1]
+
+
+def test_a_run_older_than_the_watch_is_not_this_run(monkeypatch):
+    """The clock guard. A retry's watcher starts while the box is still
+    checking out, so the newest Run block in the log it reads is the previous
+    attempt's - told apart by when it started, because the two are otherwise
+    identical."""
+    started = watcher._parse_stamp("2026-08-27T14:00:00Z")
+    old = watcher.iteration_records(log("2026-08-27T12:00:00Z", ITERATION_ONE))
+    assert watcher.of_this_run(old, started, skew=300) == []
+    fresh = watcher.iteration_records(log("2026-08-27T14:00:30Z", ITERATION_ONE))
+    assert len(watcher.of_this_run(fresh, started, skew=300)) == 1
+
+
+def test_a_box_clock_a_little_behind_is_still_this_run():
+    """Both clocks are NTP-synced, but "a little behind" must not read as
+    "another Run": the cost of the guard being tight is a live Run whose
+    Iterations never appear."""
+    started = watcher._parse_stamp("2026-08-27T14:00:00Z")
+    just_behind = watcher.iteration_records(
+        log("2026-08-27T13:58:00Z", ITERATION_ONE)
+    )
+    assert len(watcher.of_this_run(just_behind, started, skew=300)) == 1
+
+
+def test_the_agents_own_narrative_is_not_read_as_a_record():
+    """A real Progress Log from the box (tests/fixtures/), trimmed. The log is
+    the Run's memory and the AGENT writes most of it - its own `## Iteration
+    2` headings, its own bullet lists - so a parser that took a record to run
+    until the next heading would swallow the agent's prose into it and would
+    not report Iteration 1 until Iteration 2 had finished, which is the one
+    thing this watcher exists to do."""
+    text = (FIXTURES / "box-progress-run-648.md").read_text()
+    records = watcher.iteration_records(text)
+    assert [r["iteration"] for r in records] == [1]
+    (first,) = records
+    assert first["agent_exit"] == 0
+    assert first["head_before"] == "f0f4d749e966"
+    assert first["head_after"] == "06d7a82a8309"
+    assert first["promise"] is False
+    assert first["run_started"] == "2026-08-25T16:32:48Z"
+    # The agent's own bullets sit between this record and the next heading,
+    # and none of them is on it.
+    assert first["dirty"] is False
+
+
+# --- The watcher against a live dispatch ------------------------------------
+
+
+@pytest.fixture
+def watched_box(box, tmp_path):
+    """The dispatch fixture's box, rewritten to write a Progress Log while the
+    Run is in flight - one snapshot appended at a time, each held still long
+    enough for several polls to read it."""
+    progress = box.progress_file
+
+    def snapshots(*chunks, hold="0.35"):
+        """Each chunk is appended to the log, then held still for `hold`
+        seconds - long enough for several polls at the interval these tests
+        run at, which is what makes "never a duplicate" an assertion rather
+        than a coincidence of timing."""
+        lines = []
+        for index, chunk in enumerate(chunks):
+            piece = tmp_path / f"chunk-{index}.txt"
+            piece.write_text(chunk)
+            lines.append(f'cat "{piece}" >> "{progress}"')
+            lines.append(f"sleep {hold}")
+        _script(tmp_path / "box.sh", textwrap.dedent(f"""
+            printf 'box %s\\n' "$*" >> "{tmp_path}/commands.log"
+        """) + "\n".join(lines) + f'\ncat "{tmp_path}/run-summary.txt"\n')
+
+    progress.write_text("")
+    box.snapshots = snapshots
+    return box
+
+
+def _run_with_a_progress_log(box, dsn, *chunks):
+    box.snapshots(*chunks)
+    return box.run(
+        dsn,
+        [issue(645)],
+        SELECTOR_WATCH_INTERVAL_SECONDS="0.05",
+        SELECTOR_WATCH_TIMEOUT_SECONDS="10",
+    )
+
+
+def test_iterations_are_journaled_while_the_run_is_in_flight(db, watched_box):
+    """The offline acceptance criterion: exactly the new Iteration records,
+    never a duplicate, from a log that grew three times under a watcher that
+    read it far more often than that."""
+    now = watcher._stamp(watcher._now())
+    result = _run_with_a_progress_log(
+        watched_box, db,
+        SEEDED + RUN_HEADER.format(stamp=now),
+        ITERATION_ONE,
+        ITERATION_TWO,
+    )
+    assert result.returncode == 0, result.stderr
+    rows = events(db, "run.iteration")
+    assert [r["payload"]["iteration"] for r in rows] == [1, 2]
+    first = rows[0]["payload"]
+    assert first["issue"] == 645
+    assert first["attempt"] == 1
+    assert first["branch"] == "loop/645-the-nightly-sync-script"
+    assert first["agent_exit"] == 0
+    assert rows[1]["payload"]["exit_note"] == "killed at its 900s wall clock"
+
+
+def test_the_last_iteration_lands_even_though_the_run_ended(db, watched_box):
+    """The final read. An Iteration written in the last seconds of a Run would
+    otherwise be missing from the page forever, because the watcher's next
+    poll never comes."""
+    now = watcher._stamp(watcher._now())
+    result = _run_with_a_progress_log(
+        watched_box, db,
+        SEEDED + RUN_HEADER.format(stamp=now) + ITERATION_ONE + ITERATION_TWO,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [r["payload"]["iteration"] for r in events(db, "run.iteration")] == [1, 2]
+
+
+def test_a_progress_log_that_cannot_be_read_does_not_fail_the_run(db, box, tmp_path):
+    """A watcher is a window, not a step of the dispatch. A box that will not
+    hand over its log says so once and the Run is unaffected."""
+    result = box.run(
+        db, [issue(645)],
+        SELECTOR_BOX_PROGRESS_COMMAND=str(
+            _script(tmp_path / "no-progress.sh",
+                    'printf "no such file\\n" >&2\nexit 1\n')
+        ),
+        SELECTOR_WATCH_INTERVAL_SECONDS="0.05",
+        SELECTOR_WATCH_TIMEOUT_SECONDS="10",
+    )
+    assert result.returncode == 0, result.stderr
+    assert events(db, "run.iteration") == []
+    failures = events(db, "run.watch-failed")
+    assert len(failures) == 1, "said once, not once per poll"
+    assert "no such file" in failures[0]["payload"]["error"]
+
+
+def test_the_watcher_reads_the_box_through_one_substitutable_command(db, watched_box):
+    """ADR 0004, and the seam this suite drives: the log is read by a command
+    that is handed the Run's branch, so a box reached another way is another
+    script and no change here."""
+    now = watcher._stamp(watcher._now())
+    _run_with_a_progress_log(
+        watched_box, db, SEEDED + RUN_HEADER.format(stamp=now) + ITERATION_ONE
+    )
+    assert "progress loop/645-the-nightly-sync-script" in watched_box.commands()
+
+
+def test_a_previous_attempts_iterations_are_not_journaled_as_this_ones(
+    db, watched_box
+):
+    """The clock guard end to end: the log the box hands over holds a Run that
+    ended hours ago and nothing else, which is what a retry's watcher reads
+    while the box is still checking the branch out."""
+    result = _run_with_a_progress_log(
+        watched_box, db, log("2026-08-27T02:00:00Z", ITERATION_ONE, ITERATION_TWO)
+    )
+    assert result.returncode == 0, result.stderr
+    assert events(db, "run.iteration") == []

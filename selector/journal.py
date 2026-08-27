@@ -49,6 +49,27 @@ def append(conn: psycopg.Connection, kind: str, payload: dict | None = None) -> 
     return row[0]
 
 
+def iterations_seen(conn: psycopg.Connection, issue: int,
+                    attempt: int | None) -> set[int]:
+    """Which of a Run's Iterations are already journaled.
+
+    The watcher (#157) re-reads a cumulative Progress Log every minute, so
+    what it has already recorded has to come from somewhere that outlives the
+    process - a second watcher for the same Run, after a cycle was restarted,
+    must not append the same Iteration twice. Scoped by attempt because a
+    retry is its own Run with its own Iteration 1.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT (payload->>'iteration')::int FROM journal.events"
+        " WHERE kind = 'run.iteration'"
+        "   AND payload->>'issue' = %s"
+        "   AND payload->>'attempt' IS NOT DISTINCT FROM %s"
+        "   AND payload->>'iteration' ~ '^[0-9]+$'",
+        (str(issue), None if attempt is None else str(attempt)),
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
 def events(conn: psycopg.Connection, limit: int = 200) -> list[dict]:
     """The most recent events, newest first."""
     rows = conn.execute(

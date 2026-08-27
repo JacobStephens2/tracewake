@@ -233,7 +233,9 @@ ROUTE_KINDS = set(ROUTE_NAMES)
 
 # Every kind a Run card is built from, so the membership test is one lookup
 # rather than a set union rebuilt per event.
-RUN_KINDS = ROUTE_KINDS | {"run.dispatched", "run.outcome"}
+RUN_KINDS = ROUTE_KINDS | {
+    "run.dispatched", "run.outcome", "run.iteration", "run.watch-failed",
+}
 
 
 def _runs(events: list[dict]) -> list[dict]:
@@ -273,6 +275,20 @@ def _runs(events: list[dict]) -> list[dict]:
                 # should say the thing the operator was told on the issue.
                 routed_outcome=payload.get("outcome"),
             )
+        elif event["kind"] == "run.iteration":
+            # The watcher's rows (#157): what the Run is doing, while it does
+            # it. Collected rather than merged, because there are many per
+            # card and the card's own `iterations` is a COUNT the box reported
+            # when the Run ended - a different fact from these, and one that
+            # does not exist yet while the Run is in flight.
+            card.setdefault("seen", []).append(
+                {**payload, "at": _utc(event["at"])}
+            )
+        elif event["kind"] == "run.watch-failed":
+            # Said once per Run by the watcher, and shown, because a Run with
+            # no Iterations on its card and a Run whose Progress Log could not
+            # be read look identical otherwise.
+            card["watch_error"] = payload.get("error")
         elif event["kind"] == "run.dispatched":
             card.update(
                 dispatched=True,
@@ -299,6 +315,12 @@ def _runs(events: list[dict]) -> list[dict]:
     # Same rule as the cycle cards: a card whose `run.dispatched` scrolled off
     # the read limit is an absence, not a nameless Run.
     whole = [card for card in cards.values() if card.get("dispatched")]
+    for card in whole:
+        # The Journal reads newest first; a Run's own Iterations read in the
+        # order the Run executed them.
+        card["seen"] = sorted(
+            card.get("seen", []), key=lambda record: record.get("iteration") or 0
+        )
     return sorted(whole, key=lambda c: c["id"], reverse=True)
 
 

@@ -21,10 +21,12 @@ import sys
 
 CYCLE = "cycle.py"
 DISPATCH = "dispatch.py"
+WATCHER = "watcher.py"
 CYCLE_SUITE = "tests/test_cycle.py"
 DISPATCH_SUITE = "tests/test_dispatch.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
+WATCHER_SUITE = "tests/test_watcher.py"
 
 # The window (#156). Its path is relative to the Selector, and its suite is
 # the dashboard's - run from the webapp directory, which mutation-check.sh
@@ -316,6 +318,55 @@ MUTATIONS = {
         "    if done.returncode != 0:",
         "    if False:",
     ),
+    # --- The Iteration watcher (#157) ---------------------------------------
+    #
+    # The watcher is the only thing that can see a Run while it is running, so
+    # every one of these is a way for the page to lie about what is happening
+    # on the box - either by inventing activity or by hiding it.
+
+    # Every poll journals every Iteration it can see, so one Iteration becomes
+    # a row a minute for the rest of the Run and the Journal the page renders
+    # from is buried under its own re-reading.
+    "iterations-journaled-every-poll": (WATCHER, WATCHER_SUITE,
+        '            if record["iteration"] in seen:\n                continue',
+        "            if False:\n                continue",
+    ),
+    # A retry journals the FIRST attempt's Iterations as its own: the log it
+    # reads while the box is still checking out is the one that attempt wrote,
+    # and the page shows a Run that has not started as five Iterations deep.
+    "another-runs-iterations-are-journaled": (WATCHER, WATCHER_SUITE,
+        "        if started is None or started < floor:",
+        "        if False:",
+    ),
+    # A heading with nothing under it yet is journaled as an Iteration, so an
+    # append caught mid-write becomes a permanent row saying nothing - and the
+    # Journal is append-only, so it can never be corrected.
+    "half-written-records-are-journaled": (WATCHER, WATCHER_SUITE,
+        '        if record is not None and record.get("agent_exit") is not None:',
+        "        if record is not None:",
+    ),
+    # The last Iteration of every Run is lost: it is written after the final
+    # poll and the Run ends before the next one, so the page permanently shows
+    # a Run one Iteration shorter than it was.
+    "the-final-read-is-skipped": (WATCHER, WATCHER_SUITE,
+        "            self._poll(conn, seen)\n        finally:",
+        "            pass\n        finally:",
+    ),
+    # A box that cannot be read says so once a minute for ninety minutes,
+    # which is an outage reported as ninety outages.
+    "a-watch-failure-is-repeated-every-poll": (WATCHER, WATCHER_SUITE,
+        "        if self._reported_failure:\n            return None",
+        "        if False:\n            return None",
+    ),
+    # The Run's Iterations render newest first, so a Run reads as counting
+    # backwards and the page disagrees with the log it is showing.
+    "iterations-render-newest-first": (WINDOW, WINDOW_SUITE,
+        '        card["seen"] = sorted(\n'
+        '            card.get("seen", []), key=lambda record: record.get("iteration") or 0\n'
+        "        )",
+        '        card["seen"] = card.get("seen", [])',
+    ),
+
     # The strip stops saying anything about a timer that is not running, so a
     # Selector that cannot start a cycle renders the same as one with nothing
     # to do - the exact confusion the strip was built to end.

@@ -98,10 +98,40 @@
           &middot; owning area: {{ r.area }}
           &middot; dispatched {{ r.at }}</span>
       </p>
+      {#- What the Run is doing, while it does it (#157). The watcher reads
+          the box's Progress Log about once a minute, so these appear during
+          the Run rather than all at once when it ends. Shown on an ended card
+          too: the box persists no record of a Run, so afterwards these rows
+          are the only account of it there is. -#}
+      {% if r.seen %}
+      <table class="iterations">
+        <thead><tr><th>iteration</th><th>started</th><th>agent</th><th>head</th><th>observed</th></tr></thead>
+        <tbody>
+        {% for i in r.seen %}
+          <tr>
+            <td>{{ i.iteration }}</td>
+            <td>{{ i.started }}</td>
+            <td>exit {{ i.agent_exit }}{% if i.exit_note %} &middot; {{ i.exit_note }}{% endif %}
+              {%- if i.promise %} &middot; <span class="badge">promise recorded</span>{% endif %}
+              {%- if i.dirty %} &middot; <span class="badge">uncommitted changes</span>{% endif %}</td>
+            <td>{% if i.noop %}<span class="badge">no-op</span> <code>{{ i.head_before }}</code>
+                {% else %}<code>{{ i.head_before }}</code> &rarr; <code>{{ i.head_after }}</code>{% endif %}</td>
+            <td class="detail">{{ i.at }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if r.watch_error %}
+      <p class="detail">The Progress Log could not be read while this Run ran,
+         so its Iterations are not below: {{ r.watch_error }}</p>
+      {% endif %}
       {% if r.in_flight %}
       <p class="detail">Started on the box with <code>--propose --notify</code>.
          The outcome lands here when the Run ends; until then this Run holds
-         the Selector's in-flight lock and no second Run is dispatched.</p>
+         the Selector's in-flight lock and no second Run is dispatched.
+         Iterations appear above as the box writes them, about a minute
+         behind.</p>
       {% elif r.outcome == "dispatch-failed" %}
       <p class="terminal-alert terminal-alert-error">no Run was started: {{ r.error }}</p>
       {% else %}

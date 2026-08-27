@@ -4,8 +4,8 @@
 #
 #   tests/mutation-check.sh [python]
 #
-# Breaks one guard at a time - in cycle.py, dispatch.py or the window's
-# app.py - runs the suite
+# Breaks one guard at a time - in cycle.py, dispatch.py, watcher.py or the
+# window's app.py - runs the suite
 # that is supposed to notice against the broken copy, and reports how many
 # tests went red. Anything whose removal leaves the suite green is something
 # the suite does not actually verify. Same contract as the Loop's
@@ -13,9 +13,9 @@
 # Python.
 #
 # Each mutation names its own file AND its own suite (tests/selector-
-# mutations.py), because the Selector is two modules with two suites and a
-# mutation checked against the wrong one would be reported as caught by tests
-# that never exercised it.
+# mutations.py), because the Selector is several modules with several suites
+# and a mutation checked against the wrong one would be reported as caught by
+# tests that never exercised it.
 #
 # Both files are restored on the way out, including on interrupt: a
 # half-mutated Selector left on disk is worse than no check at all.
@@ -24,8 +24,8 @@ set -euo pipefail
 
 selector_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# One run at a time, and it is not a nicety. This script edits cycle.py and
-# dispatch.py in place and restores them from a backup it took at the start,
+# One run at a time, and it is not a nicety. This script edits the target
+# files in place and restores them from a backup it took at the start,
 # so two overlapping runs restore each other's mutations - and a run that
 # overlaps an EDITING SESSION silently reverts uncommitted work to whatever
 # the older run had backed up. Both happened on 2026-08-27; the second cost an
@@ -62,7 +62,7 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # strip is the Journal's window and its guards are the Selector's guards
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
-targets=(cycle.py dispatch.py ../../webapp/app.py)
+targets=(cycle.py dispatch.py watcher.py ../../webapp/app.py)
 backup_dir="$(mktemp -d)"
 # Backed up under a flattened name - `../../webapp/app.py` would otherwise
 # write outside the backup directory, which is a mutation runner quietly

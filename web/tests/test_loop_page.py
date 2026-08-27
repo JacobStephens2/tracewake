@@ -434,6 +434,116 @@ def test_a_no_proposal_run_reads_as_no_proposal_not_as_its_bound(db):
     assert "iteration-cap" not in runs
 
 
+
+# --- Iterations, while the Run runs (#157) ----------------------------------
+
+
+def _iteration_row(conn, cycle, number, **over):
+    payload = {
+        "cycle": cycle,
+        "issue": 645,
+        "attempt": 1,
+        "branch": "loop/645-the-nightly-sync-script",
+        "task_ref": "acme/widgets#645",
+        "iteration": number,
+        "started": f"2026-08-27T12:0{number}:05Z",
+        "run_started": "2026-08-27T12:00:00Z",
+        "agent_exit": 0,
+        "exit_note": None,
+        "noop": False,
+        "head_before": "111111111111",
+        "head_after": "222222222222",
+        "promise": False,
+        "dirty": False,
+    }
+    payload.update(over)
+    return journal.append(conn, "run.iteration", payload)
+
+
+def test_iterations_appear_on_the_card_of_the_run_in_flight(db):
+    """Issue #157's viewing criterion: a Run that has said nothing but its
+    Iterations still shows them, which is the whole point of the watcher -
+    before this the page had nothing to say for ninety minutes."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _iteration_row(conn, cycle, 1)
+        _iteration_row(conn, cycle, 2, noop=True, agent_exit=124,
+                       exit_note="killed at its 900s wall clock")
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert 'class="run run-in-flight"' in runs
+    assert "killed at its 900s wall clock" in runs
+    assert "no-op" in runs
+
+
+def test_iterations_read_in_the_order_the_run_ran_them(db):
+    """The Journal reads newest first, and an Iteration list in that order
+    would have the Run counting backwards."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _iteration_row(conn, cycle, 1, head_after="aaaaaaaaaaaa")
+        _iteration_row(conn, cycle, 2, head_after="bbbbbbbbbbbb")
+        _iteration_row(conn, cycle, 3, head_after="cccccccccccc")
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert runs.index("aaaaaaaaaaaa") < runs.index("bbbbbbbbbbbb") < \
+        runs.index("cccccccccccc")
+
+
+def test_an_iteration_is_shown_on_the_run_that_produced_it(db):
+    """Paired by issue AND attempt, like every other row on a card: a retry's
+    Iteration 1 is not the first attempt's."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle, attempt=1)
+        _iteration_row(conn, cycle, 1, attempt=1, head_after="aaaaaaaaaaaa")
+        journal.append(
+            conn, "run.outcome",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "outcome": "agent-failed", "exit": 4, "iterations": 1,
+             "faults": "agent-failed"},
+        )
+        _dispatch_row(conn, cycle, attempt=2)
+        _iteration_row(conn, cycle, 1, attempt=2, head_after="bbbbbbbbbbbb")
+    cards = client.get("/loop").text.split("<h2>Cycles</h2>")[0].split(
+        '<section class="run'
+    )[1:]
+    assert len(cards) == 2
+    newest, oldest = cards
+    assert "bbbbbbbbbbbb" in newest and "aaaaaaaaaaaa" not in newest
+    assert "aaaaaaaaaaaa" in oldest and "bbbbbbbbbbbb" not in oldest
+
+
+def test_a_run_whose_progress_log_could_not_be_read_says_so(db):
+    """A Run with no Iterations on its card and a Run whose log the watcher
+    could not read look identical otherwise, and they are opposite facts about
+    whether anything is happening."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        journal.append(
+            conn, "run.watch-failed",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "branch": "loop/645-the-nightly-sync-script",
+             "error": "no Progress Log at /home/loop/tourbot/PROGRESS.md"},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "could not be read" in runs
+    assert "no Progress Log at /home/loop/tourbot/PROGRESS.md" in runs
+
+
+def test_a_watch_failure_alone_is_not_a_run(db):
+    """The same rule every card is built by: a Run whose dispatch row scrolled
+    off the read limit is an absence, not a nameless Run."""
+    with journal.connect(db) as conn:
+        journal.append(
+            conn, "run.watch-failed",
+            {"issue": 645, "attempt": 1, "error": "the box did not answer"},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert '<section class="run' not in runs
+
+
 # --- The status strip (#156) -------------------------------------------------
 #
 # Unattended operation is a claim, and the strip is where it is proved on the

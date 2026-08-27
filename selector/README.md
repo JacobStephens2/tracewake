@@ -5,8 +5,9 @@ tourbot's `ready-for-agent` queue unattended. This directory is its home.
 
 What exists is **a cycle that picks, dispatches and does the bookkeeping**
 (issues #153, #154, #155) on top of the **Selector Journal** (ADR 0015, issue
-#152), **run unattended by a timer** (#156). What is not built yet is the
-Iteration watcher (#157).
+#152), **run unattended by a timer** (#156), with the **Iteration watcher**
+(#157) reading the box's Progress Log while a Run is in flight so that the
+activity is visible while it happens.
 
 ## The cycle
 
@@ -126,8 +127,78 @@ the box reported `LOOP_RUN_ENDED_BY` at all.
 printed when the Run ends, so an SSH session that died at minute forty
 produces no `LOOP_RUN_ENDED_BY` and is journaled `dispatch-failed` even though
 the Run may have finished on the box and opened its Proposal. Nothing here can
-tell the two apart from this side; what closes the gap is the watcher (#157),
-which is reading the box's Progress Log while the Run happens.
+tell the two apart from this side; what narrows the gap is the watcher below,
+whose `run.iteration` rows say how far the Run had got.
+
+## The watcher
+
+A Run persists nothing. `run.sh` prints its summary when it ends and exits, so
+for the ninety minutes in between the only record of what is happening is the
+Progress Log in the box's own checkout - which nothing on this side of the SSH
+hop could see. Step 4 above blocks for exactly that long, and the page had
+nothing to say for the whole of it.
+
+So while it blocks, a thread reads that log about once a minute through
+`box-sources/progress.sh` and journals `run.iteration` for every Iteration
+record it has not journaled before (story 26). Configuration:
+
+| variable | default | what it is |
+| --- | --- | --- |
+| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress.sh` | the box's Progress Log, read |
+| `SELECTOR_WATCH_INTERVAL_SECONDS` | `60` | how often |
+| `SELECTOR_WATCH_TIMEOUT_SECONDS` | `30` | how long one read may take |
+| `SELECTOR_WATCH_CLOCK_SKEW_SECONDS` | `300` | how far the box's clock may sit behind this one |
+
+`box-sources/progress.sh` shares `SELECTOR_BOX_HOST`, `SELECTOR_BOX_USER` and
+`SELECTOR_BOX_REPO` with `ssh.sh`, and adds `SELECTOR_BOX_PROGRESS_PATH`
+(`PROGRESS.md`, relative to the checkout). It is handed the Run's branch and
+deliberately does not check it out or fetch it: the box is running a Run in
+that checkout, and a watcher that touched its working tree would be a window
+reaching through the glass.
+
+Three properties, each of them a way this could have gone wrong unattended:
+
+**It journals what is new, not what it read.** The log is cumulative and every
+poll re-reads the whole of it, so a watcher that journaled its reading would
+leave a row per Iteration per minute. What is already journaled is read back
+out of the Journal when the watch starts and remembered in the process after
+that, so neither a later poll nor a re-dispatch can duplicate a row - which
+matters more here than elsewhere because the Journal is append-only and a
+wrong row can only be contradicted, never corrected.
+
+**It journals this Run's Iterations.** A retry works the branch the first
+attempt left behind, so the log it reads opens with that attempt's Run block
+and its Iterations - and for the first seconds, while the box is still
+fetching and checking out, that block is the newest one in the file. Blocks
+are told apart by when the Run started: one that started before this watch did
+is over. The skew tolerance above is what keeps two NTP-synced clocks that are
+only approximately equal from hiding a live Run's Iterations, and the cost of
+it being loose is at worst attributing an attempt that ended in the last five
+minutes.
+
+**It cannot fail a dispatch.** A watcher is a window. A box that will not hand
+over its log is journaled `run.watch-failed` **once** - not once a minute for
+ninety minutes - and the Run is untouched; the dispatch fails or succeeds on
+its own and pages on its own. The single row is what stops a Run whose log
+could not be read from looking like a Run with nothing happening, which is the
+opposite fact.
+
+A half-written record is not a record. The log is read while it is being
+appended to, so an Iteration heading with no `Agent exit` line under it yet is
+left for the next poll.
+
+**Most of a Progress Log is not the Loop's.** The agent writes its own
+narrative into it - that is what the log is for - headings and bullet lists
+included, so a record is exactly the run of `- ` lines under a `### Iteration
+N - <stamp>` heading and ends at the first line that is not one. Reading the
+real box's log is what established that, and what it would have cost to get
+wrong is in `../notes/selector-watcher-evidence.md`: a parser that ran a
+record to the next heading would have reported every Iteration one Iteration
+late, which is a watcher that looks like it works.
+
+The last read happens after the Run has ended, on the way out: an Iteration
+written in a Run's final seconds has no next poll coming, and would otherwise
+be missing from the page for good.
 
 **The work checkout is not created for you.** Seeding commits the Plan, so the
 checkout needs an identity to commit as - the operator's, because that is
@@ -417,6 +488,13 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   template its adapter would build, the installed agent version - and prints
   them as `LOOP_BOX_*=value` lines. Read-only, holds no credential, starts
   nothing.
+- `watcher.py` - the Iteration watcher: the Progress Log parser, and the
+  thread that polls the box for the length of a Run. It journals
+  `run.iteration` and `run.watch-failed` and nothing else, and it never
+  raises into the dispatch it is watching.
+- `box-sources/progress.sh` - the default `SELECTOR_BOX_PROGRESS_COMMAND`: one
+  SSH hop that `cat`s the box checkout's Progress Log. Read-only, holds no
+  credential, touches no working tree.
 - `box-sources/ssh.sh` - the default `SELECTOR_BOX_COMMAND`: one SSH hop that
   puts the box's checkout on the Run's branch and runs `run.sh --propose
   --notify`, printing what the Run reported. It holds no credential of its
@@ -451,6 +529,12 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   ended up on a remote. Its fake box also reads the Journal while it is
   "running", which is how the in-flight lock being held for the length of a
   Run is checked rather than assumed.
+  `test_watcher.py` is #157's two halves: the parser against Progress Log
+  snapshots written the way `run.sh` writes them, and the real `cycle.py`
+  dispatching against a box that GROWS A LOG while it runs, with the interval
+  collapsed from a minute to a fraction of a second. Each snapshot is held
+  still for several polls, so "exactly the new records, never a duplicate" is
+  an assertion rather than a coincidence of timing.
 
 The window is `lab/webapp`'s `/loop` page, which imports `journal.py` from
 here and renders at request time (SSE via LISTEN/NOTIFY is issue #159).

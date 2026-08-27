@@ -225,8 +225,9 @@ def _script(path, body):
 
 @pytest.fixture
 def box(tmp_path):
-    """A work checkout with a real bare remote, plus the three scripted
-    commands a dispatch reaches. Returns a runner."""
+    """A work checkout with a real bare remote, plus the scripted commands a
+    dispatch reaches - Seeding, the box, the issue writes, the box facts and
+    the Progress Log the watcher reads. Returns a runner."""
     bare = tmp_path / "remote.git"
     work = tmp_path / "work"
     log = tmp_path / "commands.log"
@@ -236,6 +237,10 @@ def box(tmp_path):
     checks_file.write_text(GREEN_CHECKS)
     facts_file = tmp_path / "box-facts.txt"
     facts_file.write_text(BOX_FACTS)
+    progress_file = tmp_path / "PROGRESS.md"
+    progress_file.write_text(
+        "# Progress Log\n\nSeeded by seed-run.sh. No Iteration has run yet.\n"
+    )
 
     def git(*args, cwd=None):
         return subprocess.run(
@@ -265,6 +270,7 @@ def box(tmp_path):
             .replace("@SUMMARY@", str(summary))
             .replace("@CHECKS@", str(checks_file))
             .replace("@FACTS@", str(facts_file))
+            .replace("@PROGRESS@", str(progress_file))
         )
 
     seed = _script(tmp_path / "seed.sh", fill('''
@@ -345,6 +351,17 @@ def box(tmp_path):
         exec cat "@FACTS@"
     '''))
 
+    # The Progress Log the Iteration watcher reads while a Run is in flight
+    # (#157). Scripted here for the same reason as the facts command: every
+    # dispatch starts a watcher, so a fixture that left this unset would point
+    # the whole suite at the real box over real SSH. The default snapshot is a
+    # seeded log with no Iteration in it, so a suite that is not about the
+    # watcher sees exactly the rows it saw before.
+    progress_command = _script(tmp_path / "progress.sh", fill('''
+        printf 'progress %s\n' "$*" >> "@LOG@"
+        exec cat "@PROGRESS@"
+    '''))
+
     queue_file = tmp_path / "queue.json"
     tracker = _script(tmp_path / "tracker.sh", f'exec cat "{queue_file}"\n')
 
@@ -365,6 +382,7 @@ def box(tmp_path):
                     "SELECTOR_BOX_COMMAND": str(box_command),
                     "SELECTOR_ISSUE_COMMAND": str(issue_command),
                     "SELECTOR_BOX_FACTS_COMMAND": str(facts_command),
+                    "SELECTOR_BOX_PROGRESS_COMMAND": str(progress_command),
                 }
             )
             environ.update({k: str(v) for k, v in env.items()})
@@ -385,6 +403,9 @@ def box(tmp_path):
         def facts(self, text):
             facts_file.write_text(text)
 
+        def progress(self, text):
+            progress_file.write_text(text)
+
         def facts_command(self, body):
             """Replace the whole facts script - for the box that cannot be
             read at all, which is a failing command rather than odd output."""
@@ -404,6 +425,7 @@ def box(tmp_path):
     runner = Runner()
     runner.bare = bare
     runner.work = work
+    runner.progress_file = progress_file
     return runner
 
 

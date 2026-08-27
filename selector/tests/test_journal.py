@@ -44,7 +44,7 @@ def test_writer_surface_is_append_only():
         for name, obj in vars(journal).items()
         if callable(obj) and getattr(obj, "__module__", None) == "journal"
     }
-    assert own == {"dsn", "connect", "append", "events"}
+    assert own == {"dsn", "connect", "append", "events", "iterations_seen"}
 
 
 def test_schema_blocks_update_delete_truncate(db):

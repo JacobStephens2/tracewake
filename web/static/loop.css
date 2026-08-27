@@ -84,3 +84,21 @@
 /* The box card carries three facts and outgrows one column on a wide screen
    long before the other cells do. */
 .strip .cell-box { grid-column: 1 / -1; }
+
+/* The Iteration records the watcher journals during a Run (#157). Tabular,
+   because they are one row per Iteration with the same four facts each time,
+   and the operator reads down the column that changed. */
+.run .iterations {
+  width: 100%;
+  margin: 0 0 1rem 0;
+}
+.run .iterations th,
+.run .iterations td {
+  padding: 0.2rem 0.6rem 0.2rem 0;
+  text-align: left;
+  vertical-align: top;
+}
+.run .iterations thead th {
+  font-weight: normal;
+  opacity: 0.6;
+}

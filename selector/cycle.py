@@ -66,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import dispatch  # noqa: E402
 import journal  # noqa: E402
+import watcher  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
@@ -604,7 +605,23 @@ def _dispatch_pick(
             dispatch_config, config.task_repo, number, pick["area"], pick.get("check")
         )
         dispatch.push(dispatch_config, branch)
-        summary = dispatch.start_run(dispatch_config, branch, task_ref)
+        # The watcher (#157) reads the box's Progress Log while the Run runs,
+        # journaling each Iteration record as it appears. It is a window and
+        # not a step: it holds nothing up, it cannot fail the dispatch, and
+        # what it records is the only sign of life a Run gives off before it
+        # ends. Scoped to exactly this call, because outside it there is no
+        # Run to watch.
+        with watcher.watching(
+            {
+                "cycle": cycle_id,
+                "issue": number,
+                "attempt": attempt,
+                "branch": branch,
+                "task_ref": task_ref,
+            },
+            watcher.WatchConfig.from_env(),
+        ):
+            summary = dispatch.start_run(dispatch_config, branch, task_ref)
     except dispatch.DispatchFailed as exc:
         journal.append(
             conn,
