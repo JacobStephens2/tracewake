@@ -50,7 +50,7 @@ def test_writer_surface_is_append_only():
         # they hold a LISTEN and re-read the rows a notification names, and
         # they write nothing - a Journal that could be changed by something
         # watching it would not be a Journal.
-        "events", "iterations_seen",
+        "events", "iterations_seen", "run_window",
         "keepalive_seconds", "listen", "_drain", "_since",
     }
 
@@ -90,3 +90,56 @@ def test_events_respects_limit(db):
         rows = journal.events(conn, limit=2)
     assert len(rows) == 2
     assert rows[0]["payload"] == {"n": 4}
+
+
+# --- Reading in Runs rather than in rows (#160) -----------------------------
+#
+# The Run history counts in Runs. A row cap is a Run cap of no fixed size,
+# because a Run's rows are interleaved with every cycle summary and skip
+# written since - so the page whose purpose is that past Runs stay inspectable
+# needs a floor rather than a limit, and needs to know what is below it.
+
+
+def test_events_read_from_a_floor_ignore_the_limit(db):
+    """A floor with a cap under it is the cap winning silently, which is the
+    failure the floor exists to end."""
+    with journal.connect(db) as conn:
+        first = journal.append(conn, "test.fill", {"n": 0})
+        for n in range(1, 250):
+            journal.append(conn, "test.fill", {"n": n})
+        rows = journal.events(conn, since=first)
+    assert len(rows) == 250
+
+
+def test_events_can_be_narrowed_to_the_kinds_a_caller_builds_from(db):
+    with journal.connect(db) as conn:
+        journal.append(conn, "cycle.started", {})
+        wanted = journal.append(conn, "run.dispatched", {"issue": 1})
+        rows = journal.events(conn, kinds=["run.dispatched"])
+    assert [e["id"] for e in rows] == [wanted]
+
+
+def test_the_run_window_starts_at_its_oldest_run(db):
+    """The floor is the oldest of the newest N dispatches, not the newest: a
+    Run's other rows are written after its dispatch and so sit above it, and a
+    floor one Run too high cuts the oldest card in half."""
+    with journal.connect(db) as conn:
+        ids = [journal.append(conn, "run.dispatched", {"issue": n})
+               for n in range(4)]
+        journal.append(conn, "run.outcome", {"issue": 3})
+        floor, older = journal.run_window(conn, 2)
+    assert floor == ids[2]
+    assert older == 2
+
+
+def test_a_window_wider_than_the_journal_leaves_nothing_behind(db):
+    with journal.connect(db) as conn:
+        ids = [journal.append(conn, "run.dispatched", {"issue": n})
+               for n in range(5)]
+        assert journal.run_window(conn, 10) == (ids[0], 0)
+
+
+def test_a_journal_with_no_run_has_no_window(db):
+    with journal.connect(db) as conn:
+        journal.append(conn, "cycle.started", {})
+        assert journal.run_window(conn, 5) == (None, 0)

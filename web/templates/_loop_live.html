@@ -12,7 +12,7 @@
    does not use it, because the extension's job is turning event data into
    swaps and the data here is only a signal - the swap's content comes from a
    fresh render, which is a plain hx-get. #}
-<div id="loop-live"
+<div id="live-region"
      hx-get="{{ live_url }}"
      hx-trigger="journal from:body delay:400ms"
      hx-swap="outerHTML">

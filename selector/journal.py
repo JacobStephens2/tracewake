@@ -71,16 +71,68 @@ def iterations_seen(conn: psycopg.Connection, issue: int,
     return {row[0] for row in rows}
 
 
-def events(conn: psycopg.Connection, limit: int = 200) -> list[dict]:
-    """The most recent events, newest first."""
-    rows = conn.execute(
-        "SELECT id, at, kind, payload FROM journal.events"
-        " ORDER BY id DESC LIMIT %s",
-        (limit,),
-    ).fetchall()
+def events(conn: psycopg.Connection, limit: int = 200,
+           since: int | None = None,
+           kinds: list[str] | None = None) -> list[dict]:
+    """The most recent events, newest first.
+
+    `since` reads every row from that id onward instead of taking the newest
+    `limit`, and `kinds` narrows to the event kinds the caller builds from.
+    Both exist for the Run history (#160), which counts in Runs rather than in
+    rows: a Run's rows are interleaved with every cycle summary and skip
+    written since, so a row cap is a Run cap of no fixed size - and the page
+    whose purpose is that past Runs stay inspectable is the wrong one to
+    silently forget them from. `run_window` picks the id; this reads from it.
+    """
+    where, params = [], []
+    if since is not None:
+        where.append("id >= %s")
+        params.append(since)
+    if kinds is not None:
+        where.append("kind = ANY(%s)")
+        params.append(list(kinds))
+    sql = "SELECT id, at, kind, payload FROM journal.events"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY id DESC"
+    if since is None:
+        # A floor and a cap together would be the cap winning, silently, once
+        # the window held more rows than it - which is the failure `since`
+        # exists to end.
+        sql += " LIMIT %s"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     return [
         {"id": r[0], "at": r[1], "kind": r[2], "payload": r[3]} for r in rows
     ]
+
+
+def run_window(conn: psycopg.Connection, runs: int) -> tuple[int | None, int]:
+    """Where the most recent `runs` Runs start, and how many are older.
+
+    Returns the id of the oldest of those Runs' `run.dispatched` rows - the
+    floor to read `events` from - and the count of dispatches below it, so a
+    page can own up to the Runs it is not showing rather than end at a silent
+    edge. `(None, 0)` when the Journal holds no dispatch at all.
+
+    Counted in dispatches because a dispatch is what a Run card is built
+    around: every other row of a Run is written after it and therefore above
+    it, so reading from this floor cannot cut a card in half.
+    """
+    rows = conn.execute(
+        "SELECT id FROM journal.events WHERE kind = 'run.dispatched'"
+        " ORDER BY id DESC LIMIT %s",
+        (runs,),
+    ).fetchall()
+    if not rows:
+        return None, 0
+    floor = rows[-1][0]
+    older = conn.execute(
+        "SELECT count(*) FROM journal.events"
+        " WHERE kind = 'run.dispatched' AND id < %s",
+        (floor,),
+    ).fetchone()[0]
+    return floor, older
 
 
 # --- Liveness ---------------------------------------------------------------

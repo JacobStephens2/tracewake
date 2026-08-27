@@ -719,6 +719,17 @@ Two things it computes rather than replays:
 It shows ended Runs only. A Run still going has no bound, no duration and no
 Proposal, and `/loop` already shows it live on the panel built for it.
 
+**It counts in Runs, not in rows.** `/loop` reads the newest 200 Journal rows,
+which is the right window for "recent" and the wrong one for "past activity
+remains inspectable": a Run's rows are interleaved with every cycle summary
+and skip written since, so a row cap is a Run cap of no fixed size and a busy
+fortnight would silently push the oldest Runs off the page. `journal.run_window`
+finds the `run.dispatched` row of the 50th-newest Run and `journal.events`
+reads from that floor - every row of every Run above it, and no cap. A
+dispatch is the right floor because every other row of a Run is written after
+it. What falls below the window is counted and said on the page, not dropped:
+`psql -d selector` still has all of it.
+
 The two pages share `_runs.html` (the Run card), `_budget.html` (the budget
 cell) and `terminal_base.html` (the shell and the stream script), and differ
 in the `runs` list they pass in and the region each re-fetches -

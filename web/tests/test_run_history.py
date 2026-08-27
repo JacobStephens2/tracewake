@@ -11,6 +11,7 @@ import re
 from fastapi.testclient import TestClient
 from psycopg.types.json import Jsonb
 
+import app as app_module
 import journal
 from app import app
 
@@ -57,7 +58,7 @@ def _run(conn, *, issue=645, attempt=1, outcome="iteration-cap",
 
 def history(body):
     """The live region of the history page, cut out of the shell."""
-    start = body.index('<div id="loop-live"')
+    start = body.index('<div id="live-region"')
     return body[start:]
 
 
@@ -155,6 +156,64 @@ def test_the_history_is_reachable_from_the_loop_and_back(db):
     assert 'href="/loop"' in client.get("/loop/history").text
 
 
+# --- How far back it reaches ------------------------------------------------
+#
+# The history counts in Runs, not in Journal rows. A row cap is a Run cap of
+# no fixed size: a Run's rows are interleaved with every cycle summary and
+# skip written since, so on the page whose whole purpose is that past Runs
+# stay inspectable, a busy fortnight would quietly delete the oldest of them.
+
+
+def test_a_run_buried_under_later_journal_rows_is_still_listed(db):
+    """The failure this guards against is silent and total: the Run renders
+    today, and one busy week later the same page renders without it and says
+    nothing. Three hundred rows is past `journal.events`'s 200-row default,
+    which is what /loop reads and what this page must not."""
+    with journal.connect(db) as conn:
+        _run(conn, issue=600, started="30 hours", ended="29 hours")
+        for n in range(300):
+            _at(conn, "10 hours", "cycle.started", {"repo": "acme/widgets"})
+        _run(conn, issue=700, started="5 hours", ended="4 hours")
+    body = history(client.get("/loop/history").text)
+    assert "#600" in body
+    assert "#700" in body
+
+
+def test_a_runs_own_rows_are_read_whole_however_far_back_it_is(db):
+    """Not just the dispatch. A card built from a dispatch whose outcome was
+    left behind reads as a Run still in flight, which is how a finished Run
+    disappears from a history that filters the in-flight ones out."""
+    with journal.connect(db) as conn:
+        _run(conn, issue=600, started="30 hours", ended="29 hours",
+             proposal="https://github.invalid/acme/widgets/pull/600")
+        for n in range(300):
+            _at(conn, "10 hours", "cycle.started", {"repo": "acme/widgets"})
+    body = history(client.get("/loop/history").text)
+    assert "/pull/600" in body
+    assert "in flight" not in body
+
+
+def test_the_runs_below_the_window_are_counted_rather_than_dropped(db,
+                                                                  monkeypatch):
+    """A page that simply ended would look identical to a Journal holding
+    nothing older - on the page an operator opens precisely when he is looking
+    for something old."""
+    monkeypatch.setattr(app_module, "HISTORY_RUNS", 2)
+    with journal.connect(db) as conn:
+        for issue in (600, 601, 602, 603):
+            _run(conn, issue=issue)
+    body = history(client.get("/loop/history").text)
+    assert "#603" in body and "#602" in body
+    assert "#601" not in body
+    assert "2 older Run(s) are in the Journal and not shown" in body
+
+
+def test_a_history_inside_the_window_says_nothing_about_older_runs(db):
+    with journal.connect(db) as conn:
+        _run(conn)
+    assert "not shown" not in history(client.get("/loop/history").text)
+
+
 # --- Liveness ---------------------------------------------------------------
 #
 # The history is a terminal page like /loop, so it is live like /loop (#159):
@@ -175,7 +234,7 @@ def test_the_history_fragment_is_the_region_alone(db):
     with journal.connect(db) as conn:
         _run(conn)
     body = client.get("/loop/history/live").text
-    assert body.lstrip().startswith('<div id="loop-live"')
+    assert body.lstrip().startswith('<div id="live-region"')
     assert "<html" not in body
     # It re-arms itself: the swap replaces the element carrying the trigger,
     # so a fragment that dropped the attributes would update exactly once.

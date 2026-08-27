@@ -5,7 +5,7 @@
    /loop - the trigger sits on the element being replaced - but pointed at
    /loop/history/live, because re-fetching /loop's region would swap a queue
    board this page never rendered into the middle of itself. #}
-<div id="loop-live"
+<div id="live-region"
      hx-get="{{ live_url }}"
      hx-trigger="journal from:body delay:400ms"
      hx-swap="outerHTML">
@@ -26,5 +26,14 @@
 {% include "_runs.html" %}
     {% elif not error %}
     <p>No Run has ended yet. The history fills as the Selector dispatches.</p>
+    {% endif %}
+    {#- The edge, owned up to. The page reads the last {{ shown }} Runs; a
+        page that simply ended would look identical to a Journal holding
+        nothing older, and this is the page an operator opens precisely when
+        he is looking for something old. -#}
+    {% if older %}
+    <p class="detail">The {{ shown }} most recent Runs are above.
+       {{ older }} older Run(s) are in the Journal and not shown here -
+       <code>psql -d selector</code> has all of them.</p>
     {% endif %}
 </div>

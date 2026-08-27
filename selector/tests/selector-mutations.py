@@ -513,6 +513,24 @@ MUTATIONS = {
         "        )",
         '        card["duration"] = None',
     ),
+    # The history reads rows instead of Runs, so the oldest Runs fall off it
+    # as later rows accumulate - silently, on the one page whose purpose is
+    # that past Runs stay inspectable.
+    "the-history-is-capped-in-rows": (WINDOW, HISTORY_SUITE,
+        "    return journal.events(conn, since=floor, kinds=sorted(RUN_KINDS)), older",
+        "    return journal.events(conn), older",
+    ),
+    # A Run's rows are read from its own dispatch onward, so a floor taken one
+    # Run too high cuts the oldest card in half: the dispatch is missing, and
+    # `_runs` drops the card without trace.
+    "the-window-starts-above-its-oldest-run": (JOURNAL, HISTORY_SUITE,
+        "    floor = rows[-1][0]", "    floor = rows[0][0]",
+    ),
+    # The Runs below the window stop being counted, so a page that is showing
+    # part of the history looks exactly like one showing all of it.
+    "older-runs-are-dropped-in-silence": (JOURNAL, HISTORY_SUITE,
+        "    return floor, older", "    return floor, 0",
+    ),
     # The history swaps in /loop's region instead of its own, so the first
     # Journal row to land replaces the page with a queue board - and reaches
     # the tracker to build it.

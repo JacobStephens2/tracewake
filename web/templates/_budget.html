@@ -8,7 +8,11 @@
    is what the Journal actually holds.
 
    `remaining` is None, not 0, when the Journal could not be read: an unknown
-   budget rendered as a full one would be the page inventing headroom. #}
+   budget rendered as a full one would be the page inventing headroom.
+
+   `cell-budget` carries no styling; it is how the suite cuts this cell out of
+   whichever page it is on, so that "2 remaining" is asserted about the tile
+   rather than about the page containing the string somewhere. #}
       <div class="cell cell-budget">
         <span class="cell-label">runs remaining today</span>
         {% if budget.remaining is none %}

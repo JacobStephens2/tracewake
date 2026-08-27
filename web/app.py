@@ -476,22 +476,53 @@ def _selector_state(runs: list[dict], budget: dict, timer: dict) -> str:
     return "idle"
 
 
-def _read_journal() -> tuple[list[dict], object, str | None]:
-    """One read of the Journal: its recent rows and what has been spent.
+# How far back the history reaches, counted in Runs rather than in Journal
+# rows (#160). A row cap is a Run cap of no fixed size: a Run's rows are
+# interleaved with every cycle summary and skip written since, so a busy
+# fortnight would quietly push the oldest Runs off the one page whose purpose
+# is that they stay inspectable. Fifty is about two weeks at the daily cap;
+# what falls past it is counted and said, not dropped in silence.
+HISTORY_RUNS = 50
+
+
+def _read_journal(read, default) -> tuple[object, "cycle.Spend | None", str | None]:
+    """One read of the Journal: what `read` asks of it, and what has been spent.
 
     Both pages start here, so "the Journal is down" is one sentence written
-    once. `spend` comes back as the Selector's own object rather than a count
-    taken here - two readings of "Runs today" that could disagree would be a
-    budget that reassures about a cap it is not the one enforcing.
+    once, and `default` is what that sentence leaves the page holding.
+
+    `read(conn)` chooses the rows, because the two pages want different ones:
+    /loop wants the newest of every kind, the history wants whole Runs however
+    far back they are. It is handed the open connection so that the rows and
+    the spend come from one connection and one moment - two reads would be a
+    page describing two different Journals.
+
+    `spend` comes back as the Selector's own object rather than a count taken
+    here: two readings of "Runs today" that could disagree would be a budget
+    that reassures about a cap it is not the one enforcing.
     """
     try:
         with journal.connect() as conn:
-            return journal.events(conn), cycle.spend(conn), None
+            return read(conn), cycle.spend(conn), None
     except psycopg.Error as exc:
-        return [], None, f"journal unavailable: {exc}"
+        return default, None, f"journal unavailable: {exc}"
 
 
-def _budget(config, spend) -> dict:
+def _history_rows(conn) -> tuple[list[dict], int]:
+    """The rows of the most recent Runs, and how many older Runs there are.
+
+    Two queries rather than one because the second answer is the point of the
+    first: a page that ended at a silent edge would look identical to a
+    Journal holding nothing older, and this is the page an operator goes to
+    precisely when he is looking for something old.
+    """
+    floor, older = journal.run_window(conn, HISTORY_RUNS)
+    if floor is None:
+        return [], 0
+    return journal.events(conn, since=floor, kinds=sorted(RUN_KINDS)), older
+
+
+def _budget(cap: int, spend) -> dict:
     """Today's cap, and what is left of it.
 
     `remaining` rather than only `spent` because that is the operator's
@@ -503,9 +534,9 @@ def _budget(config, spend) -> dict:
     spent = None if spend is None else spend.recent_dispatches
     return {
         "spent": spent,
-        "cap": config.daily_cap,
+        "cap": cap,
         "window": cycle.CAP_WINDOW_HOURS,
-        "remaining": None if spent is None else max(0, config.daily_cap - spent),
+        "remaining": None if spent is None else max(0, cap - spent),
     }
 
 
@@ -519,8 +550,8 @@ def _loop_context(request: Request) -> dict:
     that a static one cannot.
     """
     config = cycle.Config.from_env()
-    events, spend, error = _read_journal()
-    budget = _budget(config, spend)
+    events, spend, error = _read_journal(journal.events, [])
+    budget = _budget(config.daily_cap, spend)
     view = [
         {
             "id": e["id"],
@@ -573,13 +604,16 @@ def _history_context(request: Request) -> dict:
     work with it and leaves the Journal's untouched.
     """
     config = cycle.Config.from_env()
-    events, spend, error = _read_journal()
+    (events, older), spend, error = _read_journal(_history_rows, ([], 0))
     return {
         # History is what has ended. A Run still going has no bound, no
         # duration and no Proposal; /loop shows it live on the panel built
         # for it, and a card here would be three empty cells.
         "runs": [run for run in _runs(events) if not run.get("in_flight")],
-        "budget": _budget(config, spend),
+        # The Runs below the window, counted rather than dropped in silence.
+        "older": older,
+        "shown": HISTORY_RUNS,
+        "budget": _budget(config.daily_cap, spend),
         "error": error,
         "live_url": _path(request, "/loop/history/live"),
         "events_url": _path(request, "/loop/events"),

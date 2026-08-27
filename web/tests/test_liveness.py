@@ -301,7 +301,7 @@ def test_an_unreachable_journal_closes_the_stream_rather_than_hanging(
 # --- The live region --------------------------------------------------------
 
 
-LIVE_REGION = re.compile(r'<div id="loop-live"[^>]*>')
+LIVE_REGION = re.compile(r'<div id="live-region"[^>]*>')
 
 
 def test_the_page_carries_a_live_region_that_asks_for_itself(db):
@@ -328,7 +328,7 @@ def test_the_page_opens_the_stream(db):
 def test_the_fragment_is_the_region_alone(db, dispatch):
     dispatch(db, 646, outcome="complete")
     body = client.get("/loop/live").text
-    assert body.lstrip().startswith('<div id="loop-live"')
+    assert body.lstrip().startswith('<div id="live-region"')
     assert "<html" not in body
     # It re-arms itself: the swap replaces the element carrying the trigger,
     # so a fragment that dropped the attributes would update exactly once.
