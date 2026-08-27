@@ -80,3 +80,90 @@ def events(conn: psycopg.Connection, limit: int = 200) -> list[dict]:
     return [
         {"id": r[0], "at": r[1], "kind": r[2], "payload": r[3]} for r in rows
     ]
+
+
+# --- Liveness ---------------------------------------------------------------
+#
+# The read half of the NOTIFY the schema's trigger already fires. It lives
+# here rather than in the dashboard because it is Journal SQL - the channel
+# name, and the re-read of the row a notification only names by id - and the
+# dashboard is the Journal's window, not a second definition of it (ADR 0015).
+# Nothing in the Selector calls it: v1 pushes to a page and triggers no work.
+
+# How long a listener waits before saying something anyway. A stream silent
+# for minutes is indistinguishable from a dead one, and an idle connection
+# through a proxy is eventually reaped.
+KEEPALIVE_SECONDS = 20.0
+
+
+async def listen(after: int | None = None, to: str | None = None,
+                 keepalive: float = KEEPALIVE_SECONDS):
+    """Yield `(what, payload)` as rows land: the Journal, pushed.
+
+    `what` is one of:
+
+    - `ready`   - the LISTEN is established; payload names the newest row id
+                  (None on an empty Journal). Emitted before anything else so
+                  a caller knows from when it is covered. Without it a client
+                  that acted the moment it had a connection could write a row
+                  before the LISTEN existed and then wait forever to hear
+                  about it.
+    - `event`   - one row: `{"id": ..., "kind": ...}`.
+    - `silence` - `keepalive` seconds passed with nothing to say.
+
+    `after` replays the rows written since that id before going live, which is
+    what makes a dropped connection recoverable: those rows fired their NOTIFY
+    into a socket nobody was holding, and after the last row of a Run there is
+    no later row to bring the reader up to date.
+
+    Async because its caller is a web request that must not hold a thread for
+    the hours a page stays open; the Selector's own paths stay synchronous and
+    do not call this.
+    """
+    conn = await psycopg.AsyncConnection.connect(to or dsn(), autocommit=True)
+    try:
+        await conn.execute(f"LISTEN {CHANNEL}")
+        cursor = await conn.execute("SELECT max(id) FROM journal.events")
+        newest = (await cursor.fetchone())[0]
+        yield "ready", {"newest": newest}
+        # Everything up to `newest` is either replayed below or already known
+        # to the caller, so a notification naming any of it is a duplicate -
+        # and there can be one, because psycopg keeps a backlog and a row
+        # inserted during the query above is in it.
+        sent = newest or 0
+        if after is not None:
+            for row in await _since(conn, after):
+                sent = max(sent, row["id"])
+                yield "event", row
+        while True:
+            fired = False
+            # `stop_after=1` rather than draining the generator, because the
+            # rows are read below on this same connection and `notifies()`
+            # holds its lock for as long as it is being iterated: a query
+            # issued from inside the loop deadlocks, silently, forever. One
+            # notification is enough anyway - what is read is "every row since
+            # the last one sent", so a burst of ten arrives in one read and
+            # the nine remaining notifications find nothing left to fetch.
+            async for _note in conn.notifies(timeout=keepalive, stop_after=1):
+                fired = True
+            if not fired:
+                yield "silence", None
+                continue
+            # Re-read rather than trust the notification: NOTIFY carries only
+            # the id (its payload is capped at 8000 bytes), and the kind is
+            # what a reader decides with.
+            for row in await _since(conn, sent):
+                sent = max(sent, row["id"])
+                yield "event", row
+    finally:
+        await conn.close()
+
+
+async def _since(conn, after: int, limit: int = 500) -> list[dict]:
+    """Rows newer than `after`, oldest first - the order they happened in."""
+    cursor = await conn.execute(
+        "SELECT id, kind FROM journal.events WHERE id > %s"
+        " ORDER BY id LIMIT %s",
+        (after, limit),
+    )
+    return [{"id": r[0], "kind": r[1]} for r in await cursor.fetchall()]

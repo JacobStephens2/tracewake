@@ -1,0 +1,292 @@
+{# The live region (#159): everything on /loop that a Journal row can change.
+
+   Rendered inline by loop.html on load and fetched whole by /loop/live
+   afterwards, so what the page shows after a swap is the same HTML it was
+   built from. The element carrying the trigger is the element being replaced,
+   which is why the attributes are here and not on a wrapper in loop.html: an
+   outerHTML swap that landed a fragment without them would update once and
+   then look live forever after.
+
+   The trigger is a `journal` event on the body, dispatched by loop.html's
+   EventSource. HTMX has an SSE extension that would connect for us; this page
+   does not use it, because the extension's job is turning event data into
+   swaps and the data here is only a signal - the swap's content comes from a
+   fresh render, which is a plain hx-get. #}
+<div id="loop-live"
+     hx-get="{{ live_url }}"
+     hx-trigger="journal from:body delay:400ms"
+     hx-swap="outerHTML">
+    {% if error %}
+    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
+    {% endif %}
+
+    {#- The status strip (#156). Unattended operation is a claim, and these four
+        cells are where it is proved: what the Selector is doing, when the timer
+        fires next, what is left of today's budget, and what the box it
+        dispatches to is holding. Nothing here is computed in the template. -#}
+    <section class="strip">
+      <div class="cell">
+        <span class="cell-label">selector</span>
+        <span class="cell-value">{{ state or "unknown" }}</span>
+      </div>
+      <div class="cell">
+        <span class="cell-label">next cycle</span>
+        {% if timer.state == "active" %}
+        <span class="cell-value">{{ timer.next }}</span>
+        {% elif timer.state %}
+        {#- The failure this cell exists for: a timer installed and never
+            enabled is inert, and a Selector that is dead looks exactly like a
+            Selector with nothing to do. -#}
+        <span class="cell-value alarm">timer not running ({{ timer.state }})</span>
+        {% else %}
+        <span class="cell-value">unknown - the timer could not be read</span>
+        {% endif %}
+      </div>
+      <div class="cell">
+        <span class="cell-label">runs today</span>
+        {% if budget.spent is none %}
+        <span class="cell-value">unknown</span>
+        {% else %}
+        <span class="cell-value">{{ budget.spent }} of {{ budget.cap }}</span>
+        <span class="detail">dispatches in the last {{ budget.window }}h</span>
+        {% endif %}
+      </div>
+      <div class="cell cell-box">
+        <span class="cell-label">the box</span>
+        {% if box is none %}
+        <span class="cell-value">not read yet</span>
+        <span class="detail">a cycle reads it over SSH; a dry run does not.</span>
+        {% elif not box.reachable %}
+        <span class="cell-value alarm">could not be read</span>
+        <span class="detail">{{ box.error }} &middot; {{ box.at }}</span>
+        {% else %}
+        <span class="cell-value">
+          loop scripts <code>{{ box.scripts_hash or "not reported" }}</code>
+        </span>
+        <span class="detail">guest template
+          <code>{{ box.guest_template or "not reported" }}</code>
+          &middot; agent {{ box.agent or "" }}
+          <code>{{ box.agent_version or "not reported" }}</code>
+          &middot; read {{ box.at }}</span>
+        {% endif %}
+      </div>
+    </section>
+    {#- The queue board (#158). Every other panel here is the Journal
+        replayed; this one is the tracker as it is right now, columned by the
+        same Eligibility predicate the Selector picks with. The columns are
+        the tracker's own labels, so what the board says and what the operator
+        sees on his issue list are the same thing. -#}
+    <h2>The queue</h2>
+    <p>The whole labeled queue, read from the tracker when this page was
+       requested and columned by the Selector's Eligibility. Not the Journal:
+       these are the issues as they stand now, not as the last cycle found
+       them.</p>
+    {% if board.blind %}
+    <p class="detail">The Journal could not be read, so the retry budget and
+       the in-flight lock are unknown here: an issue that has spent its
+       attempts still shows as eligible below.</p>
+    {% endif %}
+    <div class="board">
+      {% for col in board.columns %}
+      <section class="column" data-column="{{ col.key }}">
+        <h3>{{ col.name }}
+          <span class="count">{{ col.cards | length }}</span></h3>
+        {#- The label the column is read from, when it is not already the
+            column's name. -#}
+        {% if col.label and col.label != col.name %}<p class="column-label"><code>{{ col.label }}</code></p>{% endif %}
+        <p class="detail">{{ col.note }}</p>
+        {% if col.error %}
+        <p class="terminal-alert terminal-alert-error">{{ col.error }}</p>
+        {% elif not col.cards %}
+        <p class="detail">nothing here.</p>
+        {% endif %}
+        {% for card in col.cards %}
+        <article class="card">
+          <a href="{{ card.url }}">#{{ card.number }}</a> {{ card.title }}
+          {% if card.reason %}
+          <p class="detail"><code>{{ card.reason }}</code> &middot; {{ card.detail }}</p>
+          {% endif %}
+          {#- The viewing criterion: a blocked card names its blockers. The
+              count is what Eligibility decides on, but "blocked by 1" is not
+              an answer to "blocked by what?" - so the tracker's own list of
+              them is what the card carries. -#}
+          {% if card.blockers %}
+          <p class="detail">blocked by
+            {% for b in card.blockers %}<a href="{{ b.url }}">#{{ b.number }}</a>
+              {{ b.title }}{% if not loop.last %}; {% endif %}{% endfor %}
+            {%- if card.unnamed_blockers %}, and {{ card.unnamed_blockers }}
+            more the tracker did not name{% endif %}</p>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+
+    {% if runs %}
+    <h2>Runs</h2>
+    <p>One card per dispatch: the Run in flight, and every Run that has
+       ended, with the Proposal it left behind.</p>
+    {% for r in runs %}
+    <section class="run{% if r.in_flight %} run-in-flight{% endif %}">
+      <h3>#{{ r.issue }}
+        {% if r.in_flight %}<span class="badge">in flight</span>
+        {% else %}<span class="badge">{{ r.outcome }}</span>{% endif %}
+        {% if r.attempt and r.attempt > 1 %}<span class="badge">attempt {{ r.attempt }}</span>{% endif %}
+        {# Where the outcome put the issue (#155). The label badge is the one
+           that should match what the operator sees on the issue itself, so it
+           carries the label string verbatim rather than a friendlier word. #}
+        {% if r.label %}<span class="badge badge-{{ r.route }}">{{ r.label }}</span>
+        {% elif r.route == "retrying" %}<span class="badge badge-retrying">retrying</span>{% endif %}
+      </h3>
+      <p class="run-task">
+        <a href="{{ r.url }}">{{ r.title or r.task_ref }}</a><br>
+        <span class="detail">branch <code>{{ r.branch }}</code>
+          &middot; owning area: {{ r.area }}
+          &middot; dispatched {{ r.at }}</span>
+      </p>
+      {#- What the Run is doing, while it does it (#157). The watcher reads
+          the box's Progress Log about once a minute, so these appear during
+          the Run rather than all at once when it ends. Shown on an ended card
+          too: the box persists no record of a Run, so afterwards these rows
+          are the only account of it there is. -#}
+      {% if r.iteration_records %}
+      <table class="iterations">
+        <thead><tr><th>iteration</th><th>started</th><th>agent</th><th>head</th><th>observed</th></tr></thead>
+        <tbody>
+        {% for i in r.iteration_records %}
+          <tr>
+            <td>{{ i.iteration }}</td>
+            <td>{{ i.started }}</td>
+            <td>exit {{ i.agent_exit }}{% if i.exit_note %} &middot; {{ i.exit_note }}{% endif %}
+              {%- if i.promise %} &middot; <span class="badge">promise recorded</span>{% endif %}
+              {%- if i.dirty %} &middot; <span class="badge">uncommitted changes</span>{% endif %}</td>
+            <td>{% if i.noop %}<span class="badge">no-op</span> <code>{{ i.head_before }}</code>
+                {% else %}<code>{{ i.head_before }}</code> &rarr; <code>{{ i.head_after }}</code>{% endif %}</td>
+            <td class="detail">{{ i.at }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if r.watch_error %}
+      <p class="detail">The Progress Log could not be read while this Run ran,
+         so its Iterations are not below: {{ r.watch_error }}</p>
+      {% endif %}
+      {% if r.in_flight %}
+      <p class="detail">Started on the box with <code>--propose --notify</code>.
+         The outcome lands here when the Run ends; until then this Run holds
+         the Selector's in-flight lock and no second Run is dispatched.
+         Iterations appear above as the box writes them, about a minute
+         behind.</p>
+      {% elif r.outcome == "dispatch-failed" %}
+      <p class="terminal-alert terminal-alert-error">no Run was started: {{ r.error }}</p>
+      {% else %}
+      <p class="detail">ended by <code>{{ r.outcome }}</code>,
+         exit {{ r.exit }}, {{ r.iterations }} iteration(s),
+         faults {{ r.faults }}, notified {{ r.notified }},
+         finished {{ r.ended_at }}.</p>
+      <p class="pick"><b>proposal</b>
+        {% if r.proposal %}<a href="{{ r.proposal }}">{{ r.proposal }}</a>
+        {% else %}none - the Run produced nothing to review{% endif %}
+      </p>
+      {% if r.route == "retrying" %}
+      <p class="detail">The retry budget is not spent, so the issue keeps its
+         <code>ready-for-agent</code> label and the next cycle dispatches it
+         again on this branch.</p>
+      {% elif r.route == "given-up" %}
+      <p class="detail">The retry budget is spent. The issue was commented on
+         and swapped to <code>{{ r.label }}</code>; it will not be dispatched
+         again under this Handover.</p>
+      {% elif r.route == "handed-to-human" %}
+      <p class="detail">
+        {% if r.checks == "pending" %}The Proposal's checks did not finish
+        inside the Selector's wait, so it was not put in the review queue.
+        {% else %}The Proposal's checks are red:
+        {% for name in r.failing %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+        {% endif %}
+        Swapped to <code>{{ r.label }}</code>; no repair Run is started.</p>
+      {% elif r.route == "awaiting-review" %}
+      <p class="detail">Checks green. The issue is swapped to
+         <code>{{ r.label }}</code> and is waiting on you.</p>
+      {% endif %}
+      {% endif %}
+    </section>
+    {% endfor %}
+    {% endif %}
+
+    {% if cycles %}
+    <h2>Cycles</h2>
+    <p>One card per Selector cycle: what it picked, and every issue it passed
+       over with the reason it recorded.</p>
+    {% for c in cycles %}
+    <section class="cycle">
+      <h3>cycle {{ c.id }} &middot; {{ c.at }}
+        {% if c.dry_run %}<span class="badge">dry run</span>{% endif %}</h3>
+      <p class="cycle-target">{{ c.repo }} &middot; <code>{{ c.label }}</code></p>
+      {% if c.failed %}
+      <p class="terminal-alert terminal-alert-error">cycle failed: {{ c.failed }}</p>
+      {% endif %}
+      {% if c.pick %}
+      <p class="pick"><b>picked</b>
+        <a href="{{ c.pick.url }}">#{{ c.pick.number }}</a>
+        {{ c.pick.title }}<br>
+        <span class="detail">owning area: {{ c.pick.area }}</span><br>
+        <span class="detail">check:
+          {% if c.pick.check %}<code>{{ c.pick.check }}</code>
+          {% else %}none - the acceptance criteria are the only grade{% endif %}
+        </span>
+      </p>
+      {% elif c.summary %}
+      <p class="pick"><b>picked nothing</b> &mdash; {{ c.summary.halted }}</p>
+      {% endif %}
+      {% if c.skips %}
+      <table class="skips">
+        <thead><tr><th>issue</th><th>reason</th><th>why</th></tr></thead>
+        <tbody>
+        {% for s in c.skips %}
+          <tr>
+            <td><a href="{{ s.url }}">#{{ s.number }}</a></td>
+            <td><code>{{ s.reason }}</code></td>
+            <td>{{ s.detail }}{% if c.returned and s.number in c.returned %}
+              {% if c.returned[s.number] is string %}
+              <br><span class="terminal-alert terminal-alert-error">could not hand it back: {{ c.returned[s.number] }}</span>
+              {% else %}
+              <br><span class="badge">commented, swapped to needs-info</span>
+              {% endif %}
+            {% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if c.summary %}
+      <p class="detail">considered {{ c.summary.considered }},
+         eligible {{ c.summary.eligible | length }},
+         skipped {{ c.skips | length }};
+         budget {{ c.summary.dispatched_in_window }}/{{ c.summary.daily_cap }}
+         dispatches in the last 24h.</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+    {% endif %}
+
+    {% if events %}
+    <h2>Every event</h2>
+    <table>
+      <thead><tr><th>at (UTC)</th><th>id</th><th>kind</th><th>payload</th></tr></thead>
+      <tbody>
+      {% for e in events %}
+        <tr>
+          <td>{{ e.at }}</td>
+          <td>{{ e.id }}</td>
+          <td>{{ e.kind }}</td>
+          <td><code>{{ e.payload | tojson }}</code></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% elif not error %}
+    <p>No events yet. The Journal fills when the Selector runs.</p>
+    {% endif %}
+</div>

@@ -44,7 +44,14 @@ def test_writer_surface_is_append_only():
         for name, obj in vars(journal).items()
         if callable(obj) and getattr(obj, "__module__", None) == "journal"
     }
-    assert own == {"dsn", "connect", "append", "events", "iterations_seen"}
+    assert own == {
+        "dsn", "connect", "append",
+        # Reads, all of them. `listen` and `_since` are the push side (#159):
+        # they hold a LISTEN and re-read the rows a notification names, and
+        # they write nothing - a Journal that could be changed by something
+        # watching it would not be a Journal.
+        "events", "iterations_seen", "listen", "_since",
+    }
 
 
 def test_schema_blocks_update_delete_truncate(db):

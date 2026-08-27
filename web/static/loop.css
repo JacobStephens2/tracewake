@@ -158,3 +158,20 @@
 .board .column[data-column="in-flight"] .card {
   border-left-color: var(--font-color);
 }
+
+/* Whether the page is being pushed to (#159). Sized down and set beside the
+   heading rather than given a cell in the status strip: those four cells are
+   about the Selector, and this one is about this browser tab. */
+.live {
+  font-size: 0.5em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  margin-left: 0.6rem;
+}
+.live .live-on { color: var(--primary-color); }
+.live .live-off { color: var(--secondary-color); }
+/* The default is "not live", so a page whose script never ran says so rather
+   than claiming a stream it does not have. */
+.live[data-live="on"] .live-off,
+.live[data-live="off"] .live-on { display: none; }

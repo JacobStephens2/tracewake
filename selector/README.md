@@ -634,7 +634,44 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   an assertion rather than a coincidence of timing.
 
 The window is `lab/webapp`'s `/loop` page, which imports `journal.py` from
-here and renders at request time (SSE via LISTEN/NOTIFY is issue #159).
+here and renders at request time.
+
+### The push (#159)
+
+The page does not need reloading. `journal.listen` holds a LISTEN on
+`journal_events` - the channel `schema.sql`'s insert trigger already NOTIFYs -
+and `/loop/events` frames what it yields as Server-Sent Events. The event
+carries a signal, not content: the browser dispatches a `journal` event on the
+body, and HTMX re-fetches `/loop/live`, the whole live region, rendered by the
+same handler that rendered it into the page. One region rather than a panel
+per event kind, because one row moves several panels at once (a `run.outcome`
+changes the Run card, the strip's state cell, the budget count and the event
+table), and the trigger carries a `delay:` so a cycle writing a dozen rows in
+a second costs one re-render rather than a dozen tracker reads.
+
+Three things about it are easy to get wrong and are pinned by
+`lab/webapp/tests/test_liveness.py`:
+
+- **`ready` before anything else.** The LISTEN is established inside the
+  handler, after the response headers are out. A client that acted the moment
+  it was connected could write a row into the gap and wait forever. The
+  `ready` frame is written after the LISTEN, so it is the promise that the
+  next row will be seen - and it is what the suite waits for before inserting.
+- **Never query the connection from inside `notifies()`.** That generator
+  holds the connection's lock while it is being iterated, so the re-read of
+  the row it names deadlocks if it is issued from the loop body. `listen`
+  takes one notification (`stop_after=1`), leaves the generator, then reads
+  every row since the last one sent - which also means a burst of ten arrives
+  in one read.
+- **`Last-Event-ID` is honoured.** Rows written while a connection was down
+  fired their NOTIFY at nobody. EventSource reconnects on its own and sends
+  the header; the endpoint replays by id. Without it a page could sit stale
+  until the next row happened to land, and after the last row of a Run none
+  ever does.
+
+Those tests run against a real uvicorn on a loopback port rather than the
+`TestClient` the rest of that suite uses: its transport runs the app to
+completion and buffers the body, so a stream that never ends never returns.
 
 ## Host setup
 

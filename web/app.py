@@ -9,6 +9,7 @@ site is itself a demonstration of the stack the ADR chooses (docs/adr/).
 # carry, for the same reason.
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -20,7 +21,7 @@ from pathlib import Path
 import markdown as md
 import psycopg
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -59,7 +60,19 @@ def _static_base(request: Request) -> str:
     Reading `root_path` instead keeps the one property a hardcoded `/static/`
     lacks - correctness under a path prefix - without inventing a scheme.
     """
-    return request.scope.get("root_path", "").rstrip("/") + "/static"
+    return _path(request, "/static")
+
+
+def _path(request: Request, route: str) -> str:
+    """A route on THIS instance, as the browser should ask for it.
+
+    Same reasoning as `_static_base`, and the same reason not to use
+    `url_for`: relative, prefix-aware, and no invented scheme. It matters more
+    here than for a stylesheet - a live region that asked the root instance
+    for its fragment would quietly render another deployment's Journal into
+    this page.
+    """
+    return request.scope.get("root_path", "").rstrip("/") + route
 
 
 def _page(request: Request, name: str, context: dict, **kwargs):
@@ -430,12 +443,14 @@ def _selector_state(runs: list[dict], budget: dict, timer: dict) -> str:
     return "idle"
 
 
-@app.get("/loop", response_class=HTMLResponse)
-def loop_page(request: Request):
-    """The Loop's window: the Selector Journal, read at request time.
+def _loop_context(request: Request) -> dict:
+    """Everything the live region renders, read now.
 
-    Sync def on purpose: psycopg blocks, so FastAPI runs this handler in its
-    threadpool instead of on the event loop.
+    One reader for both routes. The page and the fragment it updates to are
+    the same HTML by construction rather than by two handlers being kept in
+    step - a fragment that drifted from the page would show one thing on load
+    and another the moment a row landed, which is the failure a live page has
+    that a static one cannot.
     """
     config = cycle.Config.from_env()
     events, error, spend = [], None, None
@@ -468,21 +483,125 @@ def loop_page(request: Request):
     # is down does not make the queue unknowable, and a tracker that is down
     # does not hide the history.
     board_view = queue_board.board(config, spend)
+    return {
+        "events": view,
+        "cycles": _cycles(events),
+        "runs": runs,
+        "error": error,
+        "budget": budget,
+        "timer": timer,
+        "box": _box(events),
+        "board": board_view,
+        "state": (
+            _selector_state(runs, budget, timer) if error is None else None
+        ),
+        "live_url": _path(request, "/loop/live"),
+    }
+
+
+@app.get("/loop", response_class=HTMLResponse)
+def loop_page(request: Request):
+    """The Loop's window: the Selector Journal, read at request time.
+
+    Sync def on purpose: psycopg blocks, so FastAPI runs this handler in its
+    threadpool instead of on the event loop.
+    """
     return _page(
         request,
         "loop.html",
-        {
-            "events": view,
-            "cycles": _cycles(events),
-            "runs": runs,
-            "error": error,
-            "budget": budget,
-            "timer": timer,
-            "box": _box(events),
-            "board": board_view,
-            "state": (
-                _selector_state(runs, budget, timer) if error is None else None
-            ),
+        {**_loop_context(request), "events_url": _path(request, "/loop/events")},
+    )
+
+
+@app.get("/loop/live", response_class=HTMLResponse)
+def loop_live(request: Request):
+    """The live region on its own, for the swap (#159).
+
+    The whole region rather than a panel per row kind, because a Journal row
+    moves several of them at once - a `run.outcome` changes the Run card, the
+    status strip's state cell, the budget count and the event table - and a
+    page that refreshed only the panel matching the event kind would leave the
+    other three saying something that stopped being true. One region is one
+    truth; the cost is one tracker read per burst, which is what the trigger's
+    delay is for.
+    """
+    return _page(request, "_loop_live.html", _loop_context(request))
+
+
+# --- The push ---------------------------------------------------------------
+
+# What the browser is told to wait before reconnecting, in milliseconds. Short:
+# a reconnect costs one LISTEN and one indexed read, and the gap is the window
+# in which the page is silently stale.
+SSE_RETRY_MS = 3000
+
+
+def _sse(data: str, *, event: str, ident: int | None = None) -> str:
+    lines = [] if ident is None else [f"id: {ident}"]
+    lines += [f"event: {event}", f"data: {data}", ""]
+    return "\n".join(lines) + "\n"
+
+
+async def _journal_stream(after: int | None):
+    """The Journal's NOTIFY, framed as Server-Sent Events.
+
+    SSE rather than a WebSocket for the reason the rest of this app is
+    server-rendered: the traffic is one-directional and the page's only write
+    is a form post. EventSource also reconnects on its own, and carries
+    `Last-Event-ID` when it does, so recovering from a dropped connection is a
+    header this endpoint honours rather than client state to keep.
+    """
+    yield f"retry: {SSE_RETRY_MS}\n\n"
+    keepalive = float(
+        os.environ.get("SELECTOR_SSE_KEEPALIVE_SECONDS")
+        or journal.KEEPALIVE_SECONDS
+    )
+    try:
+        stream = journal.listen(after=after, keepalive=keepalive)
+        async for what, payload in stream:
+            if what == "silence":
+                # A comment: it keeps the connection warm and is ignored by
+                # EventSource, so it cannot be mistaken for a Journal row.
+                yield ": keepalive\n\n"
+            elif what == "ready":
+                yield _sse(json.dumps(payload), event="ready")
+            else:
+                yield _sse(
+                    json.dumps(payload), event="journal", ident=payload["id"]
+                )
+    except psycopg.Error as exc:
+        # Say so and end, rather than hold a connection that will never carry
+        # an event. EventSource retries after SSE_RETRY_MS, so a Journal that
+        # comes back is picked up without anyone reloading the page.
+        yield _sse(json.dumps({"error": str(exc)}), event="error")
+
+
+@app.get("/loop/events")
+async def loop_events(request: Request):
+    """Journal rows pushed to an open /loop, the moment they land.
+
+    Async on purpose, the opposite of every other handler here: this one is
+    held open for as long as the page is, and a sync handler would hold one of
+    the threadpool's threads for those hours.
+    """
+    last = request.headers.get("Last-Event-ID")
+    try:
+        after = int(last) if last else None
+    except ValueError:
+        # Whatever the client sent. An unreadable one means "start from now",
+        # which is the same thing a first connection means.
+        after = None
+    return StreamingResponse(
+        _journal_stream(after),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-store",
+            # Caddy buffers a proxied response by default, which would hold
+            # every event until the stream ended - that is, until the page
+            # closed. This is the header that turns that off, and the failure
+            # it prevents looks exactly like a Selector that never runs.
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 
