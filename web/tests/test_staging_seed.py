@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import app
+from conftest import column
 
 client = TestClient(app)
 
@@ -94,3 +95,28 @@ def test_the_fixture_never_names_the_live_journal(seeded):
     """A preview writes into a database it is granted; the fixture must not
     smuggle the live one's name into anything that could be copy-pasted."""
     assert "dbname=selector\n" not in SEED.read_text()
+
+
+# The board is the one panel a preview cannot show from `seed.sql`: it is read
+# from the tracker, which in a preview is `preview-sources/tracker.sh` (ADR
+# 0016). Same rule as the fixture above, applied to the other source - a
+# column the preview fixture cannot fill is a column no preview can show you.
+
+PREVIEW_TRACKER = (
+    Path(__file__).resolve().parents[2]
+    / "single-user-factory" / "selector" / "preview-sources" / "tracker.sh"
+)
+
+BOARD_COLUMNS = [
+    "eligible", "blocked", "in-flight", "awaiting-review", "ready-for-human",
+]
+
+
+def test_the_preview_tracker_fills_every_column_of_the_board(db, monkeypatch):
+    monkeypatch.setenv("SELECTOR_TRACKER_COMMAND", str(PREVIEW_TRACKER))
+    body = client.get("/loop").text
+    for name in BOARD_COLUMNS:
+        cards = column(body, name)
+        assert "nothing here" not in cards, (
+            f"the preview fixture leaves the {name} column empty"
+        )

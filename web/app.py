@@ -32,6 +32,7 @@ ADR_DIR = PROJECT / "docs" / "adr"
 # app is its window (ADR 0015), so import it from there rather than forking
 # the SQL.
 sys.path.insert(0, str(PROJECT / "selector"))
+import board as queue_board  # noqa: E402
 import cycle  # noqa: E402
 import journal  # noqa: E402
 
@@ -437,7 +438,7 @@ def loop_page(request: Request):
     threadpool instead of on the event loop.
     """
     config = cycle.Config.from_env()
-    events, error = [], None
+    events, error, spend = [], None, None
     budget = {"spent": None, "cap": config.daily_cap,
               "window": cycle.CAP_WINDOW_HOURS}
     try:
@@ -446,7 +447,8 @@ def loop_page(request: Request):
             # Read through the Selector's own function rather than counted
             # here: two readings of "Runs today" that could disagree would be
             # a strip that reassures about a cap it is not the one enforcing.
-            budget["spent"] = cycle.spend(conn).recent_dispatches
+            spend = cycle.spend(conn)
+            budget["spent"] = spend.recent_dispatches
     except psycopg.Error as exc:
         error = f"journal unavailable: {exc}"
     view = [
@@ -460,6 +462,12 @@ def loop_page(request: Request):
     ]
     runs = _runs(events)
     timer = _timer()
+    # The one panel on this page that is not the Journal replayed: the
+    # tracker, read now, columned by the Selector's own Eligibility (#158).
+    # Outside the try above because the two are independent - a Journal that
+    # is down does not make the queue unknowable, and a tracker that is down
+    # does not hide the history.
+    board = queue_board.board(config, spend)
     return _page(
         request,
         "loop.html",
@@ -471,6 +479,7 @@ def loop_page(request: Request):
             "budget": budget,
             "timer": timer,
             "box": _box(events),
+            "board": board,
             "state": (
                 _selector_state(runs, budget, timer) if error is None else None
             ),

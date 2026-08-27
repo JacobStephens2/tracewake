@@ -4,8 +4,8 @@
 #
 #   tests/mutation-check.sh [python]
 #
-# Breaks one guard at a time - in cycle.py, dispatch.py, watcher.py or the
-# window's app.py - runs the suite
+# Breaks one guard at a time - in cycle.py, dispatch.py, watcher.py, board.py
+# or the window's app.py - runs the suite
 # that is supposed to notice against the broken copy, and reports how many
 # tests went red. Anything whose removal leaves the suite green is something
 # the suite does not actually verify. Same contract as the Loop's
@@ -62,7 +62,7 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # strip is the Journal's window and its guards are the Selector's guards
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
-targets=(cycle.py dispatch.py watcher.py ../../webapp/app.py)
+targets=(cycle.py dispatch.py watcher.py board.py ../../webapp/app.py)
 backup_dir="$(mktemp -d)"
 # Backed up under a flattened name - `../../webapp/app.py` would otherwise
 # write outside the backup directory, which is a mutation runner quietly

@@ -121,6 +121,16 @@ budget is counted from, which is why a Route that GitHub refused still leaves a
 task that cannot be dispatched a third time.
 _Avoid_: ledger, log, queue
 
+**Queue Board**:
+The tracker's whole labeled queue as five columns on `/loop`, read when the page
+is requested rather than replayed from the Selector Journal: Eligible, blocked,
+in flight, `awaiting-review`, `ready-for-human`. Its columning is the Selector's
+own Eligibility predicate, imported - a board that decided for itself which
+tasks were Eligible would be a second Selector, and their first disagreement
+would be a bug in whichever one you did not read.
+_Avoid_: kanban, backlog, dashboard (the page is the dashboard; this is one
+panel on it)
+
 **Owning Area**:
 The one part of a task a single Run is scoped to, named in the Plan at Seeding.
 The rest of the task is out of scope for that Run and is not remaining work: an

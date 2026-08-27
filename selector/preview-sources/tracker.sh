@@ -10,12 +10,55 @@
 # may not do is read the real tracker, because the next thing a cycle does
 # with what it reads is dispatch a Run against it.
 #
-# The three issues are chosen to exercise the three interesting paths: one
-# eligible, one blocked by a native edge, one missing its `Owning area` and so
-# handed back loudly.
+# It answers per label, because the queue board (#158) asks for each label in
+# the lifecycle in turn and a fixture that ignored the argument would render
+# the same three cards in all five columns - which is exactly the bug a
+# preview of a board change exists to catch.
+#
+# The Handover label's four issues are chosen to exercise the four paths a
+# labeled issue can take: one eligible, one blocked by a native edge, one with
+# an open Proposal, one missing its `Acceptance criteria` and so handed back
+# loudly. The other two labels carry one issue each so their columns are not
+# empty.
 set -euo pipefail
 
+label="${2:?usage: tracker.sh <owner/repo> <label>}"
 labeled_at="$(date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+
+case "${label}" in
+  awaiting-review)
+    jq -n --arg at "$labeled_at" '{
+      issues: [
+        {
+          number: 9101,
+          title: "Preview: a green Proposal waiting on you",
+          url: "https://example.invalid/issues/9101",
+          state: "OPEN",
+          body: "## Acceptance criteria\n\nReviewed.\n",
+          labeledBy: "JacobStephens2", labeledAt: $at,
+          blockedBy: 0, blockers: [], openSubIssues: 0, proposals: []
+        }
+      ]
+    }'
+    exit 0
+    ;;
+  ready-for-human)
+    jq -n --arg at "$labeled_at" '{
+      issues: [
+        {
+          number: 9201,
+          title: "Preview: the Selector gave up on this one",
+          url: "https://example.invalid/issues/9201",
+          state: "OPEN",
+          body: "## Acceptance criteria\n\nHanded over.\n",
+          labeledBy: "JacobStephens2", labeledAt: $at,
+          blockedBy: 0, blockers: [], openSubIssues: 0, proposals: []
+        }
+      ]
+    }'
+    exit 0
+    ;;
+esac
 
 jq -n --arg at "$labeled_at" '{
   issues: [
@@ -28,6 +71,7 @@ jq -n --arg at "$labeled_at" '{
       labeledBy: "JacobStephens2",
       labeledAt: $at,
       blockedBy: 0,
+      blockers: [],
       openSubIssues: 0,
       proposals: []
     },
@@ -40,20 +84,48 @@ jq -n --arg at "$labeled_at" '{
       labeledBy: "JacobStephens2",
       labeledAt: $at,
       blockedBy: 1,
+      blockers: [
+        {
+          number: 9000,
+          title: "Preview: the issue that has to land first",
+          url: "https://example.invalid/issues/9000"
+        }
+      ],
       openSubIssues: 0,
       proposals: []
     },
     {
       number: 9003,
-      title: "Preview: an issue missing its Owning area",
+      title: "Preview: an issue missing its Acceptance criteria",
       url: "https://example.invalid/issues/9003",
       state: "OPEN",
-      body: "## Acceptance criteria\n\nHanded back loudly.\n",
+      body: "## Problem\n\nUnderspecified, and handed back loudly.\n",
       labeledBy: "JacobStephens2",
       labeledAt: $at,
       blockedBy: 0,
+      blockers: [],
       openSubIssues: 0,
       proposals: []
+    },
+    {
+      number: 9004,
+      title: "Preview: an issue with an open Proposal",
+      url: "https://example.invalid/issues/9004",
+      state: "OPEN",
+      body: "## Acceptance criteria\n\nIn flight.\n",
+      labeledBy: "JacobStephens2",
+      labeledAt: $at,
+      blockedBy: 0,
+      blockers: [],
+      openSubIssues: 0,
+      proposals: [
+        {
+          number: 77,
+          url: "https://example.invalid/pull/77",
+          state: "OPEN",
+          isDraft: true
+        }
+      ]
     }
   ]
 }'

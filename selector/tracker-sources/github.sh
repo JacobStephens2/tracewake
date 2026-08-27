@@ -24,6 +24,7 @@
 #   {"issues": [{"number": 646, "title": ..., "url": ..., "state": "OPEN",
 #                "body": ..., "labeledBy": "JacobStephens2",
 #                "labeledAt": "2026-08-26T12:00:00Z", "blockedBy": 1,
+#                "blockers": [{"number": 645, "title": ..., "url": ...}],
 #                "openSubIssues": 0,
 #                "proposals": [{"number": 12, "url": ..., "isDraft": true}]}]}
 #
@@ -39,6 +40,14 @@
 #
 # blockedBy is the tracker's native edge count and the single blocking signal;
 # prose "Blocked by" text is deliberately not read (ADR 0014).
+#
+# blockers are those same edges, named: the open issues the edges point at.
+# Eligibility decides on the COUNT and nothing else - which is what keeps the
+# predicate one query with no text parsing - but "blocked by 1" is not an
+# answer to "blocked by what?", and the queue board's blocked cards have to
+# name them (#158). Only the open ones: `blockedBy` is the whole dependency
+# list including edges already satisfied, while `issueDependenciesSummary`
+# counts the open ones, so filtering here is what keeps the two agreeing.
 #
 # proposals are the open pull requests that would close the issue - the
 # `Closes #n` link the Selector itself writes into a Proposal body. An open
@@ -77,6 +86,7 @@ query($owner: String!, $name: String!, $label: String!, $cursor: String) {
       nodes {
         number title url state body
         issueDependenciesSummary { blockedBy }
+        blockedBy(first: 20) { nodes { number title url state } }
         subIssues(first: 100) { nodes { number state } }
         timelineItems(last: 100, itemTypes: [LABELED_EVENT]) {
           nodes { ... on LabeledEvent { createdAt label { name } actor { login } } }
@@ -110,6 +120,11 @@ gh api graphql --paginate \
                     | last | .createdAt? // null
                 ),
                 blockedBy: (.issueDependenciesSummary.blockedBy // 0),
+                blockers: [
+                    .blockedBy.nodes[]
+                    | select(.state == "OPEN")
+                    | {number, title, url}
+                ],
                 openSubIssues: (
                     [.subIssues.nodes[] | select(.state == "OPEN")] | length
                 ),

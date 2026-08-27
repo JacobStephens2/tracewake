@@ -76,6 +76,56 @@
         {% endif %}
       </div>
     </section>
+    {#- The queue board (#158). Every other panel here is the Journal
+        replayed; this one is the tracker as it is right now, columned by the
+        same Eligibility predicate the Selector picks with. The columns are
+        the tracker's own labels, so what the board says and what the operator
+        sees on his issue list are the same thing. -#}
+    <h2>The queue</h2>
+    <p>The whole labeled queue, read from the tracker when this page was
+       requested and columned by the Selector's Eligibility. Not the Journal:
+       these are the issues as they stand now, not as the last cycle found
+       them.</p>
+    {% if board.blind %}
+    <p class="detail">The Journal could not be read, so the retry budget and
+       the in-flight lock are unknown here: an issue that has spent its
+       attempts still shows as eligible below.</p>
+    {% endif %}
+    <div class="board">
+      {% for col in board.columns %}
+      <section class="column" data-column="{{ col.key }}">
+        <h3>{{ col.name }}
+          <span class="count">{{ col.cards | length }}</span></h3>
+        {#- The label the column is read from, when it is not already the
+            column's name. -#}
+        {% if col.label and col.label != col.name %}<p class="column-label"><code>{{ col.label }}</code></p>{% endif %}
+        <p class="detail">{{ col.note }}</p>
+        {% if col.error %}
+        <p class="terminal-alert terminal-alert-error">{{ col.error }}</p>
+        {% elif not col.cards %}
+        <p class="detail">nothing here.</p>
+        {% endif %}
+        {% for card in col.cards %}
+        <article class="card">
+          <a href="{{ card.url }}">#{{ card.number }}</a> {{ card.title }}
+          {% if card.reason %}
+          <p class="detail"><code>{{ card.reason }}</code> &middot; {{ card.detail }}</p>
+          {% endif %}
+          {#- The viewing criterion: a blocked card names its blockers. The
+              count is what Eligibility decides on, but "blocked by 1" is not
+              an answer to "blocked by what?" - so the tracker's own list of
+              them is what the card carries. -#}
+          {% if card.blockers %}
+          <p class="detail">blocked by
+            {% for b in card.blockers %}<a href="{{ b.url }}">#{{ b.number }}</a>
+              {{ b.title }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+
     {% if runs %}
     <h2>Runs</h2>
     <p>One card per dispatch: the Run in flight, and every Run that has

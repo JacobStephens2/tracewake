@@ -3,7 +3,6 @@ import os
 import subprocess
 import sys
 import textwrap
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -38,47 +37,12 @@ def dispatch():
 
 # --- Canned tracker records -------------------------------------------------
 #
-# Shared by the cycle suite and the dispatch suite, which drive the same
-# `cycle.py` through the same tracker seam and differ only in what they let it
-# reach afterwards. One definition of "an eligible issue" so that a change to
-# what Eligibility needs breaks both suites rather than one.
+# Shared with the dashboard suite behind the queue board, which drives the
+# same Eligibility predicate over the same records: `../fixtures.py`. Re-
+# exported here so the suites that already read them keep reading them by
+# name.
 
-BODY = """## Problem
-
-Something is wrong.
-
-## Acceptance criteria
-
-- [ ] It is right
-
-## Owning area
-
-The nightly sync script
-"""
-
-
-def hours_ago_iso(hours):
-    return (
-        datetime.now(timezone.utc) - timedelta(hours=hours)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def issue(number, **over):
-    """One tracker record, eligible unless a field is overridden."""
-    record = {
-        "number": number,
-        "title": f"Issue {number}",
-        "url": f"https://example.invalid/{number}",
-        "state": "OPEN",
-        "body": BODY,
-        "labeledBy": "JacobStephens2",
-        "labeledAt": None,
-        "blockedBy": 0,
-        "openSubIssues": 0,
-        "proposals": [],
-    }
-    record.update(over)
-    return record
+from fixtures import BODY, hours_ago_iso, issue  # noqa: E402,F401
 
 
 # --- The dry-run harness ----------------------------------------------------

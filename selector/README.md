@@ -73,6 +73,7 @@ the Journal answers "what would it have picked?" as well as "what did it?".
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
 | `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
+| `SELECTOR_BOARD_TIMEOUT_SECONDS` | `20` | how long one of the queue board's tracker reads may take |
 
 Two timeouts because the two waits are nothing like each other: everything
 except the Run should answer in seconds, and giving a comment or a fetch the
@@ -229,6 +230,65 @@ It is deliberately **not** `/srv/orchestration/tourbot`. That checkout is
 shared with the operators who work in it from their own code-server, and a
 dispatch that switched its branch out from under one of them would be the
 Selector reaching into somebody else's working tree.
+
+## The queue board
+
+`/loop` shows the Journal - what the Selector decided, remembered. The board
+at the top of it does not: it is the tracker's own state, read when the page
+is requested (story 24). A cycle that has not run for twenty-five minutes
+leaves the Journal that stale, and the board is never stale; the gap between
+the two is itself worth seeing.
+
+Five columns, and they are the tracker's labels rather than words invented for
+the page - so what the board says and what the operator sees on his issue list
+are the same thing:
+
+| column | what is in it |
+| --- | --- |
+| eligible | `ready-for-agent`, and Eligible. Lowest first, so the top card is what the next cycle picks |
+| blocked | `ready-for-agent`, and not - each card carrying the reason string the cycle would journal for it, and a blocked card naming the open issues that block it |
+| in-flight | an open Proposal, or a dispatch the Selector has journaled no outcome for |
+| `awaiting-review` | a green Proposal is open and waiting on the operator |
+| `ready-for-human` | the Selector gave up, or the checks went red |
+
+Three reads of the same substitutable tracker command, one per label,
+concurrently and each bounded by `SELECTOR_BOARD_TIMEOUT_SECONDS` - this one
+happens inside a request, and a tracker that is not answering has to make its
+column say so rather than hold the page open. A label whose read fails shows
+the failure in its own column; the other four still render. Measured against
+the live tourbot queue on 2026-08-27: about three seconds for all three,
+which is what a `/loop` request now costs.
+
+The columning is `cycle.eligibility`, imported. Two of the things it decides
+on are not on the tracker at all - the retry budget and the in-flight lock are
+Journal facts - so the page hands the board the same `Spend` its budget cell
+is read from. When the Journal is unreachable the board still renders and says
+which two columns it is now reading blind, because an issue whose attempts are
+spent looks Eligible without it and that is the one card an operator would act
+on.
+
+Note what this needs of the process serving the page: `gh` on its `PATH`, and
+`gh`'s own auth. `lab-webapp.service` sets the PATH and nothing else - the
+tracker read is authenticated by conductor's `~/.config/gh/hosts.yml`, which
+is the operator's read of the operator's tracker (ADR 0014). It deliberately
+does not get the vault environment the Selector's own unit gets: that would
+hand a page-serving process every production credential on the box to get a
+queue listing.
+
+`lab-webapp.service` is not installed by Ansible - the tracked copy under
+`deploy/systemd/` is the source and the live unit is a hand-installed copy of
+it. So unlike every other change to this page, the board needs a deploy step
+and not just a restart:
+
+```bash
+sudo install -m 0644 /srv/orchestration/deploy/systemd/lab-webapp.service \
+    /etc/systemd/system/lab-webapp.service
+sudo systemctl daemon-reload && sudo systemctl restart lab-webapp
+```
+
+Skip it and the page still serves - with five columns of "tracker command
+could not be run", which is the failure this paragraph exists to make
+findable.
 
 ## Unattended
 
@@ -491,8 +551,17 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   returns, so the Journal's shape is settled in one file rather than two.
 - `tracker-sources/github.sh` - the default `SELECTOR_TRACKER_COMMAND`: one
   `gh api graphql` call normalized to a flat record per issue (labeler,
-  native blocker count, open sub-issues, open Proposals). Substitutable, and
-  the seam the offline suite drives.
+  native blocker count and the blockers themselves, open sub-issues, open
+  Proposals). Substitutable, and the seam the offline suite drives.
+- `board.py` - the queue board `/loop` renders (#158): the same tracker
+  command, asked once per label in the lifecycle, columned by `cycle.py`'s
+  own `eligibility`. It decides nothing - the predicate is imported, not
+  reimplemented, because a page that decided for itself which issues were
+  Eligible would be a second Selector and the first disagreement between them
+  would be a bug in whichever one you did not read.
+- `fixtures.py` - the canned tracker record every suite that drives
+  Eligibility builds from, including the dashboard's. Imported by tests and
+  by nothing that ships.
 - `issue-sources/github.sh` - the default `SELECTOR_ISSUE_COMMAND`: one
   comment, one label swap, or one read of a Proposal's checks, as the
   operator. This is the half of the work
