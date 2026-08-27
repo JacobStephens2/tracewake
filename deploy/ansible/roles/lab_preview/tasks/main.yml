@@ -141,8 +141,16 @@
 - name: fcontext rules for the staging tree
   ansible.builtin.command: "semanage fcontext -a -t {{ item.t }} '{{ item.p }}'"
   register: staging_sefc
-  changed_when: staging_sefc.rc == 0
-  failed_when: staging_sefc.rc != 0 and 'already defined' not in staging_sefc.stderr
+  # This semanage prints "already defined, modifying instead" on STDOUT and
+  # exits 0, so a re-add is a success rather than the failure the older guard
+  # (rc != 0 plus 'already defined' in stderr) was written for. Reading rc
+  # alone reports changed on every run, which is what breaks the second-run
+  # changed=0 gate in ../../README.md.
+  changed_when: >-
+    staging_sefc.rc == 0 and 'already defined' not in staging_sefc.stdout
+  failed_when: >-
+    staging_sefc.rc != 0
+    and 'already defined' not in (staging_sefc.stdout + staging_sefc.stderr)
   loop:
     # systemd execs the venv's uvicorn directly; var_t is 203/EXEC.
     - { t: bin_t, p: "/srv/lab-webapp-staging/lab/webapp/\\.venv/bin(/.*)?" }
