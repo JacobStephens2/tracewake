@@ -132,8 +132,25 @@
   become: true
   become_user: conductor
 
-# selinux_labels declares the fcontext; the venv is created above, after that
-# role has run, so the relabel has to happen here or the unit dies 203/EXEC.
+# The fcontext rules are declared HERE, not in selinux_labels, because this
+# role is tagged to run alone (REBUILD 12d) and a rule that role never
+# installed makes the restorecon below a no-op - which is not a visible
+# failure, it is the unit dying 203/EXEC with no traceback. The preview tree
+# is outside srv_dir anyway (a worktree at /srv/lab-webapp-staging), so no
+# rule in that role reaches it.
+- name: fcontext rules for the staging tree
+  ansible.builtin.command: "semanage fcontext -a -t {{ item.t }} '{{ item.p }}'"
+  register: staging_sefc
+  changed_when: staging_sefc.rc == 0
+  failed_when: staging_sefc.rc != 0 and 'already defined' not in staging_sefc.stderr
+  loop:
+    # systemd execs the venv's uvicorn directly; var_t is 203/EXEC.
+    - { t: bin_t, p: "/srv/lab-webapp-staging/lab/webapp/\\.venv/bin(/.*)?" }
+    # The faked tracker and box edges the unit names in its environment.
+    - { t: bin_t, p: "/srv/lab-webapp-staging/lab/single-user-factory/selector/.*\\.sh" }
+
+# The venv is created above, so the relabel has to follow it rather than the
+# rules: restorecon only labels files that already exist.
 - name: relabel the staging tree so systemd may exec its venv
   ansible.builtin.command: restorecon -R /srv/lab-webapp-staging
   changed_when: false
