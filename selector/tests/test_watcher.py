@@ -136,6 +136,19 @@ def test_only_the_current_runs_iterations_are_read():
     assert records[0]["run_started"] == "2026-08-27T14:00:00Z"
 
 
+def test_a_heading_with_no_record_under_it_is_not_a_record():
+    """The other half of "complete". A heading whose fields never arrived is
+    closed when the NEXT heading starts, and without the completeness check it
+    would be journaled as an Iteration with no agent exit, no head and no
+    promise - a permanent row saying nothing, in a Journal that can only ever
+    be added to."""
+    orphaned = "\n### Iteration 1 - 2026-08-27T12:00:05Z\n\nthe agent wrote here instead\n"
+    records = watcher.iteration_records(
+        log("2026-08-27T12:00:00Z", orphaned, ITERATION_TWO)
+    )
+    assert [r["iteration"] for r in records] == [2]
+
+
 def test_a_half_written_record_is_not_a_record_yet():
     """The log is read while it is being appended to. A heading with no
     `Agent exit` under it is a write in progress, and journaling it would put
@@ -216,12 +229,16 @@ def watched_box(box, tmp_path):
     enough for several polls to read it."""
     progress = box.progress_file
 
-    def snapshots(*chunks, hold="0.35"):
+    def snapshots(*chunks, hold="0.35", delay=None):
         """Each chunk is appended to the log, then held still for `hold`
         seconds - long enough for several polls at the interval these tests
         run at, which is what makes "never a duplicate" an assertion rather
         than a coincidence of timing."""
         lines = []
+        if delay:
+            # Nothing on the box until after the watch's first read, which is
+            # how a test can say "only the final read could have seen this".
+            lines.append(f"sleep {delay}")
         for index, chunk in enumerate(chunks):
             piece = tmp_path / f"chunk-{index}.txt"
             piece.write_text(chunk)
@@ -276,6 +293,24 @@ def test_the_last_iteration_lands_even_though_the_run_ended(db, watched_box):
     result = _run_with_a_progress_log(
         watched_box, db,
         SEEDED + RUN_HEADER.format(stamp=now) + ITERATION_ONE + ITERATION_TWO,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [r["payload"]["iteration"] for r in events(db, "run.iteration")] == [1, 2]
+
+
+def test_only_the_final_read_can_catch_a_run_s_last_iteration(db, watched_box):
+    """The final read, isolated. With the interval longer than the Run, the
+    first read happens before the box has written anything and no second one
+    is ever due - so an Iteration that appears here at all appeared because
+    the watch does one last read on its way out. Without it, the last
+    Iteration of every Run would be missing from the page for good."""
+    watched_box.snapshots(
+        log(now_stamp(), ITERATION_ONE, ITERATION_TWO), hold="0", delay="1"
+    )
+    result = watched_box.run(
+        db, [issue(645)],
+        SELECTOR_WATCH_INTERVAL_SECONDS="30",
+        SELECTOR_WATCH_TIMEOUT_SECONDS="10",
     )
     assert result.returncode == 0, result.stderr
     assert [r["payload"]["iteration"] for r in events(db, "run.iteration")] == [1, 2]

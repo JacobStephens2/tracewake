@@ -365,7 +365,7 @@ MUTATIONS = {
         '            card.get("iteration_records", []),\n'
         '            key=lambda record: record.get("iteration") or 0,\n'
         "        )",
-        'card["iteration_records"] = card.get("iteration_records", [])',
+        '        card["iteration_records"] = card.get("iteration_records", [])',
     ),
 
     # The strip stops saying anything about a timer that is not running, so a
