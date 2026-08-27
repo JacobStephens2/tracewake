@@ -28,6 +28,18 @@ MAX_AGE="${LAB_PREVIEW_MAX_AGE_SECONDS:-14400}"
 # missing, which is precisely when a running preview would be taken out from
 # under whoever is looking at it.
 STATUS_COMMAND="${LAB_PREVIEW_STATUS_COMMAND:-systemctl is-active --quiet lab-webapp-staging}"
+# Whether the preview THIS run started came up. The same systemctl question as
+# STATUS_COMMAND, asked at the other end of the script, and deliberately not
+# the same variable: before the restart the question is "is somebody else
+# holding one", after it the question is "is mine up", and a test that fakes
+# one has to be able to leave the other alone.
+READY_COMMAND="${LAB_PREVIEW_READY_COMMAND:-systemctl is-active --quiet lab-webapp-staging}"
+# How long to let it settle before asking. The unit is Type=simple, so systemd
+# reports the start job done at exec and a process that dies a moment later -
+# 203/EXEC on a mislabelled venv, an import error in the branch being
+# previewed - is still "active" for that moment. Waiting is the only way to
+# tell the two apart.
+READY_SETTLE="${LAB_PREVIEW_READY_SETTLE_SECONDS:-3}"
 OPERATOR="${LAB_PREVIEW_OPERATOR:-${SUDO_USER:-$(id -un)}}"
 
 usage() {
@@ -165,6 +177,24 @@ mv -f "$tmp" "$LEASE"
 
 read -ra restart_argv <<< "$RESTART"
 "${restart_argv[@]}"
+
+# `systemctl restart` exiting 0 is not the preview being up, so do not report
+# one until the unit has survived the settle. The lease and the tree still
+# agree at this point - they name a preview that is not running, which is the
+# honest description and the one the next run's lease check reads correctly.
+sleep "$READY_SETTLE"
+read -ra ready_argv <<< "$READY_COMMAND"
+if ! "${ready_argv[@]}" >/dev/null 2>&1; then
+    cat >&2 <<EOF
+the unit did not stay up after checking out ${sha:0:7} on $branch.
+
+  journalctl -u lab-webapp-staging -n 30
+
+Nothing is being served, so nobody is looking at the wrong branch. The lease
+names what was checked out; the next preview takes it without --force.
+EOF
+    exit 6
+fi
 
 cat <<EOF
 Attended Preview started.

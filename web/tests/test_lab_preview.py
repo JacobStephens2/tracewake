@@ -77,6 +77,12 @@ class PreviewTestCase(unittest.TestCase):
             "LAB_PREVIEW_OPERATOR": "jstephens",
             # No preview is running unless a test says one is.
             "LAB_PREVIEW_STATUS_COMMAND": "/bin/false",
+            # ...and the one this run starts comes up, unless a test says it
+            # does not. Separate from the command above on purpose: see the
+            # script's comment on why "is one held" and "did mine come up" are
+            # asked at different moments and cannot share an answer.
+            "LAB_PREVIEW_READY_COMMAND": "/bin/true",
+            "LAB_PREVIEW_READY_SETTLE_SECONDS": "0",
         }
         environ.update(env or {})
         return subprocess.run(
@@ -262,6 +268,42 @@ class TestNothingHalfTaken(PreviewTestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertEqual(before, self.checked_out())
         self.assertFalse(self.restarted())
+
+
+class TestItSaysStartedOnlyWhenItStarted(PreviewTestCase):
+    """`systemctl restart` returning 0 does not mean the preview is up.
+
+    The unit is Type=simple, so systemd calls the job done once it has
+    exec'd - a process that dies immediately after (203/EXEC on a mislabelled
+    venv, an import error in the branch being previewed) exits restart 0 all
+    the same. Observed on the real box: the script printed "Attended Preview
+    started" over a unit in `failed`, which is the one thing this script is
+    supposed to make impossible - saying what is running when it is not.
+    """
+
+    def test_a_unit_that_does_not_come_up_is_not_reported_as_started(self):
+        result = self.run_script(
+            "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "/bin/false"}
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("Attended Preview started", result.stdout)
+        self.assertTrue(self.restarted())
+
+    def test_it_says_where_to_look_when_the_unit_did_not_come_up(self):
+        result = self.run_script(
+            "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "/bin/false"}
+        )
+        self.assertIn("journalctl", result.stderr)
+        self.assertIn("lab-webapp-staging", result.stderr)
+
+    def test_the_lease_still_names_what_was_checked_out(self):
+        """A failed start is not a half-taken preview: the tree and the lease
+        agree, they just describe something that is not running."""
+        self.run_script(
+            "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "/bin/false"}
+        )
+        self.assertEqual(self.branch_sha, self.checked_out())
+        self.assertEqual(self.branch_sha, json.loads(self.lease.read_text())["sha"])
 
 
 if __name__ == "__main__":
