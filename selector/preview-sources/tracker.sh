@@ -25,40 +25,31 @@ set -euo pipefail
 label="${2:?usage: tracker.sh <owner/repo> <label>}"
 labeled_at="$(date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
 
+# The two label columns carry one issue each so that a preview of the board
+# shows five filled columns. One arm rather than two: they differ only in the
+# number and the sentence, and two copies of a twelve-line record would drift.
 case "${label}" in
-  awaiting-review)
-    jq -n --arg at "$labeled_at" '{
-      issues: [
-        {
-          number: 9101,
-          title: "Preview: a green Proposal waiting on you",
-          url: "https://example.invalid/issues/9101",
-          state: "OPEN",
-          body: "## Acceptance criteria\n\nReviewed.\n",
-          labeledBy: "JacobStephens2", labeledAt: $at,
-          blockedBy: 0, blockers: [], openSubIssues: 0, proposals: []
-        }
-      ]
-    }'
-    exit 0
-    ;;
-  ready-for-human)
-    jq -n --arg at "$labeled_at" '{
-      issues: [
-        {
-          number: 9201,
-          title: "Preview: the Selector gave up on this one",
-          url: "https://example.invalid/issues/9201",
-          state: "OPEN",
-          body: "## Acceptance criteria\n\nHanded over.\n",
-          labeledBy: "JacobStephens2", labeledAt: $at,
-          blockedBy: 0, blockers: [], openSubIssues: 0, proposals: []
-        }
-      ]
-    }'
-    exit 0
-    ;;
+  awaiting-review) number=9101; what="a green Proposal waiting on you" ;;
+  ready-for-human) number=9201; what="the Selector gave up on this one" ;;
+  *) number="" ;;
 esac
+
+if [[ -n ${number} ]]; then
+    jq -n --arg at "$labeled_at" --argjson number "$number" --arg what "$what" '{
+      issues: [
+        {
+          number: $number,
+          title: ("Preview: " + $what),
+          url: ("https://example.invalid/issues/" + ($number | tostring)),
+          state: "OPEN",
+          body: "## Acceptance criteria\n\nSeen on the board.\n",
+          labeledBy: "JacobStephens2", labeledAt: $at,
+          blockedBy: 0, blockers: [], openSubIssues: 0, proposals: []
+        }
+      ]
+    }'
+    exit 0
+fi
 
 jq -n --arg at "$labeled_at" '{
   issues: [

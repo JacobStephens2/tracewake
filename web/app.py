@@ -467,7 +467,7 @@ def loop_page(request: Request):
     # Outside the try above because the two are independent - a Journal that
     # is down does not make the queue unknowable, and a tracker that is down
     # does not hide the history.
-    board = queue_board.board(config, spend)
+    board_view = queue_board.board(config, spend)
     return _page(
         request,
         "loop.html",
@@ -479,7 +479,7 @@ def loop_page(request: Request):
             "budget": budget,
             "timer": timer,
             "box": _box(events),
-            "board": board,
+            "board": board_view,
             "state": (
                 _selector_state(runs, budget, timer) if error is None else None
             ),

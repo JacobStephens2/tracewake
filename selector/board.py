@@ -21,7 +21,6 @@ reads (`SELECTOR_TRACKER_COMMAND`), asked once per label.
 from __future__ import annotations
 
 import concurrent.futures
-import os
 import sys
 from pathlib import Path
 
@@ -29,16 +28,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cycle  # noqa: E402
 
-# How long one tracker read may take. Short, and much shorter than the
-# cycle's own reads: this one happens inside a request, and a tracker that is
-# not answering must make the column say so rather than hold the page open -
-# the same rule the status strip's timer read follows.
-DEFAULT_TIMEOUT_SECONDS = 20
-
 # The one skip reason that is not a blockage but a state: an issue with an
 # open Proposal is being worked, which is a column of its own on the board
 # even though the cycle records it as one more reason to pass over.
-IN_FLIGHT_REASON = "proposal-open"
+PROPOSAL_OPEN_REASON = "proposal-open"
 
 # The reason a card carries when the Journal, not the tracker, is what puts it
 # in flight: a dispatch with no outcome. Not a `cycle.eligibility` reason -
@@ -74,6 +67,15 @@ def _card(record: dict, reason: tuple[str, str] | None) -> dict:
         # this is the tracker's list of which issues they are, which is the
         # only form of the answer that lets the reader go and look at one.
         "blockers": record.get("blockers") or [],
+        # How many the tracker counted, so the card can own up to a list that
+        # is shorter than it. The count is unbounded and the naming query is
+        # capped, so the two CAN disagree - and a card that showed the short
+        # list alone would be a board quietly answering "blocked by what?"
+        # with most of the answer.
+        "unnamed_blockers": max(
+            0,
+            int(record.get("blockedBy") or 0) - len(record.get("blockers") or []),
+        ),
     }
 
 
@@ -102,10 +104,9 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
     that the page opens the Journal once.
     """
     if timeout is None:
-        timeout = float(
-            os.environ.get("SELECTOR_BOARD_TIMEOUT_SECONDS",
-                           DEFAULT_TIMEOUT_SECONDS)
-        )
+        # Read off Config like every other SELECTOR_* value, rather than out
+        # of the environment here: one place to look when configuration moves.
+        timeout = config.board_timeout_seconds
     labels = (config.label, config.review_label, config.human_label)
     # Concurrently: three reads of a remote tracker, one page request. They
     # are independent, and serialised they are three round trips deep.
@@ -136,13 +137,26 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
             )))
         elif reason is None:
             eligible.append(_card(record, None))
-        elif reason[0] == IN_FLIGHT_REASON:
+        elif reason[0] == PROPOSAL_OPEN_REASON:
             in_flight.append(_card(record, reason))
         else:
             blocked.append(_card(record, reason))
 
+    # An issue carrying two of the three labels at once is a tracker state
+    # the Selector's own swaps never produce - it removes the Handover label
+    # as it adds the next one - but a hand-labeled issue can be in it, and a
+    # card drawn in two columns would make the board report a queue deeper
+    # than the queue. Shown once, in the column the Handover lens put it in,
+    # because that is the lens this board is for.
+    placed = {card["number"] for card in eligible + blocked + in_flight}
     review, review_error = reads[config.review_label]
+    review = [r for r in review if r.get("number") not in placed]
     human, human_error = reads[config.human_label]
+    human = [
+        r for r in human
+        if r.get("number") not in placed
+        and r.get("number") not in {c.get("number") for c in review}
+    ]
     return {
         # The Journal's half was missing, so the two columns it decides -
         # eligible and blocked - are a reading of the tracker alone. Said on
@@ -154,8 +168,15 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
             _column("eligible", "eligible", config.label,
                     "lowest first; the top card is what the next cycle picks",
                     eligible, handover_error),
+            # "blocked" is the spec's word for this column and it is kept,
+            # but it is only true of some of its cards: a blocking edge is
+            # waiting on other work, while a missing section, an
+            # unallowlisted labeler and a spent retry budget are all waiting
+            # on the operator. The note says so, because a heading alone
+            # would tell him three of these are somebody else's turn.
             _column("blocked", "blocked", config.label,
-                    "labeled, and passed over - each card with the reason the"
+                    "labeled, and not Eligible - waiting on other work, or"
+                    " waiting on you. Each card carries the reason the"
                     " Selector journals for it",
                     blocked, handover_error),
             _column("in-flight", "in flight", None,

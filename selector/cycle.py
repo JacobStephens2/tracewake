@@ -173,6 +173,7 @@ class Config:
     tracker_command: str
     box_facts_command: str
     box_facts_timeout_seconds: int
+    board_timeout_seconds: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -202,6 +203,14 @@ class Config:
             # dispatch behind it is what the cycle is for.
             box_facts_timeout_seconds=int(
                 env("SELECTOR_BOX_FACTS_TIMEOUT_SECONDS", "60")
+            ),
+            # Shorter still, and for a sharper version of the same reason: the
+            # queue board's tracker reads happen inside a page request. Three
+            # of them against the live tourbot queue took about three seconds
+            # on 2026-08-27, so ten seconds is a tracker that is broken rather
+            # than slow - and a column saying so beats a page that hangs.
+            board_timeout_seconds=int(
+                env("SELECTOR_BOARD_TIMEOUT_SECONDS", "10")
             ),
         )
 

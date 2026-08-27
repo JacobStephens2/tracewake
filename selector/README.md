@@ -73,7 +73,7 @@ the Journal answers "what would it have picked?" as well as "what did it?".
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
 | `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
-| `SELECTOR_BOARD_TIMEOUT_SECONDS` | `20` | how long one of the queue board's tracker reads may take |
+| `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |
 
 Two timeouts because the two waits are nothing like each other: everything
 except the Run should answer in seconds, and giving a comment or a fetch the
@@ -257,7 +257,20 @@ happens inside a request, and a tracker that is not answering has to make its
 column say so rather than hold the page open. A label whose read fails shows
 the failure in its own column; the other four still render. Measured against
 the live tourbot queue on 2026-08-27: about three seconds for all three,
-which is what a `/loop` request now costs.
+which is what a `/loop` request now costs, and why the bound is ten seconds
+rather than the minute a cycle would allow.
+
+**The in-flight column has two sources, deliberately.** One is the tracker's:
+an issue with an open Proposal, which is `cycle.eligibility`'s `proposal-open`.
+The other is the Journal's: a dispatch with no outcome, which is the Selector's
+own in-flight lock and exists *before* any Proposal does. Per-issue Eligibility
+has no in-flight concept at all - the cycle halts on the lock rather than
+skipping an issue for it - so a board built from the predicate alone would draw
+the issue a Run is working right now as the next thing to pick, which is the
+one card on the page an operator would act on wrongly. This is the page reading
+one more Journal fact, not the page deciding work: nothing about the column
+changes what any cycle does, and ADR 0015's rule is that the tracker remains
+the only work source, not that the window may only read one source.
 
 The columning is `cycle.eligibility`, imported. Two of the things it decides
 on are not on the tracker at all - the retry budget and the in-flight lock are

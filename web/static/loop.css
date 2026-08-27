@@ -114,7 +114,7 @@
   gap: 1rem;
   /* The board alone steps outside the page's reading column. terminal.css
      sets that column at about 72ch, which is right for prose and too narrow
-     for five columns - they wrap onto a second row there, and a kanban whose
+     for five columns - they wrap onto a second row there, and a board whose
      last two columns are below the fold is a list. Centred, and it shrinks
      back to the container's width on a narrow screen. */
   width: min(100% + 20rem, 100vw - 3rem);

@@ -118,7 +118,9 @@
           {% if card.blockers %}
           <p class="detail">blocked by
             {% for b in card.blockers %}<a href="{{ b.url }}">#{{ b.number }}</a>
-              {{ b.title }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+              {{ b.title }}{% if not loop.last %}; {% endif %}{% endfor %}
+            {%- if card.unnamed_blockers %}, and {{ card.unnamed_blockers }}
+            more the tracker did not name{% endif %}</p>
           {% endif %}
         </article>
         {% endfor %}

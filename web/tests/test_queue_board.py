@@ -130,3 +130,33 @@ def test_the_label_columns_follow_the_labels_the_selector_is_configured_with(
     body = client.get("/loop").text
     assert "needs-jacob" in column(body, "awaiting-review")
     assert "#401" in column(body, "awaiting-review")
+
+
+def test_a_card_owns_up_to_blockers_the_tracker_did_not_name(db, tracker):
+    """The naming query is capped and the count is not, so the two can
+    disagree. A card that showed the short list alone would be answering
+    "blocked by what?" with most of the answer and no sign of the rest."""
+    tracker.queue(
+        "ready-for-agent",
+        [
+            tracker.issue(109, blockedBy=3, blockers=[
+                {"number": 90, "title": "The one it named",
+                 "url": "https://example.invalid/90"},
+            ]),
+        ],
+    )
+    blocked = column(client.get("/loop").text, "blocked")
+    assert "#90" in blocked
+    assert "2" in blocked and "did not name" in blocked
+
+
+def test_an_issue_carrying_two_labels_is_drawn_once(db, tracker):
+    """A hand-labeled issue can hold both; the Selector's own swaps cannot
+    produce it. Drawn twice, the board would report a queue deeper than the
+    queue."""
+    tracker.queue("ready-for-agent", [tracker.issue(110)])
+    tracker.queue("awaiting-review", [tracker.issue(110)])
+
+    body = client.get("/loop").text
+    assert "#110" in column(body, "eligible")
+    assert "#110" not in column(body, "awaiting-review")

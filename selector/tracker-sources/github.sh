@@ -47,7 +47,10 @@
 # answer to "blocked by what?", and the queue board's blocked cards have to
 # name them (#158). Only the open ones: `blockedBy` is the whole dependency
 # list including edges already satisfied, while `issueDependenciesSummary`
-# counts the open ones, so filtering here is what keeps the two agreeing.
+# counts only the open ones, so filtering here is what makes the list a
+# naming of the same edges the count counts. It is capped where the count is
+# not (see the query below), so the list may be shorter than the count and
+# the board says so rather than pretending it is whole.
 #
 # proposals are the open pull requests that would close the issue - the
 # `Closes #n` link the Selector itself writes into a Proposal body. An open
@@ -86,7 +89,13 @@ query($owner: String!, $name: String!, $label: String!, $cursor: String) {
       nodes {
         number title url state body
         issueDependenciesSummary { blockedBy }
-        blockedBy(first: 20) { nodes { number title url state } }
+        # 50 rather than the summary's unbounded count: this is the naming
+        # half, and a page cannot list an unbounded number of blockers
+        # anyway. The deepest chain on either tracker is one edge, so the cap
+        # has never bitten - and when it does the board says "and N more"
+        # rather than quietly showing a short list, because the count above
+        # is never truncated and the two would otherwise disagree.
+        blockedBy(first: 50) { nodes { number title url state } }
         subIssues(first: 100) { nodes { number state } }
         timelineItems(last: 100, itemTypes: [LABELED_EVENT]) {
           nodes { ... on LabeledEvent { createdAt label { name } actor { login } } }
