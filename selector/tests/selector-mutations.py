@@ -485,13 +485,9 @@ MUTATIONS = {
     # down whenever GitHub does, and takes a queue board it never asked for
     # with it.
     "the-history-reads-the-tracker": (WINDOW, HISTORY_SUITE,
-        "    events, spend, error = _read_journal()\n"
-        "    return {\n"
-        "        # History is what has ended.",
+        "    (events, older), spend, error = _read_journal(_history_rows, ([], 0))",
         "    return _loop_context(request)\n"
-        "    events, spend, error = _read_journal()\n"
-        "    return {\n"
-        "        # History is what has ended.",
+        "    (events, older), spend, error = _read_journal(_history_rows, ([], 0))",
     ),
     # The Run in flight is filed as history: a card with no bound, no duration
     # and no Proposal, shown as though the Run had ended.
@@ -502,8 +498,8 @@ MUTATIONS = {
     # An unreadable Journal renders as a full budget, so the page promises
     # four Runs remaining on the strength of rows it never read.
     "an-unknown-budget-reads-as-full": (WINDOW, HISTORY_SUITE,
-        '        "remaining": None if spent is None else max(0, config.daily_cap - spent),',
-        '        "remaining": config.daily_cap - (spent or 0),',
+        '        "remaining": None if spent is None else max(0, cap - spent),',
+        '        "remaining": cap - (spent or 0),',
     ),
     # A Run stops reporting how long it took, which is the one fact about it
     # that exists nowhere else: the box persists no record of a finished Run.
