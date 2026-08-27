@@ -26,6 +26,12 @@ DISPATCH_SUITE = "tests/test_dispatch.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
 
+# The window (#156). Its path is relative to the Selector, and its suite is
+# the dashboard's - run from the webapp directory, which mutation-check.sh
+# handles by naming both.
+WINDOW = "../../webapp/app.py"
+WINDOW_SUITE = "../../webapp/tests/test_loop_page.py"
+
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
@@ -309,6 +315,21 @@ MUTATIONS = {
     "an-unreadable-box-reads-as-an-empty-one": (CYCLE, UNATTENDED_SUITE,
         "    if done.returncode != 0:",
         "    if False:",
+    ),
+    # The strip stops saying anything about a timer that is not running, so a
+    # Selector that cannot start a cycle renders the same as one with nothing
+    # to do - the exact confusion the strip was built to end.
+    "a-dead-timer-reads-as-idle": (WINDOW, WINDOW_SUITE,
+        '    if timer.get("state") != "active":\n'
+        '        return "stopped - nothing will start a cycle"',
+        "    if False:\n        pass",
+    ),
+    # The box card shows the last SUCCESSFUL read instead of the last read, so
+    # a box that has been unreachable for a week still renders last week's
+    # hash, template and version as though they were current.
+    "the-box-card-hides-an-outage": (WINDOW, WINDOW_SUITE,
+        '        if event["kind"] in ("box.observed", "box.unreachable"):',
+        '        if event["kind"] == "box.observed":',
     ),
 }
 

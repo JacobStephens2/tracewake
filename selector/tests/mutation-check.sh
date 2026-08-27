@@ -4,7 +4,8 @@
 #
 #   tests/mutation-check.sh [python]
 #
-# Breaks one guard at a time - in cycle.py or dispatch.py - runs the suite
+# Breaks one guard at a time - in cycle.py, dispatch.py or the window's
+# app.py - runs the suite
 # that is supposed to notice against the broken copy, and reports how many
 # tests went red. Anything whose removal leaves the suite green is something
 # the suite does not actually verify. Same contract as the Loop's
@@ -57,10 +58,18 @@ fi
 python_cmd="${1:-${selector_dir}/.venv/bin/python}"
 mutations="${selector_dir}/tests/selector-mutations.py"
 
-targets=(cycle.py dispatch.py)
+# Paths relative to the Selector, so a target may live outside it: the status
+# strip is the Journal's window and its guards are the Selector's guards
+# rendered, so they belong to this check rather than to a second one nobody
+# would remember to run.
+targets=(cycle.py dispatch.py ../../webapp/app.py)
 backup_dir="$(mktemp -d)"
+# Backed up under a flattened name - `../../webapp/app.py` would otherwise
+# write outside the backup directory, which is a mutation runner quietly
+# scribbling on the repository.
+backup_of() { printf '%s/%s' "${backup_dir}" "${1//\//_}"; }
 for target in "${targets[@]}"; do
-    cp -- "${selector_dir}/${target}" "${backup_dir}/${target}"
+    cp -- "${selector_dir}/${target}" "$(backup_of "${target}")"
 done
 restore() {
     [[ -d ${backup_dir} ]] || return 0
@@ -69,8 +78,8 @@ restore() {
         # function that would make a missing backup the trap's exit status,
         # and an EXIT trap that returns non-zero is a runner that reports a
         # failure it did not have.
-        if [[ -f ${backup_dir}/${target} ]]; then
-            cp -- "${backup_dir}/${target}" "${selector_dir}/${target}"
+        if [[ -f $(backup_of "${target}") ]]; then
+            cp -- "$(backup_of "${target}")" "${selector_dir}/${target}"
         fi
     done
     rm -rf -- "${backup_dir}"
@@ -84,7 +93,7 @@ declared="$(python3 "${mutations}" --list | grep -c '')"
 
 while IFS=$'\t' read -r mutation target suite; do
     for name in "${targets[@]}"; do
-        cp -- "${backup_dir}/${name}" "${selector_dir}/${name}"
+        cp -- "$(backup_of "${name}")" "${selector_dir}/${name}"
     done
     # A mutation whose anchor has drifted no longer breaks anything, so it
     # verifies nothing - reported as a survivor rather than abandoning the
@@ -101,7 +110,17 @@ while IFS=$'\t' read -r mutation target suite; do
     # </dev/null for the reason the Loop's runner documents: without it the
     # suite inherits this loop's stdin - the mutation list - and the loop ends
     # early while reporting every mutation caught.
-    output="$("${python_cmd}" -m pytest "${selector_dir}/${suite}" -q --no-header \
+    # The window's suite is the dashboard's, and the dashboard has its own
+    # venv - FastAPI and its test client are not in the Selector's. Running it
+    # with the wrong interpreter would fail at `import fastapi` and report
+    # every window mutation "caught" for a reason that has nothing to do with
+    # the mutation, which is worse than not checking it at all.
+    suite_python="${python_cmd}"
+    case "${suite}" in
+        ../../webapp/*) suite_python="${selector_dir}/../../webapp/.venv/bin/python" ;;
+    esac
+
+    output="$("${suite_python}" -m pytest "${selector_dir}/${suite}" -q --no-header \
         -p no:cacheprovider </dev/null 2>&1 || true)"
     # pytest -q names each failure on its own FAILED line in the short
     # summary. Counting those rather than parsing the "N failed" tally, which

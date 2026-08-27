@@ -461,6 +461,18 @@ def _timer_command(tmp_path, text, *, exit_code=0):
     return str(script)
 
 
+def _running_timer(monkeypatch, tmp_path):
+    """A timer that is up, so the tests that are about something else are not
+    also about the timer being down."""
+    monkeypatch.setenv(
+        "SELECTOR_TIMER_COMMAND",
+        _timer_command(
+            tmp_path,
+            "ActiveState=active\nNextElapseUSecRealtime=Thu 2026-08-27 14:31:00 UTC",
+        ),
+    )
+
+
 def test_the_strip_counts_todays_runs_against_the_cap(db, dispatch):
     for number in (640, 641):
         dispatch(db, number, outcome="clean")
@@ -474,15 +486,42 @@ def test_a_dispatch_older_than_the_window_is_not_a_run_today(db, dispatch):
     assert "0 of 4" in strip(client.get("/loop").text)
 
 
-def test_the_strip_names_the_run_in_flight(db, dispatch):
+def test_the_strip_names_the_run_in_flight(db, dispatch, monkeypatch, tmp_path):
+    _running_timer(monkeypatch, tmp_path)
     dispatch(db, 646, outcome=None)
     cell = strip(client.get("/loop").text)
     assert "in flight" in cell
     assert "646" in cell
 
 
-def test_the_strip_says_idle_when_no_run_is_in_flight(db):
+def test_the_strip_says_idle_when_no_run_is_in_flight(db, monkeypatch, tmp_path):
+    _running_timer(monkeypatch, tmp_path)
     assert "idle" in strip(client.get("/loop").text)
+
+
+def test_a_selector_that_cannot_run_does_not_read_as_idle(db, monkeypatch, tmp_path):
+    """The failure the whole strip exists for. With the timer down nothing
+    will start a cycle, and a headline cell reading `idle` would be the page
+    reporting business as usual about a dead Selector."""
+    monkeypatch.setenv(
+        "SELECTOR_TIMER_COMMAND",
+        _timer_command(tmp_path, "ActiveState=inactive\nNextElapseUSecRealtime=n/a"),
+    )
+    cell = strip(client.get("/loop").text)
+    assert "idle" not in cell
+    assert "nothing will start a cycle" in cell
+
+
+def test_a_run_in_flight_outranks_a_timer_that_is_down(db, dispatch, monkeypatch,
+                                                       tmp_path):
+    """The cycle holding it is already running and will record its outcome,
+    whatever the timer is doing."""
+    monkeypatch.setenv(
+        "SELECTOR_TIMER_COMMAND",
+        _timer_command(tmp_path, "ActiveState=inactive\nNextElapseUSecRealtime=n/a"),
+    )
+    dispatch(db, 646, outcome=None)
+    assert "in flight: #646" in strip(client.get("/loop").text)
 
 
 def test_the_strip_shows_the_next_cycle_the_timer_will_fire(db, monkeypatch, tmp_path):

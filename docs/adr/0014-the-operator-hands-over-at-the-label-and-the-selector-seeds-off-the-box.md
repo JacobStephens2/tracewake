@@ -49,9 +49,11 @@ and is no longer. The requirement was sound on its own terms - `--area` is the
 Loop's scope fence, and how much of a large task one Run is for is a judgement
 an Iteration should not make - but it cost the operator a second step on every
 Handover, which is the friction this whole ruling exists to remove. It was
-measured before it was dropped: on the day it went in, every labeled task in
-the queue lacked the section, so its effect was to hand the queue back rather
-than work it. A task with no `Owning area` is now scoped to its own title; a
+measured before it was dropped. Of the 28 tasks carrying `ready-for-agent` on
+tourbot on 2026-08-26, 10 were otherwise ready and all 10 lacked the section;
+the queue re-measured on 2026-08-27 with the requirement gone had 4 eligible
+tasks where it had had none. Its effect was to hand the queue back rather than
+work it. A task with no `Owning area` is now scoped to its own title; a
 task that really is bigger than one Run still says so by carrying the section.
 
 ## Why the Selector may live on the orchestration VM

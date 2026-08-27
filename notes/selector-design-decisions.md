@@ -26,6 +26,12 @@ unattended Seeding, Run-branch creation, initiation, and issue bookkeeping.
   (seed-run.sh already refuses without), `Owning area` (feeds `--area`),
   optional `Check` (feeds `--check`). Missing section: skip loudly - comment
   naming the gap, swap to `needs-info`.
+  **Amended 2026-08-27 (issue #156): `Owning area` is optional.** An issue
+  without it is scoped to its own title. The measurement that decided it: of
+  the 10 issues the first live dry-run found otherwise ready on 2026-08-26, 10
+  lacked the section - a contract nobody was writing to, whose only effect
+  would have been to hand the queue back on the first unattended cycle. See
+  ADR 0014 and `selector/README.md`, "The issue contract".
 - Accepted residuals recorded in ADR 0014: post-label body edits; the
   read-write skills mount (edits surface in the Proposal diff).
 

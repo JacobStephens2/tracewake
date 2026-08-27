@@ -310,15 +310,12 @@ def _timer() -> dict:
     report" rather than "the Selector is dead".
     """
     command = os.environ.get("SELECTOR_TIMER_COMMAND")
-    argv = (
-        [command]
-        if command
-        else [
-            "systemctl", "show", TIMER_UNIT,
-            *(f"-p{name}" for name in TIMER_PROPERTIES),
-        ]
-    )
-    if not command and not shutil.which("systemctl"):
+    if command:
+        argv = [command]
+    elif shutil.which("systemctl"):
+        argv = ["systemctl", "show", TIMER_UNIT,
+                *(f"-p{name}" for name in TIMER_PROPERTIES)]
+    else:
         return {"state": None}
     try:
         done = subprocess.run(
@@ -363,11 +360,23 @@ def _box(events: list[dict]) -> dict | None:
     return None
 
 
-def _selector_state(runs: list[dict], budget: dict) -> str:
-    """What the Selector is doing, in the words the Journal already uses."""
+def _selector_state(runs: list[dict], budget: dict, timer: dict) -> str:
+    """What the Selector is doing, in the words the Journal already uses.
+
+    The timer is read here and not only in its own cell, because "idle" and
+    "cannot run" are not the same answer and this is the cell an operator
+    reads first. A Selector with nothing to do and a Selector whose timer was
+    never enabled look identical from the Journal - that is the failure this
+    whole strip exists to make visible, and it would be odd for the headline
+    cell to be the one still reporting business as usual.
+    """
     in_flight = [r for r in runs if r.get("in_flight")]
     if in_flight:
+        # A Run in flight is a Run in flight whatever the timer is doing: the
+        # cycle holding it is already running and will record its outcome.
         return f"in flight: #{in_flight[0]['issue']}"
+    if timer.get("state") != "active":
+        return "stopped - nothing will start a cycle"
     if budget["spent"] >= budget["cap"]:
         return "idle - daily cap reached"
     return "idle"
@@ -403,6 +412,7 @@ def loop_page(request: Request):
         for e in events
     ]
     runs = _runs(events)
+    timer = _timer()
     return templates.TemplateResponse(
         "loop.html",
         {
@@ -412,9 +422,11 @@ def loop_page(request: Request):
             "runs": runs,
             "error": error,
             "budget": budget,
-            "timer": _timer(),
+            "timer": timer,
             "box": _box(events),
-            "state": _selector_state(runs, budget) if error is None else None,
+            "state": (
+                _selector_state(runs, budget, timer) if error is None else None
+            ),
         },
     )
 

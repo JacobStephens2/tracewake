@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 
@@ -31,6 +32,31 @@ def available() -> bool:
             return True
     except psycopg.OperationalError:
         return False
+
+
+def append_run(dsn: str, issue: int, *, outcome=None, hours_ago: int = 0) -> None:
+    """Write a dispatch (and optionally its outcome) into a test Journal.
+
+    Here rather than in either suite's conftest because both need it and the
+    shape is the Journal's: the Selector suite seeds spend to drive the caps,
+    and the dashboard suite seeds the same rows to drive the budget cell. Two
+    copies would be two definitions of what a Run looks like in the Journal,
+    and the page and the cap are supposed to be reading the same thing.
+
+    Backdating needs an explicit `at`, which an INSERT may set and no UPDATE
+    ever could - journal.events is append-only, so a test that wants history
+    writes history rather than editing it.
+    """
+    rows = [("run.dispatched", {"issue": issue})]
+    if outcome is not None:
+        rows.append(("run.outcome", {"issue": issue, "outcome": outcome}))
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        for kind, payload in rows:
+            conn.execute(
+                "INSERT INTO journal.events (at, kind, payload)"
+                " VALUES (now() - make_interval(hours => %s), %s, %s)",
+                (hours_ago, kind, Jsonb(payload)),
+            )
 
 
 @contextlib.contextmanager

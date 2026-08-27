@@ -29,24 +29,11 @@ def db():
 def dispatch():
     """Append a dispatch (and optionally its outcome) to a test Journal.
 
-    Backdating needs an explicit `at`, which an INSERT may set and no UPDATE
-    ever could - the table is append-only, so a test that wants history writes
-    history rather than editing it.
+    The writing itself is `testdb.append_run`, shared with the dashboard
+    suite: the page's budget cell and the Selector's cap are supposed to be
+    reading the same rows, so there is one definition of what those rows are.
     """
-    def append(dsn, number, *, outcome=None, hours_ago=0):
-        with psycopg.connect(dsn, autocommit=True) as conn:
-            for kind, payload in (
-                ("run.dispatched", {"issue": number}),
-                ("run.outcome", {"issue": number, "outcome": outcome}),
-            ):
-                if kind == "run.outcome" and outcome is None:
-                    continue
-                conn.execute(
-                    "INSERT INTO journal.events (at, kind, payload)"
-                    " VALUES (now() - make_interval(hours => %s), %s, %s)",
-                    (hours_ago, kind, Jsonb(payload)),
-                )
-    return append
+    return testdb.append_run
 
 
 # --- Canned tracker records -------------------------------------------------

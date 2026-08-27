@@ -22,28 +22,12 @@ def db(monkeypatch):
 
 
 @pytest.fixture
-def dispatch(db):
+def dispatch():
     """Runs in the Journal, as the Selector would have written them.
 
-    Backdating needs an explicit `at`, which an INSERT may set and no UPDATE
-    ever could - journal.events is append-only, so a test that wants history
-    writes history rather than editing it.
+    `testdb.append_run`, the same helper the Selector's own suite seeds spend
+    with. The page's budget cell and the Selector's cap read the same rows, so
+    a second definition of what those rows look like would be a way for the
+    two to drift apart in the one place they must not.
     """
-    import psycopg
-    from psycopg.types.json import Jsonb
-
-    def append(dsn, number, *, outcome=None, hours_ago=0):
-        with psycopg.connect(dsn, autocommit=True) as conn:
-            conn.execute(
-                "INSERT INTO journal.events (at, kind, payload)"
-                " VALUES (now() - make_interval(hours => %s), %s, %s)",
-                (hours_ago, "run.dispatched", Jsonb({"issue": number})),
-            )
-            if outcome is not None:
-                conn.execute(
-                    "INSERT INTO journal.events (at, kind, payload)"
-                    " VALUES (now() - make_interval(hours => %s), %s, %s)",
-                    (hours_ago, "run.outcome",
-                     Jsonb({"issue": number, "outcome": outcome})),
-                )
-    return append
+    return testdb.append_run

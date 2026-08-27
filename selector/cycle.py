@@ -79,8 +79,9 @@ HERE = Path(__file__).resolve().parent
 # `--area` is the Loop's scope fence, and deciding how much of a large issue
 # one Run is for is a judgement - but it made the operator's Handover two
 # steps instead of one, which is the exact friction the Selector exists to
-# remove. Every labeled issue in the queue on the day it was measured lacked
-# the section, so the requirement's practical effect was to hand the whole
+# remove. Measured before it was dropped: of the 28 tourbot issues carrying
+# `ready-for-agent` on 2026-08-26, 10 were otherwise ready and all 10 lacked
+# the section - so the requirement's practical effect was to hand the whole
 # queue back rather than to work it.
 #
 # What replaces it is a default rather than a guess: an issue with no
@@ -255,7 +256,7 @@ def _first_line(text: str) -> str:
     return ""
 
 
-def _area(record: dict, present: dict[str, str]) -> str:
+def _area(record: dict, body_sections: dict[str, str]) -> str:
     """The one owning area this Run is scoped to.
 
     `seed-run.sh --area` is required and is written into the Plan as the fence
@@ -272,7 +273,7 @@ def _area(record: dict, present: dict[str, str]) -> str:
     a section the label no longer promises is missing would put the dropped
     requirement straight back in through the dispatch.
     """
-    named = _first_line(present.get("owning area", ""))
+    named = _first_line(body_sections.get("owning area", ""))
     return named or str(record.get("title") or "").strip() or f"issue #{record['number']}"
 
 

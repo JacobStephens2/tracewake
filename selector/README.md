@@ -152,13 +152,29 @@ page to tell a Selector that is quiet from one that is dead (#156).
 
 **The timer.** `scripts/selector-cycle.timer` fires
 `scripts/selector-cycle.service` every thirty minutes, around the clock. Both
-are installed and enabled by `ansible/roles/timers` - the role copies every
-`scripts/*.service` and `scripts/*.timer` wholesale and enables the units
-named in `orchestration_timers`, and a unit installed and *not* on that list
-is silently inert. The venv the unit execs is built by
+are installed by `ansible/roles/timers`, which copies every `scripts/*.service`
+and `scripts/*.timer` wholesale. The venv the unit execs is built by
 `ansible/roles/selector_cycle`, and the fcontext that makes it executable by
 systemd is declared in `ansible/roles/selinux_labels`; without it the unit
 dies 203/EXEC with no traceback.
+
+**Installed is not enabled, and that is on purpose.** `selector-cycle` is the
+one timer deliberately absent from `orchestration_timers`. Every other timer
+on this box reads something and reports; this one *spends* - each cycle can
+seed a branch, start a Run on the box, and comment on and relabel issues on
+somebody else's tracker, around the clock. Enabling that must not be a side
+effect of applying the playbook for an unrelated reason, so it is gated on one
+declared variable:
+
+```yaml
+# ansible/roles/timers/defaults/main.yml
+selector_dispatch_enabled: false
+```
+
+Flipping it is a one-line reviewable change - the shape ADR 0014 already asks
+for when widening the labeler allowlist - and the play prints which way it left
+the timer. Out of band it is `sudo systemctl enable --now selector-cycle.timer`.
+Setting it back to `false` stops a running timer, not merely a future one.
 
 `OnFailure=notify-unit-failure@%n.service` is in the unit's **`[Unit]`**
 section, which is the only section systemd reads it in - in `[Service]` it is
@@ -199,6 +215,13 @@ dispatch of a rolling day is refused before the box is reached, and the
 refusal is journaled: `cycle.finished` with `halted: daily-cap-reached` and
 the budget it counted.
 
+The refusal is journaled on `cycle.finished` rather than as an event of its
+own, unlike the lock refusal above. The asymmetry is not an oversight: a cycle
+refused by the cap still *ran* - it read the queue, applied Eligibility to all
+of it and journaled the lot - so its record is the cycle summary, with
+`halted` naming the cap. A cycle refused by the lock reasoned about nothing
+and has no summary to carry the reason, so it needs a row of its own.
+
 **The box card.** Once per cycle - not in a dry run, which still reaches the
 tracker and nothing else - `box-sources/facts.sh` reads three facts off the
 box over SSH and they are journaled as `box.observed`:
@@ -220,14 +243,25 @@ A box that cannot be read is journaled `box.unreachable` and **does not fail
 the cycle**. The dispatch behind it fails on its own and pages on its own, and
 paging twice for one outage is how an alert stops being read.
 
+That is a knowing narrowing of story 31, which lists "SSH failure" among the
+Selector's own failures that should page. The residual: with an empty or fully
+blocked queue there is no dispatch behind the read, so a box that has been
+unreachable for days pages nothing and says so only on the card. Accepted
+because the alternative pages every thirty minutes for a box nobody is asking
+to do anything.
+
 **The status strip** is the `/loop` half of all of this: what the Selector is
 doing, when the timer fires next, `Runs today N of 4`, and the box card. The
 budget is read through `cycle.spend` - the same function the cap is enforced
 with - because two readings of "Runs today" that could disagree would be a
 strip that reassures about a cap it is not the one reading. The next-cycle
-cell reads `systemctl show` on the timer and says so loudly when the timer is
-not active, which is the failure it exists for: a timer installed and never
-enabled is a dead Selector that looks like a quiet queue.
+cell reads `systemctl show` on the timer through `SELECTOR_TIMER_COMMAND`
+(default: `systemctl show selector-cycle.timer`; the one substitutable command
+the page owns rather than `cycle.py`, and the seam the dashboard suite drives)
+and says so loudly when the timer is not active. So does the Selector cell
+itself, which reads `stopped - nothing will start a cycle` rather than `idle`:
+a Selector with nothing to do and a Selector whose timer was never enabled
+look identical from the Journal, and that is the failure the strip exists for.
 
 ## The issue contract
 
@@ -249,9 +283,11 @@ reason is what the Selector is for: it made the Handover two steps instead of
 one, and the operator's whole ask was that applying the label be the last
 human action.
 
-The measurement settled it. On the day the requirement went in, **every**
-labeled issue in the queue lacked the section, so its practical effect was to
-hand the queue back rather than to work it.
+The measurement settled it. Of the 28 tourbot issues carrying
+`ready-for-agent` on 2026-08-26, the day the requirement went in, 10 were
+otherwise ready and **all 10** lacked the section - so its practical effect
+was to hand the queue back rather than to work it. Re-measured on 2026-08-27
+without it: 4 eligible where there had been none.
 
 What replaces it is a default rather than a guess. An issue with no
 `## Owning area` is scoped to its own title, which is the honest reading of

@@ -78,10 +78,13 @@ first live dry-run recorded: 14 issues blocked by open dependencies, and 13
 otherwise-ready ones missing the `Owning area` section the label promised at
 the time.
 
-**That reading is what dropped the requirement.** Thirteen of thirteen is not
-a queue with a few underspecified issues in it; it is a contract nobody was
-writing to, whose only effect would have been to hand the whole queue back on
-the first cycle. `Owning area` became optional the same day (see the Selector
+**That reading is what dropped the requirement.** 13 of the 13 otherwise-ready
+issues on 2026-08-27 lacked the section, as had all 10 of the 10 the first
+dry-run found on 2026-08-26 - the count moved because more issues were labeled
+in between, not because any of them gained the section. Thirteen of thirteen
+is not a queue with a few underspecified issues in it; it is a contract nobody
+was writing to, whose only effect would have been to hand the whole queue back
+on the first cycle. `Owning area` became optional the same day (see the Selector
 README's "The issue contract", and the amendment note in ADR 0014), and an
 issue without it is scoped to its own title. The re-measured dry-run after the
 change is below.
