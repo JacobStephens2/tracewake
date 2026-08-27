@@ -22,11 +22,13 @@ import sys
 CYCLE = "cycle.py"
 DISPATCH = "dispatch.py"
 WATCHER = "watcher.py"
+BOARD = "board.py"
 CYCLE_SUITE = "tests/test_cycle.py"
 DISPATCH_SUITE = "tests/test_dispatch.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
 WATCHER_SUITE = "tests/test_watcher.py"
+BOARD_SUITE = "../../webapp/tests/test_queue_board.py"
 
 # The window (#156). Its path is relative to the Selector, and its suite is
 # the dashboard's - run from the webapp directory, which mutation-check.sh
@@ -382,6 +384,49 @@ MUTATIONS = {
     "the-box-card-hides-an-outage": (WINDOW, WINDOW_SUITE,
         '        if event["kind"] in ("box.observed", "box.unreachable"):',
         '        if event["kind"] == "box.observed":',
+    ),
+
+    # --- The queue board (#158) ---------------------------------------------
+    #
+    # The board's whole claim is that it is the Selector's own lens pointed at
+    # the tracker rather than a second opinion about it. Every mutation here
+    # is a way for it to keep looking like a board while saying something the
+    # Selector does not say - which is worse than showing nothing, because the
+    # operator would act on it.
+
+    # The board stops applying Eligibility: every labeled issue reads as
+    # eligible, so a blocked chain and an underspecified issue are shown as
+    # the next thing that will be worked.
+    "the-board-invents-its-own-eligibility": (BOARD, BOARD_SUITE,
+        "        reason = cycle.eligibility(record, config, attempts)",
+        "        reason = None",
+    ),
+    # A blocked card names no blockers, which is the count again: "blocked by
+    # 1" with no way to find out by what.
+    "blocked-cards-name-no-blockers": (BOARD, BOARD_SUITE,
+        '        "blockers": record.get("blockers") or [],',
+        '        "blockers": [],',
+    ),
+    # The board reads the Handover label only, so the two columns that are
+    # waiting on the OPERATOR rather than on the Selector are permanently
+    # empty and the queue looks drained.
+    "the-board-reads-one-label": (BOARD, BOARD_SUITE,
+        "    labels = (config.label, config.review_label, config.human_label)",
+        "    labels = (config.label, config.label, config.label)",
+    ),
+    # A tracker that failed reads as a tracker that answered nothing, so an
+    # outage renders as an empty queue - the same silence story 31 exists to
+    # prevent, arrived at from the page rather than from the cycle.
+    "a-tracker-failure-empties-the-board": (BOARD, BOARD_SUITE,
+        "    except cycle.CycleFailed as exc:\n        return [], str(exc)",
+        "    except cycle.CycleFailed:\n        return [], None",
+    ),
+    # The Journal's half of Eligibility is dropped: an issue the Selector is
+    # running right now shows as eligible, because a dispatch with no outcome
+    # is a lock nothing on the tracker records.
+    "the-in-flight-lock-is-invisible-to-the-board": (BOARD, BOARD_SUITE,
+        "        if number in in_flight_numbers:",
+        "        if False:",
     ),
 }
 

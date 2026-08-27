@@ -173,6 +173,7 @@ class Config:
     tracker_command: str
     box_facts_command: str
     box_facts_timeout_seconds: int
+    board_timeout_seconds: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -202,6 +203,14 @@ class Config:
             # dispatch behind it is what the cycle is for.
             box_facts_timeout_seconds=int(
                 env("SELECTOR_BOX_FACTS_TIMEOUT_SECONDS", "60")
+            ),
+            # Shorter still, and for a sharper version of the same reason: the
+            # queue board's tracker reads happen inside a page request. Three
+            # of them against the live tourbot queue took about three seconds
+            # on 2026-08-27, so ten seconds is a tracker that is broken rather
+            # than slow - and a column saying so beats a page that hangs.
+            board_timeout_seconds=int(
+                env("SELECTOR_BOARD_TIMEOUT_SECONDS", "10")
             ),
         )
 
@@ -909,14 +918,30 @@ def _route(
 # --- The cycle --------------------------------------------------------------
 
 
-def fetch_queue(config: Config) -> list[dict]:
-    """The labeled queue, through the substitutable tracker command."""
+def fetch_queue(config: Config, label: str | None = None,
+                timeout: float | None = None) -> list[dict]:
+    """The labeled queue, through the substitutable tracker command.
+
+    `label` defaults to the Handover label the cycle works, and is a parameter
+    because the queue board reads the other labels in the lifecycle through
+    this same command (#158) - one definition of "fetch a labeled queue",
+    rather than a second one on the page that could normalise the tracker's
+    answer differently.
+
+    `timeout` is likewise for the board: a cycle waits as long as the tracker
+    takes, but a read inside a page request must not.
+    """
     try:
         completed = subprocess.run(
-            [config.tracker_command, config.task_repo, config.label],
+            [config.tracker_command, config.task_repo, label or config.label],
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise CycleFailed(
+            f"tracker command did not answer within {timeout}s"
+        ) from exc
     except OSError as exc:
         raise CycleFailed(f"tracker command could not be run: {exc}") from exc
     if completed.returncode != 0:

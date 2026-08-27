@@ -7,6 +7,23 @@ User=conductor
 Group=conductor
 WorkingDirectory=/srv/orchestration/lab/webapp
 ExecStart=/srv/orchestration/lab/webapp/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8100
+
+# The queue board reads the tracker at request time (#158) through
+# `tracker-sources/github.sh`, which is `gh` and `jq`. A systemd unit starts
+# with systemd's own PATH, and `gh` is installed under conductor's ~/.local -
+# so without this line the board renders five columns of "tracker command
+# could not be run" while the unit itself looks perfectly healthy.
+#
+# PATH and nothing else. This process could have been given the vault
+# environment the Selector's own unit gets (with-orchestration-env.sh), and
+# deliberately is not: it is a web process, and `gh` here is authenticated by
+# conductor's own ~/.config/gh/hosts.yml - the operator's read of the
+# operator's tracker, which is the identity ADR 0014 already says the Selector
+# reads it as. Adding an EnvironmentFile or the op-inject wrapper here would
+# hand a page-serving process every production credential on the box to get a
+# queue listing.
+Environment=PATH=/var/lib/conductor/.local/bin:/usr/local/bin:/usr/bin:/bin
+
 Restart=on-failure
 RestartSec=3
 # hardening: read-only system, writable nowhere it doesn't need

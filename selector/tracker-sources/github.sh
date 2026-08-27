@@ -24,6 +24,7 @@
 #   {"issues": [{"number": 646, "title": ..., "url": ..., "state": "OPEN",
 #                "body": ..., "labeledBy": "JacobStephens2",
 #                "labeledAt": "2026-08-26T12:00:00Z", "blockedBy": 1,
+#                "blockers": [{"number": 645, "title": ..., "url": ...}],
 #                "openSubIssues": 0,
 #                "proposals": [{"number": 12, "url": ..., "isDraft": true}]}]}
 #
@@ -39,6 +40,17 @@
 #
 # blockedBy is the tracker's native edge count and the single blocking signal;
 # prose "Blocked by" text is deliberately not read (ADR 0014).
+#
+# blockers are those same edges, named: the open issues the edges point at.
+# Eligibility decides on the COUNT and nothing else - which is what keeps the
+# predicate one query with no text parsing - but "blocked by 1" is not an
+# answer to "blocked by what?", and the queue board's blocked cards have to
+# name them (#158). Only the open ones: `blockedBy` is the whole dependency
+# list including edges already satisfied, while `issueDependenciesSummary`
+# counts only the open ones, so filtering here is what makes the list a
+# naming of the same edges the count counts. It is capped where the count is
+# not (see the query below), so the list may be shorter than the count and
+# the board says so rather than pretending it is whole.
 #
 # proposals are the open pull requests that would close the issue - the
 # `Closes #n` link the Selector itself writes into a Proposal body. An open
@@ -77,6 +89,13 @@ query($owner: String!, $name: String!, $label: String!, $cursor: String) {
       nodes {
         number title url state body
         issueDependenciesSummary { blockedBy }
+        # 50 rather than the summary's unbounded count: this is the naming
+        # half, and a page cannot list an unbounded number of blockers
+        # anyway. The deepest chain on either tracker is one edge, so the cap
+        # has never bitten - and when it does the board says "and N more"
+        # rather than quietly showing a short list, because the count above
+        # is never truncated and the two would otherwise disagree.
+        blockedBy(first: 50) { nodes { number title url state } }
         subIssues(first: 100) { nodes { number state } }
         timelineItems(last: 100, itemTypes: [LABELED_EVENT]) {
           nodes { ... on LabeledEvent { createdAt label { name } actor { login } } }
@@ -110,6 +129,11 @@ gh api graphql --paginate \
                     | last | .createdAt? // null
                 ),
                 blockedBy: (.issueDependenciesSummary.blockedBy // 0),
+                blockers: [
+                    .blockedBy.nodes[]
+                    | select(.state == "OPEN")
+                    | {number, title, url}
+                ],
                 openSubIssues: (
                     [.subIssues.nodes[] | select(.state == "OPEN")] | length
                 ),
