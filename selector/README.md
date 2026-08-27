@@ -499,3 +499,77 @@ psql -d selector -c "SELECT id, at, kind, payload FROM journal.events ORDER BY i
 Appending by hand is legitimate (the schema NOTIFYs either way); updating or
 deleting raises `journal.events is append-only` unless you deliberately drop
 the guard triggers first.
+
+## Previewing a branch (the Attended Preview)
+
+`lab-webapp.service` runs from `/srv/orchestration` on `master`, so without a
+preview the only way to see a branch's `/loop` is to merge it. ADR 0016 rules
+on the alternative and names it an **Attended Preview**: a second instance at
+`lab-staging.etadventures.com`, serving one unmerged branch, permissible on
+this VM because somebody is looking at it.
+
+```bash
+scripts/lab-preview.sh --help
+scripts/lab-preview.sh feat/queue-board
+```
+
+One preview at a time, held by a lease the banner renders (branch, short SHA,
+who started it, uptime). The script refuses a live lease unless you pass
+`--force`, and forcing means the operator holding it is now looking at your
+branch without knowing. The unit carries `RuntimeMaxSec=4h` and is deliberately
+**not** enabled, so a preview exists only while somebody has started one.
+
+### Running a cycle inside a preview
+
+```bash
+lab/single-user-factory/selector/preview-cycle.sh --dry-run
+```
+
+**Use the wrapper, not `python cycle.py`.** The containment ADR 0016 builds is
+on the `labstage` account that runs the web process: no `CONNECT` on the live
+`selector` database, no SSH key, no vault environment. It does not extend to
+your shell. You are `conductor`, which holds the token, the SSH key and write
+on the live Journal, so a bare `cycle.py` in the preview tree reads the real
+tourbot queue and dispatches a real Run against it.
+
+`preview-cycle.sh` points every outward reach at `preview-sources/` - a canned
+queue of three issues covering eligible, blocked and missing-section; a box
+that starts nothing and reports a plausible ended Run; a box status read that
+answers fixture facts rather than opening an SSH session (#156); Seeding that
+fetches nothing; issue bookkeeping that writes nothing - and the Journal at
+`selector_staging`. It refuses outright if `SELECTOR_JOURNAL_DSN` resolves to
+the live Journal, because a cycle appends and those appends would be permanent.
+
+**"Every outward reach" includes two that are not commands**, and they are the
+easy ones to miss. `SELECTOR_WORK_REPO` defaults to a real tourbot checkout,
+and `dispatch.py`'s `push()` runs `git push --set-upstream origin <branch>`
+against it *before* the box is ever reached - so faking the tracker and the
+box while leaving that alone still puts a branch on the real repository.
+`SELECTOR_SEED_COMMAND` defaults to the Loop's real `seed-run.sh`. The wrapper
+redirects both, at a throwaway work repo whose `origin` is a local bare repo
+under `/var/lib/lab-preview/work`, and
+`tests/test_preview_cycle.py::test_no_outward_reach_is_left_on_its_default`
+fails if a new one is ever added and left alone.
+
+### The staging Journal
+
+`selector_staging` is built from `schema.sql` plus `seed.sql`, and is
+disposable. Note before you read the strip against it: the budget cell says
+`7 of 4`, because the fixture packs every outcome state into one hour and each
+needs its own dispatch. Unreachable in life - the cap refuses the fifth - and
+explained where the fixture packs them.
+
+
+
+```bash
+dropdb selector_staging && createdb -O conductor selector_staging
+psql -d selector_staging -f schema.sql -f seed.sql
+```
+
+`seed.sql` is not decoration. The live Journal has never held a
+`run.dispatched` or a `run.outcome` row, so a preview reading real data shows
+a page with no Run cards and proves nothing about a branch that changed how
+Run cards look. The fixture covers every state `/loop` renders, and
+`lab/webapp/tests/test_staging_seed.py` fails when it stops covering one -
+**adding a state to the page means adding it to `seed.sql` in the same
+change.**

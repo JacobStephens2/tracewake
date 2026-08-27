@@ -4,10 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}lab.etadventures.com{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css">
-<script src="/static/htmx.min.js" defer></script>
+<link rel="stylesheet" href="{{ static_base }}/app.css">
+<script src="{{ static_base }}/htmx.min.js" defer></script>
 </head>
 <body>
+{% include "_preview_banner.html" %}
 <nav class="topnav">
   <a class="brand mono" href="/">lab</a>
   <span class="navlinks">
