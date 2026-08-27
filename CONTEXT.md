@@ -89,7 +89,7 @@ _Avoid_: trigger, kick off, schedule, launch
 Skipping a labeled task by handing it back rather than by passing over it: a
 comment naming what the task is missing, a swap to `needs-info`, and a
 journaled skip. Reserved for a task that broke the promise the label makes -
-today, a missing `Acceptance criteria` or `Owning area` section. Every other
+today, a missing `Acceptance criteria` section. Every other
 skip is quiet, because a blocked task commented on every half hour is a queue
 nobody reads.
 _Avoid_: rejection, bounce, failing an issue

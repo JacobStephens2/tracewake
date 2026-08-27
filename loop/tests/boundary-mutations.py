@@ -86,8 +86,8 @@ MUTATIONS = {
     # outside the session's allowed directories and an Iteration cannot grade
     # itself.
     "check-not-mounted": (
-        '"${sbx}" create --quiet --name "${sandbox}" claude "${workspace}" "${loop_dir}:ro"',
-        '"${sbx}" create --quiet --name "${sandbox}" claude "${workspace}"',
+        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro"',
+        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}"',
     ),
     # The scripts are mounted writable, so a Run could edit the thing that
     # grades it.

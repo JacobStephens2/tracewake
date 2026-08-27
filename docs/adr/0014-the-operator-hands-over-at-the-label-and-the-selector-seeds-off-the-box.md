@@ -37,10 +37,22 @@ The Selector seeds a task only when all of these hold:
 
 `ready-for-agent` already meant "fully specified, ready for an AFK agent." It
 now promises that mechanically: an `Acceptance criteria` section (`seed-run.sh`
-refuses without one), an `Owning area` section (the Selector reads `--area`
-from it; an optional `Check` section supplies `--check`), and current native
-dependency edges. A labeled task missing a section is skipped loudly - a
-comment naming the gap and a swap to `needs-info` - never guessed at.
+refuses without one) and current native dependency edges. A labeled task
+missing it is skipped loudly - a comment naming the gap and a swap to
+`needs-info` - never guessed at.
+
+Two sections are optional: `Owning area` supplies `--area`, and `Check`
+supplies `--check`.
+
+**Amended 2026-08-27 (issue #156).** `Owning area` was required here as well,
+and is no longer. The requirement was sound on its own terms - `--area` is the
+Loop's scope fence, and how much of a large task one Run is for is a judgement
+an Iteration should not make - but it cost the operator a second step on every
+Handover, which is the friction this whole ruling exists to remove. It was
+measured before it was dropped: on the day it went in, every labeled task in
+the queue lacked the section, so its effect was to hand the queue back rather
+than work it. A task with no `Owning area` is now scoped to its own title; a
+task that really is bigger than one Run still says so by carrying the section.
 
 ## Why the Selector may live on the orchestration VM
 

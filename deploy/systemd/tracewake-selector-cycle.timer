@@ -1,0 +1,27 @@
+[Unit]
+Description=Run a Selector cycle every 30 minutes, around the clock
+
+[Timer]
+# Every thirty minutes, all day and all night. Not office hours: the point of
+# the Selector is that the operator's Handover - applying `ready-for-agent` -
+# is the last human step, and a queue that only drains while he is awake is one
+# he is still pacing. Spend stays bounded by the daily cap (4 Runs per rolling
+# 24 hours), not by the firing rate.
+OnCalendar=*:00/30
+
+# Persistent=false, deliberately, and it is the one setting here that spends
+# money if it is wrong. `true` would make a box that was down for six hours
+# fire a catch-up cycle the moment it came back - and a catch-up cycle is a
+# real Run against a real repository. Nothing is lost by skipping: the queue is
+# still there thirty minutes later, and the cap is a rolling window rather than
+# a quota to be used up.
+Persistent=false
+
+# Enough to keep every cycle off the exact half hour, and small next to the
+# interval. A cycle that overlaps the previous one stands down (advisory lock),
+# so the jitter is about not landing with every other timer on this box rather
+# than about collisions with itself.
+RandomizedDelaySec=90
+
+[Install]
+WantedBy=timers.target

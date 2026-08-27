@@ -24,6 +24,7 @@ DISPATCH = "dispatch.py"
 CYCLE_SUITE = "tests/test_cycle.py"
 DISPATCH_SUITE = "tests/test_dispatch.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
+UNATTENDED_SUITE = "tests/test_unattended.py"
 
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
@@ -61,10 +62,10 @@ MUTATIONS = {
     ),
     # Concurrency arrives by accident: a second Run is dispatched while one is
     # still in flight.
-    "in-flight-cap-ignored": (CYCLE, CYCLE_SUITE, "elif spend.in_flight:", "elif False:"),
+    "in-flight-cap-ignored": (CYCLE, CYCLE_SUITE, "elif cycle_spend.in_flight:", "elif False:"),
     # The daily cap stops bounding spend and the review pile.
     "daily-cap-ignored": (CYCLE, CYCLE_SUITE,
-        "elif spend.recent_dispatches >= config.daily_cap:",
+        "elif cycle_spend.recent_dispatches >= config.daily_cap:",
         "elif False:",
     ),
     # The cap window widens to never, so yesterday's dispatches stop aging out
@@ -148,8 +149,12 @@ MUTATIONS = {
     ),
     # The comment naming the gap says nothing, so an issue is taken out of the
     # queue with no record of why - the silence the loud skip exists to stop.
+    # Pre-existing stale anchor, repointed 2026-08-27: the call gained
+    # `+ SIGNATURE` and this was never updated, so it had stopped mutating
+    # anything and the comment's contents were unverified.
     "return-comment-says-nothing": (CYCLE, DISPATCH_SUITE,
-        "            _missing_section_comment(config, detail),", '            "",',
+        "            _missing_section_comment(config, detail) + SIGNATURE,",
+        '            "" + SIGNATURE,',
     ),
     # A hand-back GitHub refused exits 0, so the timer never pages and the
     # issue sits in the queue with nothing on it.
@@ -159,7 +164,7 @@ MUTATIONS = {
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
     "every-dispatch-is-the-first": (CYCLE, DISPATCH_SUITE,
-        '        attempt = spend.attempts(\n'
+        '        attempt = cycle_spend.attempts(\n'
         '            pick["number"], picked_record.get("labeledAt")\n'
         '        ) + 1',
         "        attempt = 1",
@@ -272,6 +277,38 @@ MUTATIONS = {
     "handover-relabels-before-commenting": (CYCLE, OUTCOMES_SUITE,
         "        if body is not None:\n            dispatch.comment(\n                dispatch_config, config.task_repo, number, body + SIGNATURE\n            )\n        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=route.label, remove=config.label,\n        )",
         "        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=route.label, remove=config.label,\n        )\n        if body is not None:\n            dispatch.comment(\n                dispatch_config, config.task_repo, number, body + SIGNATURE\n            )",
+    ),
+    # Two cycles reason at once. Under a thirty-minute timer and a
+    # ninety-minute Run this is the ordinary case, not a rare race: the
+    # overlapping cycle reads the same spend and can dispatch the same issue a
+    # second time.
+    "cycles-may-overlap": (CYCLE, UNATTENDED_SUITE,
+        'if not conn.execute(\n'
+        '                "SELECT pg_try_advisory_lock(%s)", (CYCLE_LOCK_KEY,)\n'
+        '            ).fetchone()[0]:',
+        "if False:",
+    ),
+    # A dry run reaches the box. The property that a dry run touches the
+    # tracker and nothing else is what makes it safe to run against
+    # production from a keyboard.
+    "a-dry-run-reaches-the-box": (CYCLE, UNATTENDED_SUITE,
+        "    if not dry_run:\n        facts, box_error = observe_box(config)",
+        "    if True:\n        facts, box_error = observe_box(config)",
+    ),
+    # The owning area stops falling back to the issue title, so every issue
+    # without the section - which is most of them, and is why the requirement
+    # was dropped - reaches Seeding with an empty `--area` and is refused.
+    "area-is-not-defaulted": (CYCLE, CYCLE_SUITE,
+        '    return named or str(record.get("title") or "").strip()'
+        ' or f"issue #{record[\'number\']}"',
+        "    return named",
+    ),
+    # A box that answered non-zero is read as a box that answered nothing, so
+    # the card renders a blank-fact success and an outage looks like a box
+    # holding no Loop scripts, no template and no agent.
+    "an-unreadable-box-reads-as-an-empty-one": (CYCLE, UNATTENDED_SUITE,
+        "    if done.returncode != 0:",
+        "    if False:",
     ),
 }
 

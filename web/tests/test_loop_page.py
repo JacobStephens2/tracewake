@@ -432,3 +432,135 @@ def test_a_no_proposal_run_reads_as_no_proposal_not_as_its_bound(db):
     runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
     assert "no-proposal" in runs
     assert "iteration-cap" not in runs
+
+
+# --- The status strip (#156) -------------------------------------------------
+#
+# Unattended operation is a claim, and the strip is where it is proved on the
+# page: the timer that will fire next, the budget it will spend from, and what
+# the box it dispatches to is holding.
+#
+# Every assertion here reads the STRIP rather than the page, and that is not
+# fussiness: the page ends with a table that dumps every Journal payload
+# verbatim, so `assert "8c1f3a90d2" in resp.text` would pass for a strip that
+# rendered nothing at all.
+
+
+def strip(body):
+    """The status strip alone, cut out of the page."""
+    start = body.index('<section class="strip"')
+    return body[start:body.index("</section>", start)]
+
+
+def _timer_command(tmp_path, text, *, exit_code=0):
+    script = tmp_path / "timer.sh"
+    script.write_text(
+        f"#!/usr/bin/env bash\ncat <<'EOF'\n{text}\nEOF\nexit {exit_code}\n"
+    )
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_the_strip_counts_todays_runs_against_the_cap(db, dispatch):
+    for number in (640, 641):
+        dispatch(db, number, outcome="clean")
+    assert "2 of 4" in strip(client.get("/loop").text)
+
+
+def test_a_dispatch_older_than_the_window_is_not_a_run_today(db, dispatch):
+    """The same rolling window the Selector enforces, because a strip that
+    counted a different day would reassure about a cap it is not reading."""
+    dispatch(db, 640, outcome="clean", hours_ago=30)
+    assert "0 of 4" in strip(client.get("/loop").text)
+
+
+def test_the_strip_names_the_run_in_flight(db, dispatch):
+    dispatch(db, 646, outcome=None)
+    cell = strip(client.get("/loop").text)
+    assert "in flight" in cell
+    assert "646" in cell
+
+
+def test_the_strip_says_idle_when_no_run_is_in_flight(db):
+    assert "idle" in strip(client.get("/loop").text)
+
+
+def test_the_strip_shows_the_next_cycle_the_timer_will_fire(db, monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "SELECTOR_TIMER_COMMAND",
+        _timer_command(
+            tmp_path,
+            "ActiveState=active\nNextElapseUSecRealtime=Thu 2026-08-27 14:31:00 UTC",
+        ),
+    )
+    assert "Thu 2026-08-27 14:31:00 UTC" in strip(client.get("/loop").text)
+
+
+def test_a_timer_that_is_not_running_is_said_so_rather_than_left_blank(
+    db, monkeypatch, tmp_path
+):
+    """The failure this cell exists for: a timer installed and never enabled
+    is a Selector that looks quiet and is in fact dead (story 31)."""
+    monkeypatch.setenv(
+        "SELECTOR_TIMER_COMMAND",
+        _timer_command(tmp_path, "ActiveState=inactive\nNextElapseUSecRealtime=n/a"),
+    )
+    assert "not running" in strip(client.get("/loop").text).lower()
+
+
+def test_the_page_still_renders_when_the_timer_cannot_be_read(
+    db, monkeypatch, tmp_path
+):
+    monkeypatch.setenv(
+        "SELECTOR_TIMER_COMMAND", _timer_command(tmp_path, "", exit_code=1)
+    )
+    resp = client.get("/loop")
+    assert resp.status_code == 200
+    assert "unknown" in strip(resp.text).lower()
+
+
+def test_the_box_card_shows_the_scripts_hash_and_the_agent_version(db):
+    with journal.connect(db) as conn:
+        journal.append(
+            conn,
+            "box.observed",
+            {
+                "scripts_hash": "8c1f3a90d2",
+                "guest_template": "claude",
+                "agent": "claude",
+                "agent_version": "2.1.221 (Claude Code)",
+            },
+        )
+    cell = strip(client.get("/loop").text)
+    assert "8c1f3a90d2" in cell
+    assert "2.1.221 (Claude Code)" in cell
+    assert "claude" in cell
+
+
+def test_the_box_card_shows_the_newest_observation(db):
+    with journal.connect(db) as conn:
+        journal.append(conn, "box.observed", {"scripts_hash": "olderhash1"})
+        journal.append(conn, "box.observed", {"scripts_hash": "newerhash2"})
+    cell = strip(client.get("/loop").text)
+    assert "newerhash2" in cell
+    assert "olderhash1" not in cell
+
+
+def test_a_fact_the_box_did_not_report_is_blank_rather_than_guessed(db):
+    with journal.connect(db) as conn:
+        journal.append(
+            conn, "box.observed", {"scripts_hash": "deadbeef01", "agent_version": None}
+        )
+    cell = strip(client.get("/loop").text)
+    assert "deadbeef01" in cell
+    assert "not reported" in cell
+
+
+def test_a_box_that_could_not_be_read_says_so_on_the_card(db):
+    with journal.connect(db) as conn:
+        journal.append(conn, "box.unreachable", {"error": "no route to host"})
+    assert "no route to host" in strip(client.get("/loop").text)
+
+
+def test_a_box_never_observed_is_absent_rather_than_invented(db):
+    assert "not read yet" in strip(client.get("/loop").text).lower()

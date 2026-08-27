@@ -19,74 +19,8 @@ A third thing is asserted everywhere: the tripwire. `gh`, `git`, `ssh` and
 writing to anything but the Journal" is a checked property of every scenario
 rather than a claim in a docstring.
 """
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-import pytest
-
 import journal
 from conftest import BODY, hours_ago_iso as _hours_ago_iso, issue
-
-SELECTOR = Path(__file__).resolve().parents[1]
-CYCLE = SELECTOR / "cycle.py"
-
-@pytest.fixture
-def fakes(tmp_path):
-    """A fake tracker command plus a tripwire PATH; returns a runner."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    tripped = tmp_path / "tripped.log"
-
-    for name in ("gh", "git", "ssh", "seed-run.sh"):
-        shim = bin_dir / name
-        shim.write_text(
-            "#!/usr/bin/env bash\n"
-            f'printf "%s %s\\n" "{name}" "$*" >> "{tripped}"\n'
-            "exit 1\n"
-        )
-        shim.chmod(0o755)
-
-    queue_file = tmp_path / "queue.json"
-    tracker = tmp_path / "tracker.sh"
-    tracker.write_text(
-        "#!/usr/bin/env bash\n"
-        f'printf "%s %s\\n" "$1" "$2" > "{tmp_path}/tracker.args"\n'
-        f'exec cat "{queue_file}"\n'
-    )
-    tracker.chmod(0o755)
-
-    class Runner:
-        args_file = tmp_path / "tracker.args"
-
-        def run(self, dsn, issues=(), *, tracker_command=None,
-                dry_run=True, **env):
-            queue_file.write_text(json.dumps({"issues": list(issues)}))
-            environ = dict(os.environ)
-            environ.update(
-                {
-                    "PATH": f"{bin_dir}:{environ['PATH']}",
-                    "SELECTOR_JOURNAL_DSN": dsn,
-                    "SELECTOR_TRACKER_COMMAND": str(tracker_command or tracker),
-                    "SELECTOR_TASK_REPO": "acme/widgets",
-                    "SELECTOR_LABELER_ALLOWLIST": "JacobStephens2",
-                }
-            )
-            environ.update({k: str(v) for k, v in env.items()})
-            argv = ["--dry-run"] if dry_run else []
-            return subprocess.run(
-                [sys.executable, str(CYCLE), *argv],
-                capture_output=True,
-                text=True,
-                env=environ,
-            )
-
-        def tripped(self):
-            return tripped.read_text() if tripped.exists() else ""
-
-    return Runner()
 
 
 def events(dsn, kind=None):
@@ -170,23 +104,50 @@ def test_issue_with_an_open_proposal_is_skipped_as_in_flight(db, fakes):
     assert picked(db)["number"] == 648
 
 
-def test_missing_owning_area_is_skipped(db, fakes):
+def test_an_issue_with_no_owning_area_is_worked_anyway(db, fakes):
+    """Amendment to #151, 2026-08-27: the section was required and is not.
+    Requiring it made the Handover two steps, and the measurement was that
+    every labeled issue in the queue lacked it - so the requirement handed the
+    queue back rather than working it."""
     body = "## Acceptance criteria\n\n- [ ] It is right\n"
-    fakes.run(db, [issue(645, body=body), issue(648)])
-    assert skips(db)[645] == "missing-section"
-    assert "Owning area" in events(db, "issue.skipped")[0]["payload"]["detail"]
-    assert picked(db)["number"] == 648
+    fakes.run(db, [issue(645, body=body)])
+    assert skips(db) == {}
+    assert picked(db)["number"] == 645
+
+
+def test_an_issue_with_no_owning_area_is_scoped_to_its_own_title(db, fakes):
+    """A default rather than a guess. `seed-run.sh --area` is required and is
+    the Plan's scope fence, so the Run always has one; without a section
+    naming it, "work this issue" is the honest reading."""
+    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    fakes.run(db, [issue(645, title="Widen the sync window", body=body)])
+    assert picked(db)["area"] == "Widen the sync window"
+
+
+def test_an_empty_owning_area_heading_falls_back_to_the_title_too(db, fakes):
+    """The area must never reach Seeding empty: a blank `--area` is a refusal,
+    which would put the dropped requirement back in through the dispatch."""
+    body = "## Acceptance criteria\n\n- [ ] It is right\n\n## Owning area\n\n"
+    fakes.run(db, [issue(645, title="Widen the sync window", body=body)])
+    assert picked(db)["area"] == "Widen the sync window"
+
+
+def test_an_owning_area_section_still_scopes_the_run_when_it_is_there(db, fakes):
+    """An issue bigger than one Run still says so, and the fence still holds."""
+    fakes.run(db, [issue(645, title="Widen the sync window")])
+    assert picked(db)["area"] == "The nightly sync script"
 
 
 def test_missing_acceptance_criteria_is_skipped(db, fakes):
     body = "## Owning area\n\nThe nightly sync script\n"
-    fakes.run(db, [issue(645, body=body)])
+    fakes.run(db, [issue(645, body=body), issue(648)])
     assert skips(db)[645] == "missing-section"
     assert "Acceptance criteria" in events(db, "issue.skipped")[0]["payload"]["detail"]
+    assert picked(db)["number"] == 648
 
 
-def test_an_empty_owning_area_heading_counts_as_missing(db, fakes):
-    body = "## Acceptance criteria\n\n- [ ] It is right\n\n## Owning area\n\n"
+def test_an_empty_acceptance_criteria_heading_counts_as_missing(db, fakes):
+    body = "## Acceptance criteria\n\n## Owning area\n\nThe nightly sync script\n"
     fakes.run(db, [issue(645, body=body)])
     assert skips(db)[645] == "missing-section"
 
@@ -194,11 +155,10 @@ def test_an_empty_owning_area_heading_counts_as_missing(db, fakes):
 def test_a_heading_inside_a_fenced_block_is_not_a_section(db, fakes):
     """An issue quoting the template it was written from is quoting it. The
     quoted section has content under it, so a reader that ignored fences would
-    seed a Run scoped to somebody else's example."""
+    read somebody else's example as this issue's definition of done."""
     body = (
-        "## Acceptance criteria\n\n- [ ] It is right\n\n"
         "Fill this in, like so:\n\n"
-        "```\n## Owning area\n\nThe billing module\n```\n"
+        "```\n## Acceptance criteria\n\n- [ ] It is right\n```\n"
     )
     fakes.run(db, [issue(645, body=body)])
     assert skips(db)[645] == "missing-section"

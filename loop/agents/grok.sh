@@ -4,6 +4,7 @@
 # the Execution Boundary.
 #
 #   grok.sh <prompt-file> <max-turns>
+#   grok.sh --guest-template      the `sbx` template the boundary is built from
 #   grok.sh --pinned-version      the version this adapter installs in the guest
 #   grok.sh --metered-env-names   the names that would supersede the subscription
 #
@@ -115,7 +116,17 @@ die() {
     exit 1
 }
 
+# The `sbx` template this adapter builds its boundary from - see claude.sh's
+# declaration for why it is a variable and why it is readable from outside.
+# `shell` rather than an agent template, because there is no Grok template to
+# ask for; the consequences of that choice are recorded below.
+guest_template=shell
+
 case "${1:-}" in
+    --guest-template)
+        printf '%s\n' "${guest_template}"
+        exit 0
+        ;;
     --pinned-version)
         printf '%s\n' "${LOOP_GROK_VERSION}"
         exit 0
@@ -194,7 +205,7 @@ loop_dir="$(cd -- "${agent_dir}/.." && pwd)"
 # sandbox it makes, the way the `claude` kit attaches Anthropic's six hosts.
 # Choosing a template chooses hosts, and this template's choice is recorded
 # rather than assumed away.
-"${sbx}" create --quiet --name "${sandbox}" shell "${workspace}" "${loop_dir}:ro" >&2 ||
+"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro" >&2 ||
     die "could not create the Execution Boundary for this Iteration"
 
 # The guest's account, which is `agent` under every `sbx` template. Named

@@ -4,6 +4,8 @@
 # Execution Boundary.
 #
 #   claude.sh <prompt-file> <max-turns>
+#   claude.sh --guest-template    the `sbx` template the boundary is built from
+#   claude.sh --metered-env-names the names that would supersede the subscription
 #
 # Invoked by run.sh with the repository as the working directory, once per
 # Iteration, as a fresh process. Exits with the agent's exit status. Swapping
@@ -65,9 +67,26 @@ metered_env_names=(
     ANTHROPIC_AUTH_TOKEN
 )
 
+# The `sbx` template every Iteration's microVM is built from. Declared here,
+# once, and used by the create below rather than the create naming it a second
+# time: the template IS the Execution Boundary the Run was bounded by (ADR
+# 0003), and it is a thing that may change - spec #151's story 33 wants a
+# PHP-capable guest so `/tdd` is real red-green-refactor, falling back to this
+# stock image if that work runs long.
+#
+# Readable from outside for the same reason `--metered-env-names` is: the
+# Selector's box card reports which boundary the box would build (#156), and
+# a status card that read it out of this file by pattern would be a second
+# place to be wrong the day the create moved.
+guest_template=claude
+
 case "${1:-}" in
     --metered-env-names)
         printf '%s\n' "${metered_env_names[@]}"
+        exit 0
+        ;;
+    --guest-template)
+        printf '%s\n' "${guest_template}"
         exit 0
         ;;
 esac
@@ -149,7 +168,7 @@ trap cleanup EXIT INT TERM
 # grade must not be able to do.
 loop_dir="$(cd -- "${agent_dir}/.." && pwd)"
 
-"${sbx}" create --quiet --name "${sandbox}" claude "${workspace}" "${loop_dir}:ro" >&2 ||
+"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro" >&2 ||
     die "could not create the Execution Boundary for this Iteration"
 
 # Everything the guest needs, placed after creation rather than mounted. A mount

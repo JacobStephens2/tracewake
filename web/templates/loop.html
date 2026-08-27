@@ -23,6 +23,58 @@
     {% if error %}
     <p class="terminal-alert terminal-alert-error">{{ error }}</p>
     {% endif %}
+
+    {#- The status strip (#156). Unattended operation is a claim, and these four
+        cells are where it is proved: what the Selector is doing, when the timer
+        fires next, what is left of today's budget, and what the box it
+        dispatches to is holding. Nothing here is computed in the template. -#}
+    <section class="strip">
+      <div class="cell">
+        <span class="cell-label">selector</span>
+        <span class="cell-value">{{ state or "unknown" }}</span>
+      </div>
+      <div class="cell">
+        <span class="cell-label">next cycle</span>
+        {% if timer.state == "active" %}
+        <span class="cell-value">{{ timer.next }}</span>
+        {% elif timer.state %}
+        {#- The failure this cell exists for: a timer installed and never
+            enabled is inert, and a Selector that is dead looks exactly like a
+            Selector with nothing to do. -#}
+        <span class="cell-value alarm">timer not running ({{ timer.state }})</span>
+        {% else %}
+        <span class="cell-value">unknown - the timer could not be read</span>
+        {% endif %}
+      </div>
+      <div class="cell">
+        <span class="cell-label">runs today</span>
+        {% if budget.spent is none %}
+        <span class="cell-value">unknown</span>
+        {% else %}
+        <span class="cell-value">{{ budget.spent }} of {{ budget.cap }}</span>
+        <span class="detail">dispatches in the last {{ budget.window }}h</span>
+        {% endif %}
+      </div>
+      <div class="cell cell-box">
+        <span class="cell-label">the box</span>
+        {% if box is none %}
+        <span class="cell-value">not read yet</span>
+        <span class="detail">a cycle reads it over SSH; a dry run does not.</span>
+        {% elif not box.reachable %}
+        <span class="cell-value alarm">could not be read</span>
+        <span class="detail">{{ box.error }} &middot; {{ box.at }}</span>
+        {% else %}
+        <span class="cell-value">
+          loop scripts <code>{{ box.scripts_hash or "not reported" }}</code>
+        </span>
+        <span class="detail">guest template
+          <code>{{ box.guest_template or "not reported" }}</code>
+          &middot; agent {{ box.agent or "" }}
+          <code>{{ box.agent_version or "not reported" }}</code>
+          &middot; read {{ box.at }}</span>
+        {% endif %}
+      </div>
+    </section>
     {% if runs %}
     <h2>Runs</h2>
     <p>One card per dispatch: the Run in flight, and every Run that has

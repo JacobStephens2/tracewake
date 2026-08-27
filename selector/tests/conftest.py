@@ -94,6 +94,70 @@ def issue(number, **over):
     return record
 
 
+# --- The dry-run harness ----------------------------------------------------
+#
+# A canned tracker and a tripwire PATH: `gh`, `git`, `ssh` and `seed-run.sh`
+# shimmed to log and fail. Shared, because "a dry run reaches the tracker and
+# nothing else" is a property every suite that drives one should be able to
+# assert rather than one that happens to own the fixture.
+
+@pytest.fixture
+def fakes(tmp_path):
+    """A fake tracker command plus a tripwire PATH; returns a runner."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tripped = tmp_path / "tripped.log"
+
+    for name in ("gh", "git", "ssh", "seed-run.sh"):
+        shim = bin_dir / name
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            f'printf "%s %s\\n" "{name}" "$*" >> "{tripped}"\n'
+            "exit 1\n"
+        )
+        shim.chmod(0o755)
+
+    queue_file = tmp_path / "queue.json"
+    tracker = tmp_path / "tracker.sh"
+    tracker.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s %s\\n" "$1" "$2" > "{tmp_path}/tracker.args"\n'
+        f'exec cat "{queue_file}"\n'
+    )
+    tracker.chmod(0o755)
+
+    class Runner:
+        args_file = tmp_path / "tracker.args"
+
+        def run(self, dsn, issues=(), *, tracker_command=None,
+                dry_run=True, **env):
+            queue_file.write_text(json.dumps({"issues": list(issues)}))
+            environ = dict(os.environ)
+            environ.update(
+                {
+                    "PATH": f"{bin_dir}:{environ['PATH']}",
+                    "SELECTOR_JOURNAL_DSN": dsn,
+                    "SELECTOR_TRACKER_COMMAND": str(tracker_command or tracker),
+                    "SELECTOR_TASK_REPO": "acme/widgets",
+                    "SELECTOR_LABELER_ALLOWLIST": "JacobStephens2",
+                }
+            )
+            environ.update({k: str(v) for k, v in env.items()})
+            argv = ["--dry-run"] if dry_run else []
+            return subprocess.run(
+                [sys.executable, str(CYCLE), *argv],
+                capture_output=True,
+                text=True,
+                env=environ,
+            )
+
+        def tripped(self):
+            return tripped.read_text() if tripped.exists() else ""
+
+    return Runner()
+
+
+
 # --- The dispatch harness ---------------------------------------------------
 #
 # Moved here from the dispatch suite when a third suite (outcome routing)
@@ -120,6 +184,15 @@ LOOP_RUN_FAULTS=agent-failed
 LOOP_RUN_PROPOSAL=proposed
 LOOP_RUN_NOTIFIED=sent
 LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/13
+"""
+
+# What the box-facts command answers with: the three things the box card on
+# /loop is built from (#156). key=value lines, because that is the shape the
+# box already answers a Run in (LOOP_RUN_*) and a second parser earns nothing.
+BOX_FACTS = """LOOP_BOX_SCRIPTS_HASH=8c1f3a90d2
+LOOP_BOX_GUEST_TEMPLATE=claude
+LOOP_BOX_AGENT=claude
+LOOP_BOX_AGENT_VERSION=2.1.221 (Claude Code)
 """
 
 # What the issue command's `checks` action answers with. The shape is the
@@ -174,6 +247,8 @@ def box(tmp_path):
     summary.write_text(CLEAN_RUN)
     checks_file = tmp_path / "checks.json"
     checks_file.write_text(GREEN_CHECKS)
+    facts_file = tmp_path / "box-facts.txt"
+    facts_file.write_text(BOX_FACTS)
 
     def git(*args, cwd=None):
         return subprocess.run(
@@ -202,6 +277,7 @@ def box(tmp_path):
             .replace("@BARE@", str(bare))
             .replace("@SUMMARY@", str(summary))
             .replace("@CHECKS@", str(checks_file))
+            .replace("@FACTS@", str(facts_file))
         )
 
     seed = _script(tmp_path / "seed.sh", fill('''
@@ -232,6 +308,16 @@ def box(tmp_path):
             "$(psql "${SELECTOR_JOURNAL_DSN}" -tAc \
                 "select count(*) from journal.events where kind = 'run.dispatched'" \
                 2>&1)" >> "@LOG@"
+        # A hook for the concurrency tests: whatever NESTED_CYCLE names is run
+        # WHILE this Run is in flight, which is the only moment a second cycle
+        # can meet the first. Nothing sets it unless a test does.
+        if [[ -n ${NESTED_CYCLE:-} ]]; then
+            {
+                printf 'nested-begin\n'
+                "${NESTED_CYCLE}"
+                printf 'nested-exit %s\n' "$?"
+            } >> "@LOG@" 2>&1
+        fi
         cat "@SUMMARY@"
         exit "${BOX_EXIT:-0}"
     '''))
@@ -264,6 +350,14 @@ def box(tmp_path):
         exit "${ISSUE_EXIT:-0}"
     '''))
 
+    # Scripted here rather than in the one suite that asserts on it, because
+    # every dispatch reads it: a fixture that left it unset would send the
+    # whole suite at the real box over real SSH.
+    facts_command = _script(tmp_path / "facts.sh", fill('''
+        printf 'facts %s\n' "$*" >> "@LOG@"
+        exec cat "@FACTS@"
+    '''))
+
     queue_file = tmp_path / "queue.json"
     tracker = _script(tmp_path / "tracker.sh", f'exec cat "{queue_file}"\n')
 
@@ -283,6 +377,7 @@ def box(tmp_path):
                     "SELECTOR_SEED_COMMAND": str(seed),
                     "SELECTOR_BOX_COMMAND": str(box_command),
                     "SELECTOR_ISSUE_COMMAND": str(issue_command),
+                    "SELECTOR_BOX_FACTS_COMMAND": str(facts_command),
                 }
             )
             environ.update({k: str(v) for k, v in env.items()})
@@ -299,6 +394,14 @@ def box(tmp_path):
 
         def checks(self, text):
             checks_file.write_text(text)
+
+        def facts(self, text):
+            facts_file.write_text(text)
+
+        def facts_command(self, body):
+            """Replace the whole facts script - for the box that cannot be
+            read at all, which is a failing command rather than odd output."""
+            return _script(tmp_path / "facts.sh", body)
 
         def git(self, *args, cwd=None):
             return git(*args, cwd=cwd)

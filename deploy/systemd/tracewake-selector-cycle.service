@@ -1,0 +1,62 @@
+[Unit]
+Description=One Selector cycle: pick and dispatch the lowest eligible ready-for-agent tourbot issue
+Documentation=https://github.com/Educational-Travel-Adventures/orchestration/blob/master/lab/single-user-factory/selector/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+# The Journal is not optional: a cycle that cannot append cannot hold its own
+# in-flight lock or read its own spend, so it must not run at all.
+Requires=postgresql.service
+
+# In [Unit], NOT [Service]. systemd silently ignores OnFailure= in [Service] -
+# it logs `Unknown key name 'OnFailure' in section 'Service', ignoring` and the
+# unit otherwise looks perfectly configured. nonprod-migration-drift.service
+# shipped that way and its alert was dead from the day it was added.
+#
+# Story 31 is what this line is for: the Selector's own failures - a tracker
+# that did not answer, a Seeding refusal, a box that started no Run, a label
+# swap GitHub rejected - have to reach the operator, because a dead Selector
+# and a quiet queue look identical from the dashboard.
+#
+# Verify rather than trust:
+#     systemctl show selector-cycle.service -p OnFailure --value
+# Empty output means the directive did not register.
+OnFailure=notify-unit-failure@%n.service
+
+[Service]
+Type=oneshot
+User=conductor
+Group=conductor
+WorkingDirectory=/srv/orchestration/lab/single-user-factory/selector
+
+# Through the op-inject wrapper, not bare. A systemd unit starts with an empty
+# environment, and the tracker command is `gh api graphql` - which without
+# GH_TOKEN fails as an authentication error on every cycle, forever, while the
+# unit itself looks healthy.
+#
+# The interpreter is named explicitly rather than relying on the shebang: the
+# fcontext rule that labels this repository's scripts bin_t only matches
+# `scripts/*.sh`, so cycle.py lands as var_t and systemd refuses to exec it
+# (203/EXEC, no traceback). The venv's bin/ is labelled bin_t by
+# ansible/roles/selinux_labels, and passing the script as an argument means it
+# only has to be readable.
+ExecStart=/srv/orchestration/scripts/with-orchestration-env.sh \
+    /srv/orchestration/lab/single-user-factory/selector/.venv/bin/python \
+    /srv/orchestration/lab/single-user-factory/selector/cycle.py
+
+# A dispatching cycle holds the process for the length of the Run. The
+# Termination Contract bounds a Run at 90 minutes and the Selector's own
+# backstop (SELECTOR_DISPATCH_TIMEOUT_SECONDS) at 7200s, so this is above both
+# on purpose: it is the last resort for a cycle that wedged somewhere with no
+# timeout of its own, and a number that could fire FIRST would be a bound on
+# Runs that nothing in contract.sh declared.
+TimeoutStartSec=8100
+
+# Two cycles never run at once - cycle.py takes a Postgres advisory lock and a
+# second one stands down, exit 0. This is belt and braces for the ordinary
+# case: with a 30-minute timer and a 90-minute Run, the timer fires two or
+# three times into a Run that is still going, and systemd refusing to start a
+# second instance of a oneshot that is still activating keeps those firings
+# from even reaching Python.
+
+[Install]
+WantedBy=multi-user.target

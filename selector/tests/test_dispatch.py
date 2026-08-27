@@ -214,7 +214,7 @@ def test_a_retry_continues_the_branch_the_first_attempt_left_behind(db, box):
 
 
 def test_a_missing_section_issue_is_commented_on_and_swapped_to_needs_info(db, box):
-    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    body = "## Owning area\n\nThe nightly sync script\n"
     result = box.run(db, [issue(645, body=body)])
     assert result.returncode == 0, result.stderr
     log = box.commands()
@@ -226,28 +226,28 @@ def test_a_missing_section_issue_is_commented_on_and_swapped_to_needs_info(db, b
 
 
 def test_the_comment_names_the_gap_and_the_way_back(db, box):
-    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)])
     log = box.commands()
     comment = log.split("--- body ---")[1].split("--- end ---")[0]
-    assert "Owning area" in comment
+    assert "Acceptance criteria" in comment
     assert "needs-info" in comment
     assert "re-apply `ready-for-agent`" in comment
 
 
 def test_the_return_is_journaled(db, box):
-    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)])
     returned = one(db, "issue.returned")
     assert returned["number"] == 645
     assert returned["added_label"] == "needs-info"
     assert returned["removed_label"] == "ready-for-agent"
-    assert "Owning area" in returned["detail"]
+    assert "Acceptance criteria" in returned["detail"]
     assert one(db, "cycle.finished")["returned"] == [645]
 
 
 def test_a_returned_issue_does_not_stop_a_later_one_being_dispatched(db, box):
-    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body), issue(648)])
     assert one(db, "issue.returned")["number"] == 645
     assert one(db, "run.dispatched")["issue"] == 648
@@ -257,14 +257,14 @@ def test_an_issue_is_returned_even_when_a_cap_halts_the_cycle(db, box, dispatch)
     """Handing work back is not spending a Run. An issue the Selector will
     never seed should not wait for a free budget to be told so."""
     dispatch(db, 640, outcome=None)
-    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)])
     assert one(db, "issue.returned")["number"] == 645
     assert one(db, "cycle.finished")["halted"] == "run-in-flight"
 
 
 def test_a_dry_run_hands_nothing_back(db, box):
-    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)], dry_run=True)
     assert box.commands() == "", "a dry run wrote to the tracker"
     assert not events(db, "issue.returned")
@@ -282,7 +282,7 @@ def test_a_return_github_refuses_is_journaled_and_pages(db, box):
     """Story 31: the Selector's own failures reach the operator. An issue
     still sitting in the queue with nothing on it saying why is exactly the
     silence the loud skip exists to prevent."""
-    body = "## Acceptance criteria\n\n- [ ] It is right\n"
+    body = "## Owning area\n\nThe nightly sync script\n"
     result = box.run(db, [issue(645, body=body)], ISSUE_EXIT=1)
     assert result.returncode != 0
     assert not events(db, "issue.returned")

@@ -69,10 +69,25 @@ import journal  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
-# The sections `ready-for-agent` now promises (ADR 0014). Acceptance criteria
-# is what seed-run.sh already refuses without; Owning area is what scopes the
-# Run. Check is optional and supplies the Run's backpressure.
-REQUIRED_SECTIONS = ("Acceptance criteria", "Owning area")
+# The section `ready-for-agent` promises (ADR 0014). One, not two: Acceptance
+# criteria is what seed-run.sh already refuses without, and it is the Run's
+# only definition of done, so an issue without it is one the Selector could
+# not seed and could not grade.
+#
+# `Owning area` was the second, and was dropped on 2026-08-27 as a deliberate
+# amendment to spec #151's Issue contract. The requirement was defensible -
+# `--area` is the Loop's scope fence, and deciding how much of a large issue
+# one Run is for is a judgement - but it made the operator's Handover two
+# steps instead of one, which is the exact friction the Selector exists to
+# remove. Every labeled issue in the queue on the day it was measured lacked
+# the section, so the requirement's practical effect was to hand the whole
+# queue back rather than to work it.
+#
+# What replaces it is a default rather than a guess: an issue with no
+# `## Owning area` is scoped to its own title (see `_area`), which is the
+# honest reading of "work this issue". An issue that IS too big for one Run
+# still says so by carrying the section, and the fence still holds for it.
+REQUIRED_SECTIONS = ("Acceptance criteria",)
 
 # One automatic retry, then the give-up swap (#155). Two dispatches for an
 # issue is the budget spent - counted since the issue was last labeled, so
@@ -116,6 +131,33 @@ CAP_WINDOW_HOURS = 24
 # to prevent and this lock needs just as much.
 IN_FLIGHT_STALE_HOURS = 4
 
+# One cycle at a time, whoever started it. A Postgres advisory lock on the
+# Journal connection rather than a lock file, for two reasons: the Journal is
+# already the one thing every cycle holds open, and a lock the DATABASE owns
+# is released by the connection dying - a lock file left behind by a killed
+# cycle would wedge the timer until somebody noticed and deleted it.
+#
+# It matters because overlap is the normal case here, not the exceptional one:
+# the timer fires every thirty minutes and a dispatch holds the process for as
+# long as the Run lasts, which the Termination Contract bounds at ninety
+# minutes. Two cycles reasoning at once would read the same spend, and could
+# pick and dispatch the same issue twice.
+#
+# The in-flight lock in `Spend` does NOT cover this. That one is journaled and
+# is about Runs; this one is about processes, and is what stops a second cycle
+# before it has read anything at all.
+CYCLE_LOCK_KEY = 0x5E1EC7
+
+# What the box card on /loop is built from (#156): three facts read off the
+# box, over the box surface, once per cycle. Keys are the box's own
+# `LOOP_BOX_*` names, mapped here to the Journal's.
+BOX_FACT_KEYS = {
+    "LOOP_BOX_SCRIPTS_HASH": "scripts_hash",
+    "LOOP_BOX_GUEST_TEMPLATE": "guest_template",
+    "LOOP_BOX_AGENT": "agent",
+    "LOOP_BOX_AGENT_VERSION": "agent_version",
+}
+
 
 @dataclass(frozen=True)
 class Config:
@@ -127,6 +169,8 @@ class Config:
     allowlist: tuple[str, ...]
     daily_cap: int
     tracker_command: str
+    box_facts_command: str
+    box_facts_timeout_seconds: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -147,6 +191,15 @@ class Config:
             daily_cap=int(env("SELECTOR_DAILY_CAP", "4")),
             tracker_command=env(
                 "SELECTOR_TRACKER_COMMAND", str(HERE / "tracker-sources" / "github.sh")
+            ),
+            box_facts_command=env(
+                "SELECTOR_BOX_FACTS_COMMAND", str(HERE / "box-sources" / "facts.sh")
+            ),
+            # Short on purpose. This is a status read, and a status read that
+            # can hold a cycle open is worse than one that goes missing: the
+            # dispatch behind it is what the cycle is for.
+            box_facts_timeout_seconds=int(
+                env("SELECTOR_BOX_FACTS_TIMEOUT_SECONDS", "60")
             ),
         )
 
@@ -200,6 +253,27 @@ def _first_line(text: str) -> str:
         if stripped:
             return stripped
     return ""
+
+
+def _area(record: dict, present: dict[str, str]) -> str:
+    """The one owning area this Run is scoped to.
+
+    `seed-run.sh --area` is required and is written into the Plan as the fence
+    everything else in the issue is outside of, so a Run always has one. The
+    question is only who names it.
+
+    An `## Owning area` section names it: that is the operator saying this
+    issue is bigger than one Run and here is the part to work. Without one the
+    issue's own title is the area, which is the honest reading of "work this
+    issue" - and is why `ready-for-agent` is a single step again rather than a
+    label plus a section (amendment to #151, 2026-08-27).
+
+    Never empty: a blank area is a Seeding refusal, and refusing a Run because
+    a section the label no longer promises is missing would put the dropped
+    requirement straight back in through the dispatch.
+    """
+    named = _first_line(present.get("owning area", ""))
+    return named or str(record.get("title") or "").strip() or f"issue #{record['number']}"
 
 
 def _check_command(text: str) -> str:
@@ -263,7 +337,7 @@ def eligibility(record: dict, config: Config, attempts: int) -> tuple[str, str] 
             "missing-section",
             "the label promises "
             + " and ".join(f"an `{name}` section" for name in missing)
-            + "; this issue has neither the section nor anything under it",
+            + "; this issue has no such heading, or nothing under it",
         )
     return None
 
@@ -330,7 +404,11 @@ def _parse_time(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _spend(conn: psycopg.Connection) -> Spend:
+def spend(conn: psycopg.Connection) -> Spend:
+    """The Journal's answer to "what has been spent". Public because the page
+    shows the same budget the cycle enforces (#156): two readings of "Runs
+    today" that could disagree would be a status strip that reassures about a
+    cap it is not the one reading."""
     dispatches = [
         Dispatch(*row)
         for row in conn.execute(
@@ -351,6 +429,53 @@ def _spend(conn: psycopg.Connection) -> Spend:
     return Spend(dispatches, outcomes)
 
 
+# --- The box, as the page shows it -----------------------------------------
+
+
+def observe_box(config: Config) -> tuple[dict | None, str | None]:
+    """Read the box's own facts through the box surface: the hash of the Loop
+    scripts it is holding, the guest template an Iteration is built from, and
+    the agent version installed on it.
+
+    Returns `(facts, None)` or `(None, error)`. It never raises, and a failure
+    never ends the cycle: an unreachable box is not the Selector failing, and
+    the dispatch behind this read fails on its own and pages on its own. One
+    outage should page once.
+
+    Read once per cycle rather than at request time on /loop, for the reason
+    the Journal exists (ADR 0015): the page is a window, and a window that
+    opened an SSH session per view would make an unreachable box look like a
+    broken dashboard.
+    """
+    try:
+        done = subprocess.run(
+            [config.box_facts_command],
+            capture_output=True,
+            text=True,
+            timeout=config.box_facts_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return None, (
+            f"the box did not answer within {config.box_facts_timeout_seconds}s"
+        )
+    except OSError as exc:
+        return None, f"{config.box_facts_command}: {exc}"
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip().splitlines()
+        return None, (detail[-1] if detail else f"exit {done.returncode}")
+    # Every fact is optional. The box's copy of the Loop is updated by an
+    # ansible apply rather than by a merge, so it can be older than this
+    # repository - a key it does not report is the ordinary case, and the card
+    # says so rather than filling it in from the controller's copy, which
+    # would be the page asserting something it did not observe.
+    facts = {name: None for name in BOX_FACT_KEYS.values()}
+    for line in done.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() in BOX_FACT_KEYS:
+            facts[BOX_FACT_KEYS[key.strip()]] = value.strip() or None
+    return facts, None
+
+
 # --- Returning an underspecified issue to the operator ----------------------
 
 
@@ -364,12 +489,14 @@ def _missing_section_comment(config: Config, detail: str) -> str:
     """
     return f"""The Selector picked this up from `{config.label}` and stopped before seeding a Run: {detail}.
 
-`{config.label}` promises two sections a Run is built from (ADR 0014):
+`{config.label}` promises one section a Run is built from (ADR 0014):
 
-- `## Acceptance criteria` - one list item per criterion. They are carried into the Run's Plan verbatim and are its only definition of done.
-- `## Owning area` - one phrase naming the part of this issue a single Run is scoped to. A Run is a handful of Iterations; deciding how much of an issue one is for is the operator's call, not an Iteration's.
+- `## Acceptance criteria` - one list item per criterion. They are carried into the Run's Plan verbatim and are its only definition of done. Nothing else in the issue grades the work, so a Run cannot be started without them.
 
-Optionally `## Check` - a command that grades the work, run by the Run as it goes and by you afterwards.
+Two sections are optional:
+
+- `## Owning area` - one phrase naming the part of this issue a single Run is scoped to. Without it the Run is scoped to this issue's title, which is the right answer unless the issue is bigger than one Run.
+- `## Check` - a command that grades the work, run by the Run as it goes and by you afterwards.
 
 The label has been swapped to `{config.needs_info_label}`. Add what is missing and re-apply `{config.label}`: that is a fresh Handover, with a fresh retry budget, and the next cycle picks it up."""
 
@@ -812,19 +939,34 @@ def run_cycle(
             "dry_run": dry_run,
         },
     )
+    # Before the queue, and long before the dispatch that holds the process
+    # for the length of a Run. A box card read after the Run would go stale
+    # for exactly the ninety minutes the page is most worth looking at.
+    #
+    # Not in a dry run: a dry run reaches the tracker and nothing else, and
+    # that property is worth more than a status card on a cycle that changed
+    # nothing.
+    if not dry_run:
+        facts, box_error = observe_box(config)
+        journal.append(
+            conn,
+            "box.observed" if facts else "box.unreachable",
+            {"cycle": cycle_id, **(facts or {"error": box_error})},
+        )
+
     try:
         queue = fetch_queue(config)
     except CycleFailed as exc:
         journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})
         raise
 
-    spend = _spend(conn)
+    cycle_spend = spend(conn)
     eligible, skipped = [], {}
     returned, return_failures = [], 0
     for record in queue:
         number = int(record["number"])
         verdict = eligibility(
-            record, config, spend.attempts(number, record.get("labeledAt"))
+            record, config, cycle_spend.attempts(number, record.get("labeledAt"))
         )
         if verdict is None:
             eligible.append(record)
@@ -858,9 +1000,9 @@ def run_cycle(
     halted, pick, picked_record = None, None, None
     if not queue:
         halted = "queue-empty"
-    elif spend.in_flight:
+    elif cycle_spend.in_flight:
         halted = "run-in-flight"
-    elif spend.recent_dispatches >= config.daily_cap:
+    elif cycle_spend.recent_dispatches >= config.daily_cap:
         halted = "daily-cap-reached"
     elif not eligible:
         halted = "none-eligible"
@@ -875,7 +1017,7 @@ def run_cycle(
             "number": int(picked_record["number"]),
             "title": picked_record.get("title"),
             "url": picked_record.get("url"),
-            "area": _first_line(body_sections.get("owning area", "")),
+            "area": _area(picked_record, body_sections),
             "check": _check_command(check) or None,
         }
         journal.append(conn, "cycle.picked", pick)
@@ -887,8 +1029,8 @@ def run_cycle(
         "skipped": skipped,
         "picked": pick["number"] if pick else None,
         "halted": halted,
-        "in_flight": spend.in_flight,
-        "dispatched_in_window": spend.recent_dispatches,
+        "in_flight": cycle_spend.in_flight,
+        "dispatched_in_window": cycle_spend.recent_dispatches,
         "daily_cap": config.daily_cap,
         "returned": returned,
         "dry_run": dry_run,
@@ -903,7 +1045,7 @@ def run_cycle(
     summary["outcome"] = None
     summary["route"] = None
     if pick and not dry_run:
-        attempt = spend.attempts(
+        attempt = cycle_spend.attempts(
             pick["number"], picked_record.get("labeledAt")
         ) + 1
         summary["outcome"] = _dispatch_pick(
@@ -970,6 +1112,16 @@ def main(argv: list[str] | None = None) -> int:
     dispatch_config = dispatch.DispatchConfig.from_env()
     try:
         with journal.connect() as conn:
+            if not conn.execute(
+                "SELECT pg_try_advisory_lock(%s)", (CYCLE_LOCK_KEY,)
+            ).fetchone()[0]:
+                # Not a failure, and deliberately exit 0: under a
+                # thirty-minute timer and a ninety-minute Run this happens two
+                # or three times per Run, and a timer whose OnFailure paged
+                # for it would page for the Selector working.
+                journal.append(conn, "cycle.skipped", {"reason": "cycle-in-progress"})
+                print("cycle.py: another cycle is running; this one stood down")
+                return 0
             summary = run_cycle(conn, config, dispatch_config, dry_run=args.dry_run)
     except CycleFailed as exc:
         print(f"cycle.py: {exc}", file=sys.stderr)

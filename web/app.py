@@ -4,7 +4,15 @@ Built with FastAPI + Jinja2 + HTMX: server renders HTML, HTMX swaps in
 server-rendered fragments, no client-side framework and no build step. The
 site is itself a demonstration of the stack the ADR chooses (docs/adr/).
 """
+# The venv here is the system Python (3.9), so `dict | None` in an annotation
+# is a runtime TypeError without this. Same import the Selector's own modules
+# carry, for the same reason.
+from __future__ import annotations
+
+import os
 import re
+import shutil
+import subprocess
 import sys
 from datetime import timezone
 from pathlib import Path
@@ -24,6 +32,7 @@ ADR_DIR = PROJECT / "docs" / "adr"
 # app is its window (ADR 0015), so import it from there rather than forking
 # the SQL.
 sys.path.insert(0, str(PROJECT / "selector"))
+import cycle  # noqa: E402
 import journal  # noqa: E402
 
 app = FastAPI(title="lab.etadventures.com")
@@ -269,6 +278,101 @@ def _runs(events: list[dict]) -> list[dict]:
     return sorted(whole, key=lambda c: c["id"], reverse=True)
 
 
+# --- The status strip -------------------------------------------------------
+#
+# Unattended operation (#156) is a claim, and these four cells are where it is
+# proved on the page: what the Selector is doing now, when the timer fires
+# next, how much of today's budget is left, and what the box it dispatches to
+# is holding.
+#
+# None of it is computed here. The budget is read through `cycle.spend` - the
+# same function the Selector enforces the cap with, so the page cannot
+# reassure about a cap it is not the one reading - and the box facts are
+# replayed from the Journal row the cycle wrote. The page stays a window.
+
+# `systemctl show` on the timer, as one substitutable command. A read, no
+# privilege, and overridable so the strip can be driven in tests without a
+# systemd on the other end.
+TIMER_UNIT = "selector-cycle.timer"
+TIMER_PROPERTIES = ("ActiveState", "NextElapseUSecRealtime")
+# Short: this runs inside a request. A systemd that is not answering must make
+# the cell say so rather than hold the page open.
+TIMER_TIMEOUT_SECONDS = 5
+
+
+def _timer() -> dict:
+    """When the next cycle fires, and whether anything will fire it.
+
+    The second half is the point. A timer installed and never enabled is
+    inert, and the box has had exactly that failure before (gsc-etl, dead in
+    the failed-units list for two weeks). A strip that showed only a next-run
+    time would render nothing at all for it, which reads as "nothing to
+    report" rather than "the Selector is dead".
+    """
+    command = os.environ.get("SELECTOR_TIMER_COMMAND")
+    argv = (
+        [command]
+        if command
+        else [
+            "systemctl", "show", TIMER_UNIT,
+            *(f"-p{name}" for name in TIMER_PROPERTIES),
+        ]
+    )
+    if not command and not shutil.which("systemctl"):
+        return {"state": None}
+    try:
+        done = subprocess.run(
+            argv, capture_output=True, text=True, timeout=TIMER_TIMEOUT_SECONDS
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"state": None}
+    if done.returncode != 0:
+        return {"state": None}
+    read = {}
+    for line in done.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in TIMER_PROPERTIES:
+            read[key] = value.strip()
+    return {
+        "state": read.get("ActiveState"),
+        # systemd answers `n/a` for a timer with nothing scheduled, which is
+        # the honest string to show: an empty cell would be indistinguishable
+        # from one this page failed to fill in.
+        "next": read.get("NextElapseUSecRealtime") or "n/a",
+    }
+
+
+def _box(events: list[dict]) -> dict | None:
+    """The newest thing known about the box, observed or failed.
+
+    Newest of EITHER kind rather than the newest success: a box card that kept
+    showing last week's good read while every cycle since had failed to reach
+    the box would be the page hiding the one fact worth showing.
+    """
+    for event in events:  # newest first
+        if event["kind"] in ("box.observed", "box.unreachable"):
+            # The payload first, the two computed keys after it: the Journal
+            # is append-only and its rows outlive this code, so a future
+            # payload that happened to carry `at` or `reachable` must not be
+            # able to overwrite what the page worked out for itself.
+            return {
+                **(event["payload"] or {}),
+                "at": _utc(event["at"]),
+                "reachable": event["kind"] == "box.observed",
+            }
+    return None
+
+
+def _selector_state(runs: list[dict], budget: dict) -> str:
+    """What the Selector is doing, in the words the Journal already uses."""
+    in_flight = [r for r in runs if r.get("in_flight")]
+    if in_flight:
+        return f"in flight: #{in_flight[0]['issue']}"
+    if budget["spent"] >= budget["cap"]:
+        return "idle - daily cap reached"
+    return "idle"
+
+
 @app.get("/loop", response_class=HTMLResponse)
 def loop_page(request: Request):
     """The Loop's window: the Selector Journal, read at request time.
@@ -276,10 +380,17 @@ def loop_page(request: Request):
     Sync def on purpose: psycopg blocks, so FastAPI runs this handler in its
     threadpool instead of on the event loop.
     """
+    config = cycle.Config.from_env()
     events, error = [], None
+    budget = {"spent": None, "cap": config.daily_cap,
+              "window": cycle.CAP_WINDOW_HOURS}
     try:
         with journal.connect() as conn:
             events = journal.events(conn)
+            # Read through the Selector's own function rather than counted
+            # here: two readings of "Runs today" that could disagree would be
+            # a strip that reassures about a cap it is not the one enforcing.
+            budget["spent"] = cycle.spend(conn).recent_dispatches
     except psycopg.Error as exc:
         error = f"journal unavailable: {exc}"
     view = [
@@ -291,14 +402,19 @@ def loop_page(request: Request):
         }
         for e in events
     ]
+    runs = _runs(events)
     return templates.TemplateResponse(
         "loop.html",
         {
             "request": request,
             "events": view,
             "cycles": _cycles(events),
-            "runs": _runs(events),
+            "runs": runs,
             "error": error,
+            "budget": budget,
+            "timer": _timer(),
+            "box": _box(events),
+            "state": _selector_state(runs, budget) if error is None else None,
         },
     )
 

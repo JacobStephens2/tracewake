@@ -81,8 +81,8 @@ MUTATIONS = {
     # The Loop's scripts stop being mounted, so the Plan's completeness check is
     # outside the session's allowed directories.
     "check-not-mounted": (
-        '"${sbx}" create --quiet --name "${sandbox}" shell "${workspace}" "${loop_dir}:ro"',
-        '"${sbx}" create --quiet --name "${sandbox}" shell "${workspace}"',
+        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro"',
+        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}"',
     ),
     # The scripts are mounted writable, so a Run could edit the thing that
     # grades it.

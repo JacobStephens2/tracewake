@@ -22,6 +22,38 @@
 set -euo pipefail
 
 selector_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# One run at a time, and it is not a nicety. This script edits cycle.py and
+# dispatch.py in place and restores them from a backup it took at the start,
+# so two overlapping runs restore each other's mutations - and a run that
+# overlaps an EDITING SESSION silently reverts uncommitted work to whatever
+# the older run had backed up. Both happened on 2026-08-27; the second cost an
+# hour and looked like a flaky suite rather than like a clobber.
+#
+# `flock -n` on this script's own file: no lock file to leave behind, and
+# re-running the script under flock is what makes the lock cover the whole run
+# rather than one line. `-E 99` because a refused lock has to be
+# distinguishable from this script's own exit 1, which means "mutations
+# survived" - two different answers that must not share a code.
+#
+# NOT `exec`: with exec the shell is gone before the branch below could
+# report anything, so a refused run would exit silently, which is the failure
+# mode this guard exists to make visible.
+if [[ -z ${SELECTOR_MUTATION_LOCK_HELD:-} ]]; then
+    export SELECTOR_MUTATION_LOCK_HELD=1
+    # `|| rc=$?` rather than a bare call: `set -e` is on, so a non-zero flock
+    # would end the script on that line and the branch below would never run.
+    rc=0
+    flock -n -E 99 "${BASH_SOURCE[0]}" "${BASH_SOURCE[0]}" "$@" || rc=$?
+    if ((rc == 99)); then
+        printf 'mutation-check.sh: another run is already mutating %s - refusing,\n' \
+            "${selector_dir}" >&2
+        printf '  because two runs restore each other'"'"'s backups and lose whatever\n' >&2
+        printf '  uncommitted work the older one had not seen.\n' >&2
+        exit 1
+    fi
+    exit "${rc}"
+fi
 python_cmd="${1:-${selector_dir}/.venv/bin/python}"
 mutations="${selector_dir}/tests/selector-mutations.py"
 

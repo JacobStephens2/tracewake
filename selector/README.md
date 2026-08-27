@@ -3,11 +3,10 @@
 The Selector (issue #151's spec; vocabulary in `../CONTEXT.md`) drains
 tourbot's `ready-for-agent` queue unattended. This directory is its home.
 
-What exists so far is **a cycle that picks and dispatches** - the reasoning
-(issue #153) and the dispatch that acts on it (issue #154) - on top of the
-**Selector Journal** (ADR 0015, issue #152). What is not built yet is the
-outcome bookkeeping that moves an issue's label once a Run has ended (#155),
-the timer that runs cycles unattended (#156) and the Iteration watcher (#157).
+What exists is **a cycle that picks, dispatches and does the bookkeeping**
+(issues #153, #154, #155) on top of the **Selector Journal** (ADR 0015, issue
+#152), **run unattended by a timer** (#156). What is not built yet is the
+Iteration watcher (#157).
 
 ## The cycle
 
@@ -36,7 +35,7 @@ holds, and the reason is the string journaled with it:
 | `has-open-sub-issues` | a parent spec is not a unit of work |
 | `proposal-open` | an open pull request closes it: the issue is in flight |
 | `attempts-exhausted` | already dispatched `MAX_ATTEMPTS` times (one automatic retry) |
-| `missing-section` | the label promises `Acceptance criteria` and `Owning area` sections and one is absent or empty |
+| `missing-section` | the label promises an `Acceptance criteria` section and it is absent or empty |
 
 The order is not arbitrary: `missing-section` is the loud skip - see below -
 so the cheap, quiet reasons are tested first. An issue that is blocked anyway
@@ -71,6 +70,8 @@ the Journal answers "what would it have picked?" as well as "what did it?".
 | `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
 | `SELECTOR_CHECKS_TIMEOUT_SECONDS` | `900` | how long a Proposal's checks may stay pending |
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
+| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
+| `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
 
 Two timeouts because the two waits are nothing like each other: everything
 except the Run should answer in seconds, and giving a comment or a fetch the
@@ -79,7 +80,9 @@ Run's budget would let one wedged call hold a cycle open for two hours.
 `box-sources/ssh.sh` reads four more: `SELECTOR_BOX_HOST`
 (`root@loop.etadventures.com`), `SELECTOR_BOX_USER` (`loop`),
 `SELECTOR_BOX_REPO` (`/home/loop/tourbot`) and `SELECTOR_BOX_LOOP`
-(`/home/loop/loop`).
+(`/home/loop/loop`). `box-sources/facts.sh` shares the first, second and
+fourth of those, and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it
+asks for the guest template.
 
 Widening the allowlist is one entry here plus a note in ADR 0014, which is
 what story 35 asks for.
@@ -141,10 +144,125 @@ shared with the operators who work in it from their own code-server, and a
 dispatch that switched its branch out from under one of them would be the
 Selector reaching into somebody else's working tree.
 
+## Unattended
+
+A cycle is one command, and nothing about it needed a human to begin with -
+so what makes the Selector unattended is a timer, a lock, and enough on the
+page to tell a Selector that is quiet from one that is dead (#156).
+
+**The timer.** `scripts/selector-cycle.timer` fires
+`scripts/selector-cycle.service` every thirty minutes, around the clock. Both
+are installed and enabled by `ansible/roles/timers` - the role copies every
+`scripts/*.service` and `scripts/*.timer` wholesale and enables the units
+named in `orchestration_timers`, and a unit installed and *not* on that list
+is silently inert. The venv the unit execs is built by
+`ansible/roles/selector_cycle`, and the fcontext that makes it executable by
+systemd is declared in `ansible/roles/selinux_labels`; without it the unit
+dies 203/EXEC with no traceback.
+
+`OnFailure=notify-unit-failure@%n.service` is in the unit's **`[Unit]`**
+section, which is the only section systemd reads it in - in `[Service]` it is
+silently ignored, and a sibling unit on this box shipped that way with its
+alert dead from the day it was added. It is story 31's requirement, so it is
+worth proving rather than reading:
+
+```bash
+systemctl show selector-cycle.service -p OnFailure --value
+# notify-unit-failure@selector-cycle.service.service   <- registered
+#                                                      <- empty means it is NOT
+```
+
+`Persistent=false` is the setting that spends money if it is wrong. `true`
+would fire a catch-up cycle the moment a box came back from six hours down,
+and a catch-up cycle is a real Run against a real repository. Nothing is lost:
+the queue is still there in thirty minutes, and the cap is a rolling window
+rather than a quota to use up.
+
+**One cycle at a time.** Every cycle takes a Postgres advisory lock on its
+Journal connection and a second one stands down - journaling
+`cycle.skipped` with reason `cycle-in-progress`, and exiting **0**. Exit 0
+matters: with a thirty-minute timer and a ninety-minute Run this happens two
+or three times per Run, and a timer whose `OnFailure` paged for it would page
+for the Selector working.
+
+A lock the database owns rather than a lock file, because a lock file left
+behind by a killed cycle wedges the timer until somebody notices and deletes
+it, where a connection that dies releases its lock. It is a different thing
+from the in-flight lock in the caps: that one is journaled and is about *Runs*,
+this one is about *processes*, and it stops a second cycle before it has read
+anything at all.
+
+**The daily cap holds across cycles** because it was always read from the
+Journal rather than from memory - which is what makes it survive a process
+that runs for ninety seconds every half hour and remembers nothing. The fifth
+dispatch of a rolling day is refused before the box is reached, and the
+refusal is journaled: `cycle.finished` with `halted: daily-cap-reached` and
+the budget it counted.
+
+**The box card.** Once per cycle - not in a dry run, which still reaches the
+tracker and nothing else - `box-sources/facts.sh` reads three facts off the
+box over SSH and they are journaled as `box.observed`:
+
+| fact | why it is on the card |
+| --- | --- |
+| loop scripts hash | the box's copy of the Loop is placed by an ansible apply, not by a merge, so it drifts from the reviewed copy in this repository silently and nothing else would say so (story 34) |
+| guest template | the `sbx` template every Iteration's microVM is built from - the Execution Boundary's identity (ADR 0003), and a thing story 33 may change |
+| agent version | the Termination Contract's five numbers are calibrated against a Run, and a Run by another agent version is a Run against another calibration |
+
+The template is *asked of* the agent adapter (`agents/claude.sh
+--guest-template`) rather than read out of it, so the answer comes from the
+file that makes the choice. A fact the box does not report is left blank on
+the card rather than filled in from the controller's copy: the box's Loop can
+be older than this repository's, and a page that guessed would be asserting
+something nothing observed.
+
+A box that cannot be read is journaled `box.unreachable` and **does not fail
+the cycle**. The dispatch behind it fails on its own and pages on its own, and
+paging twice for one outage is how an alert stops being read.
+
+**The status strip** is the `/loop` half of all of this: what the Selector is
+doing, when the timer fires next, `Runs today N of 4`, and the box card. The
+budget is read through `cycle.spend` - the same function the cap is enforced
+with - because two readings of "Runs today" that could disagree would be a
+strip that reassures about a cap it is not the one reading. The next-cycle
+cell reads `systemctl show` on the timer and says so loudly when the timer is
+not active, which is the failure it exists for: a timer installed and never
+enabled is a dead Selector that looks like a quiet queue.
+
+## The issue contract
+
+`ready-for-agent` promises **one** section, and everything else a Run needs
+either has a default or is optional:
+
+| section | required | what it is |
+| --- | --- | --- |
+| `## Acceptance criteria` | yes | one list item per criterion, carried into the Plan verbatim. The Run's only definition of done, and what `seed-run.sh` already refuses without |
+| `## Owning area` | no | one phrase naming the part of the issue a single Run is scoped to. Without it the Run is scoped to **the issue's title** |
+| `## Check` | no | a command that grades the work, run by the Run as it goes |
+
+`Owning area` was required until 2026-08-27, as spec #151's Issue contract and
+story 10 wrote it. It is a defensible requirement - `--area` is the Loop's
+scope fence, written into the Plan as the line everything else in the issue is
+outside of, and deciding how much of a large issue one Run is for is a
+judgement an Iteration should not be making. It was dropped anyway, and the
+reason is what the Selector is for: it made the Handover two steps instead of
+one, and the operator's whole ask was that applying the label be the last
+human action.
+
+The measurement settled it. On the day the requirement went in, **every**
+labeled issue in the queue lacked the section, so its practical effect was to
+hand the queue back rather than to work it.
+
+What replaces it is a default rather than a guess. An issue with no
+`## Owning area` is scoped to its own title, which is the honest reading of
+"work this issue"; an issue that really is bigger than one Run still says so
+by carrying the section, and the fence still holds for it. This is a
+deliberate amendment to #151 rather than a reinterpretation of it.
+
 ## The loud skip
 
 An issue that passes every other Eligibility clause and is missing
-`Acceptance criteria` or `Owning area` is not quietly passed over: the
+`Acceptance criteria` is not quietly passed over: the
 Selector comments on it naming the gap and the way back, swaps
 `ready-for-agent` for `needs-info`, and journals `issue.returned`. The comment
 goes first - a swap that landed with no comment would take the issue out of
@@ -156,15 +274,22 @@ seed should not wait for a free budget to be told so. A hand-back GitHub
 refused is journaled as `issue.return-failed` and exits the cycle non-zero, so
 the timer's `OnFailure` pages (story 31).
 
+What was verified on the real box - the failure hookup under `systemctl
+show`, the unit's exec path end to end, what `facts.sh` actually answers, and
+the drift the scripts hash exposed on its first read - is in
+`../notes/selector-unattended-evidence.md`.
+
 Dispatch against the real box - the SSH hop's two-shell quoting, the whole
 chain end to end, and the one acceptance criterion that needs the operator -
 is written up in `../notes/selector-dispatch-evidence.md`.
 
 The first live dry-run is written up in
 `../notes/selector-first-dry-run-evidence.md`, including what it found: no
-tourbot issue carried the `Owning area` section the label started promising on
+tourbot issue carried the `Owning area` section the label promised on
 2026-08-26, so on that day every otherwise-ready issue in the queue was one
-the loud skip above would hand straight back.
+the loud skip above would have handed straight back. **That requirement was
+dropped on 2026-08-27** - see "The issue contract" below - so the note records
+a rule the Selector no longer applies.
 
 ## The outcome
 
@@ -251,6 +376,11 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   operator. This is the half of the work
   the box deliberately cannot do - its token holds no Issues permission at
   all - so every write to the tracker happens here.
+- `box-sources/facts.sh` - the default `SELECTOR_BOX_FACTS_COMMAND`: one SSH
+  hop that reads what the box is holding - the Loop scripts' hash, the guest
+  template its adapter would build, the installed agent version - and prints
+  them as `LOOP_BOX_*=value` lines. Read-only, holds no credential, starts
+  nothing.
 - `box-sources/ssh.sh` - the default `SELECTOR_BOX_COMMAND`: one SSH hop that
   puts the box's checkout on the Run's branch and runs `run.sh --propose
   --notify`, printing what the Run reported. It holds no credential of its
@@ -274,6 +404,11 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   commands it issued and the rows it wrote - plus a tripwire PATH (`gh`,
   `git`, `ssh`, `seed-run.sh` shimmed to log and fail) that makes "a dry run
   touches nothing but the Journal" a checked property of every scenario.
+  `test_unattended.py` is #156's three properties at the same boundary: a
+  second cycle standing down while one is in flight (driven by running a real
+  nested `cycle.py` from inside the fake box, which is the only moment two can
+  meet), the fifth dispatch of a day refused from Journal history alone, and
+  the box's facts read and journaled.
   `test_dispatch.py` runs the same real `cycle.py` with the dispatch commands
   scripted and **git real**, against a bare repository in a tmpdir: the
   branch, the push and the retry case are asserted against what actually
@@ -286,7 +421,11 @@ here and renders at request time (SSE via LISTEN/NOTIFY is issue #159).
 
 ## Host setup
 
-`ansible/roles/selector_journal` (in `site.yml`) owns it: PostgreSQL 16,
+Three roles in `site.yml`, in this order: `selector_journal` (the Postgres
+below), `selector_cycle` (the venv the timer's unit execs, correctly
+labelled), and `timers` (which installs and enables the timer itself).
+
+`ansible/roles/selector_journal` owns the Journal: PostgreSQL 16,
 socket-only (`listen_addresses = ''`), a peer-auth `conductor` role with
 CREATEDB, the `selector` database, schema applied. A rebuilt VM gets all of
 it back from the playbook.

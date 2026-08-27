@@ -54,3 +54,17 @@ This is the design working rather than failing - the loud skip exists so an
 underspecified issue is returned to the operator instead of guessed at. It is
 recorded here because the first dry-run being "nothing eligible" would
 otherwise read as a broken Selector.
+
+## Superseded, 2026-08-27
+
+The operator work this note asks for was never done, and on 2026-08-27 the
+requirement was dropped instead: `Owning area` is optional, and an issue
+without it is scoped to its own title. See the Selector README's "The issue
+contract" and the amendment note in ADR 0014.
+
+The finding above is what made the case. Ten of ten otherwise-ready issues
+missing the same section is not a queue with gaps in it - it is a contract
+nobody was writing to, and a Selector whose first unattended cycle would have
+handed the entire queue back. The half of this note that still holds is the
+`Acceptance criteria` half: that section is still required, is still what
+`seed-run.sh` refuses without, and six of the ten still lacked it.
