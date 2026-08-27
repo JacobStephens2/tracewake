@@ -80,6 +80,24 @@ not being journaled as this attempt's, and a Progress Log that cannot be read
 neither failing the dispatch nor being reported more than once.
 
 Six mutations were added to `tests/selector-mutations.py`, one per guard.
+The first full run caught 50 of 53 and reported three survivors, all of them
+new - which is the check doing its job rather than a clean bill of health:
+
+- `iterations-render-newest-first` had lost the leading indentation in its
+  replacement text, so the mutated `app.py` would not import and the suite
+  failed at collection. Zero `FAILED` lines is reported as a survivor, which is
+  the runner being honest about a mutation that never ran.
+- `half-written-records-are-journaled` broke the completeness check inside
+  `close()`, and nothing exercised it: the half-written case the suite already
+  had never reaches `close()`, because the parser deliberately does not close
+  at end of text. The case that check is really for - a heading whose fields
+  never arrived, closed when the next heading starts - had no test.
+- `the-final-read-is-skipped` broke the read on the way out, and the suite
+  stayed green because its snapshots sat still long enough for an ordinary read
+  to catch them anyway. The test now puts the interval past the length of the
+  Run and holds the box back until after the first read.
+
+All 53 are caught with those three fixed.
 
 ## What the review added
 
