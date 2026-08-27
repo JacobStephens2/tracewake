@@ -19,6 +19,13 @@ set -euo pipefail
 WORKTREE="${LAB_PREVIEW_WORKTREE:-/srv/lab-webapp-staging}"
 LEASE="${LAB_PREVIEW_LEASE:-/var/lib/lab-preview/lease.json}"
 RESTART="${LAB_PREVIEW_RESTART_COMMAND:-sudo systemctl restart lab-webapp-staging}"
+# Run after every checkout, not once at provision time. git restores tracked
+# files at the parent directory's default label, and /srv is var_t - so each
+# preview hands back the faked tracker and box scripts, the edges that keep a
+# cycle inside this VM, at the one label systemd refuses to exec (203/EXEC,
+# and no traceback). The role's restorecon fixes the tree once; the first
+# preview undoes it.
+RELABEL="${LAB_PREVIEW_RELABEL_COMMAND:-sudo restorecon -R}"
 URL="${LAB_PREVIEW_URL:-https://lab-staging.etadventures.com}"
 # Matches RuntimeMaxSec on the unit: past this the preview is not running, so
 # its lease is not held by anything.
@@ -34,12 +41,14 @@ STATUS_COMMAND="${LAB_PREVIEW_STATUS_COMMAND:-systemctl is-active --quiet lab-we
 # holding one", after it the question is "is mine up", and a test that fakes
 # one has to be able to leave the other alone.
 READY_COMMAND="${LAB_PREVIEW_READY_COMMAND:-systemctl is-active --quiet lab-webapp-staging}"
-# How long to let it settle before asking. The unit is Type=simple, so systemd
-# reports the start job done at exec and a process that dies a moment later -
-# 203/EXEC on a mislabelled venv, an import error in the branch being
-# previewed - is still "active" for that moment. Waiting is the only way to
-# tell the two apart.
-READY_SETTLE="${LAB_PREVIEW_READY_SETTLE_SECONDS:-3}"
+# How long the unit has to stay up before this says it started. The unit is
+# Type=simple, so systemd reports the start job done at exec and a process
+# that dies a moment later - 203/EXEC on a mislabelled venv, an import error
+# in the branch being previewed - is still "active" for that moment. Watching
+# is the only way to tell the two apart, and watching is what happens here:
+# the check runs across the whole window rather than once at the end of it, so
+# a death anywhere inside it is caught rather than only a death before it.
+READY_SETTLE="${LAB_PREVIEW_READY_SETTLE_SECONDS:-5}"
 OPERATOR="${LAB_PREVIEW_OPERATOR:-${SUDO_USER:-$(id -un)}}"
 
 usage() {
@@ -170,6 +179,16 @@ if ! git -C "$WORKTREE" checkout -q -f --detach "$sha"; then
     exit 5
 fi
 
+# Before the restart: a unit started over a var_t venv dies 203/EXEC, and
+# relabelling afterwards would be fixing the tree for a preview that has
+# already failed.
+read -ra relabel_argv <<< "$RELABEL"
+if ! "${relabel_argv[@]}" "$WORKTREE" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    echo "could not relabel $WORKTREE; the running preview is untouched" >&2
+    exit 7
+fi
+
 # One rename: atomic, so the banner never reads a half-written lease, and the
 # only step left after it is the restart - whose failure leaves the tree and
 # the lease agreeing about a preview that is simply not up.
@@ -182,9 +201,19 @@ read -ra restart_argv <<< "$RESTART"
 # one until the unit has survived the settle. The lease and the tree still
 # agree at this point - they name a preview that is not running, which is the
 # honest description and the one the next run's lease check reads correctly.
-sleep "$READY_SETTLE"
 read -ra ready_argv <<< "$READY_COMMAND"
-if ! "${ready_argv[@]}" >/dev/null 2>&1; then
+ready=1
+# Deliberately not an early return on the first success: the question is
+# whether it STAYED up, so every sample across the window has to hold.
+for (( elapsed = 0; elapsed <= READY_SETTLE; elapsed++ )); do
+    if ! "${ready_argv[@]}" >/dev/null 2>&1; then
+        ready=0
+        break
+    fi
+    (( elapsed < READY_SETTLE )) && sleep 1
+done
+
+if (( ready == 0 )); then
     cat >&2 <<EOF
 the unit did not stay up after checking out ${sha:0:7} on $branch.
 

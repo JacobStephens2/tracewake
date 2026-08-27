@@ -66,12 +66,19 @@ class PreviewTestCase(unittest.TestCase):
         fake.chmod(0o755)
         self.fake_restart = fake
 
+        self.relabels = root / "relabels"
+        relabel = root / "fake-relabel.sh"
+        relabel.write_text(f'#!/bin/bash\necho "$@" >> "{self.relabels}"\n')
+        relabel.chmod(0o755)
+        self.fake_relabel = relabel
+
     def run_script(self, *args, env=None):
         environ = {
             **os.environ,
             "LAB_PREVIEW_WORKTREE": str(self.worktree),
             "LAB_PREVIEW_LEASE": str(self.lease),
             "LAB_PREVIEW_RESTART_COMMAND": str(self.fake_restart),
+            "LAB_PREVIEW_RELABEL_COMMAND": str(self.fake_relabel),
             "LAB_PREVIEW_URL": "https://lab-staging.example.invalid",
             "LAB_PREVIEW_MAX_AGE_SECONDS": str(MAX_AGE),
             "LAB_PREVIEW_OPERATOR": "jstephens",
@@ -281,29 +288,81 @@ class TestItSaysStartedOnlyWhenItStarted(PreviewTestCase):
     supposed to make impossible - saying what is running when it is not.
     """
 
-    def test_a_unit_that_does_not_come_up_is_not_reported_as_started(self):
-        result = self.run_script(
+    def run_start_that_never_comes_up(self):
+        return self.run_script(
             "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "/bin/false"}
         )
+
+    def test_a_unit_that_does_not_come_up_is_not_reported_as_started(self):
+        result = self.run_start_that_never_comes_up()
         self.assertNotEqual(0, result.returncode)
         self.assertNotIn("Attended Preview started", result.stdout)
         self.assertTrue(self.restarted())
 
     def test_it_says_where_to_look_when_the_unit_did_not_come_up(self):
-        result = self.run_script(
-            "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "/bin/false"}
-        )
+        result = self.run_start_that_never_comes_up()
         self.assertIn("journalctl", result.stderr)
         self.assertIn("lab-webapp-staging", result.stderr)
+
+    def test_a_unit_that_dies_during_the_window_is_caught(self):
+        """The property is that it STAYED up, not that it was up once. A
+        readiness probe asked a single time cannot tell a live preview from
+        one whose import error takes a second to raise."""
+        counter = Path(self.tmp.name) / "probes"
+        flaky = Path(self.tmp.name) / "up-then-down.sh"
+        flaky.write_text(
+            f'#!/bin/bash\necho . >> "{counter}"\n'
+            f'[[ $(wc -c < "{counter}") -le 2 ]]\n'
+        )
+        flaky.chmod(0o755)
+
+        result = self.run_script("feat/queue-board", env={
+            "LAB_PREVIEW_READY_COMMAND": str(flaky),
+            "LAB_PREVIEW_READY_SETTLE_SECONDS": "2",
+        })
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("Attended Preview started", result.stdout)
 
     def test_the_lease_still_names_what_was_checked_out(self):
         """A failed start is not a half-taken preview: the tree and the lease
         agree, they just describe something that is not running."""
-        self.run_script(
-            "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "/bin/false"}
-        )
+        self.run_start_that_never_comes_up()
         self.assertEqual(self.branch_sha, self.checked_out())
         self.assertEqual(self.branch_sha, json.loads(self.lease.read_text())["sha"])
+
+
+class TestTheCheckoutIsRelabelled(PreviewTestCase):
+    """git restores tracked files at the parent directory's default label.
+
+    /srv is var_t, so every checkout hands the preview's own faked tracker and
+    box scripts - the ones that keep a cycle inside this VM - back at var_t,
+    undoing the relabel the role did once at provision time. Confirmed on the
+    box: five preview-sources/*.sh were var_t immediately after the first
+    preview started, with mtimes equal to the lease's started_at.
+    """
+
+    def test_it_relabels_the_tree_it_just_checked_out(self):
+        result = self.run_script("feat/queue-board")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(str(self.worktree), self.relabels.read_text())
+
+    def test_it_relabels_before_the_restart_not_after(self):
+        """A unit started over var_t dies 203/EXEC, so relabelling after the
+        restart fixes the tree for a preview that is already broken."""
+        order = Path(self.tmp.name) / "order"
+        steps = {}
+        for name in ("relabel", "restart"):
+            fake = Path(self.tmp.name) / f"ordered-{name}.sh"
+            fake.write_text(f'#!/bin/bash\necho {name} >> "{order}"\n')
+            fake.chmod(0o755)
+            steps[name] = str(fake)
+
+        result = self.run_script("feat/queue-board", env={
+            "LAB_PREVIEW_RELABEL_COMMAND": steps["relabel"],
+            "LAB_PREVIEW_RESTART_COMMAND": steps["restart"],
+        })
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(["relabel", "restart"], order.read_text().split())
 
 
 if __name__ == "__main__":
