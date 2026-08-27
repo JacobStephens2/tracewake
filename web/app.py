@@ -177,6 +177,34 @@ def _utc(at) -> str:
     return at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
 
 
+def _duration(start, end) -> str | None:
+    """How long a Run took, from the two Journal rows that bracket it.
+
+    Computed here rather than reported by the box, because the box reports
+    nothing after a Run ends - it persists no record of one at all. The
+    dispatch row and the outcome row are the only two timestamps that exist,
+    and their gap is the wall-clock the operator actually waited.
+
+    Two units at most: "1h 40m" answers "was that a long Run?" and "1h 40m
+    12s" does not answer it any better.
+    """
+    if start is None or end is None:
+        return None
+    seconds = int((end - start).total_seconds())
+    if seconds < 0:
+        # Rows are ordered by id, not by `at`, and a fixture (or a clock step)
+        # can put an outcome before its dispatch. Say nothing rather than
+        # render a negative duration as if it were a fact about the Run.
+        return None
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
 def _cycles(events: list[dict]) -> list[dict]:
     """Group Journal rows into one card per Selector cycle, newest first.
 
@@ -308,6 +336,7 @@ def _runs(events: list[dict]) -> list[dict]:
                 dispatched=True,
                 id=event["id"],
                 at=_utc(event["at"]),
+                started_at=event["at"],
                 **{k: payload.get(k) for k in
                    ("issue", "title", "url", "branch", "task_ref", "area",
                     "check", "attempt", "cycle")},
@@ -316,6 +345,7 @@ def _runs(events: list[dict]) -> list[dict]:
             card.update(
                 in_flight=False,
                 ended_at=_utc(event["at"]),
+                finished_at=event["at"],
                 **{k: payload.get(k) for k in
                    ("outcome", "exit", "iterations", "faults", "proposal",
                     "notified", "error")},
@@ -335,6 +365,9 @@ def _runs(events: list[dict]) -> list[dict]:
         card["iteration_records"] = sorted(
             card.get("iteration_records", []),
             key=lambda record: record.get("iteration") or 0,
+        )
+        card["duration"] = _duration(
+            card.get("started_at"), card.get("finished_at")
         )
     return sorted(whole, key=lambda c: c["id"], reverse=True)
 
@@ -443,6 +476,39 @@ def _selector_state(runs: list[dict], budget: dict, timer: dict) -> str:
     return "idle"
 
 
+def _read_journal() -> tuple[list[dict], object, str | None]:
+    """One read of the Journal: its recent rows and what has been spent.
+
+    Both pages start here, so "the Journal is down" is one sentence written
+    once. `spend` comes back as the Selector's own object rather than a count
+    taken here - two readings of "Runs today" that could disagree would be a
+    budget that reassures about a cap it is not the one enforcing.
+    """
+    try:
+        with journal.connect() as conn:
+            return journal.events(conn), cycle.spend(conn), None
+    except psycopg.Error as exc:
+        return [], None, f"journal unavailable: {exc}"
+
+
+def _budget(config, spend) -> dict:
+    """Today's cap, and what is left of it.
+
+    `remaining` rather than only `spent` because that is the operator's
+    question - "can the Selector still start one?" - and a tile that leaves
+    him to subtract is a tile that gets read wrong the day the cap changes.
+    None on an unreadable Journal, all the way through: an unknown budget
+    rendered as a full one would be the page inventing headroom.
+    """
+    spent = None if spend is None else spend.recent_dispatches
+    return {
+        "spent": spent,
+        "cap": config.daily_cap,
+        "window": cycle.CAP_WINDOW_HOURS,
+        "remaining": None if spent is None else max(0, config.daily_cap - spent),
+    }
+
+
 def _loop_context(request: Request) -> dict:
     """Everything the live region renders, read now.
 
@@ -453,19 +519,8 @@ def _loop_context(request: Request) -> dict:
     that a static one cannot.
     """
     config = cycle.Config.from_env()
-    events, error, spend = [], None, None
-    budget = {"spent": None, "cap": config.daily_cap,
-              "window": cycle.CAP_WINDOW_HOURS}
-    try:
-        with journal.connect() as conn:
-            events = journal.events(conn)
-            # Read through the Selector's own function rather than counted
-            # here: two readings of "Runs today" that could disagree would be
-            # a strip that reassures about a cap it is not the one enforcing.
-            spend = cycle.spend(conn)
-            budget["spent"] = spend.recent_dispatches
-    except psycopg.Error as exc:
-        error = f"journal unavailable: {exc}"
+    events, spend, error = _read_journal()
+    budget = _budget(config, spend)
     view = [
         {
             "id": e["id"],
@@ -502,6 +557,33 @@ def _loop_context(request: Request) -> dict:
         # next one gets wired into the wrong half.
         "live_url": _path(request, "/loop/live"),
         "events_url": _path(request, "/loop/events"),
+        "history_url": _path(request, "/loop/history"),
+    }
+
+
+def _history_context(request: Request) -> dict:
+    """The Run history and the budget: the Journal, and nothing else (#160).
+
+    Deliberately not `_loop_context` minus a few keys. The point of this page
+    is what it does NOT read: /loop's board reaches the tracker at request
+    time, so /loop is only as available as GitHub, and the record of what the
+    Selector has already done should not be. Every Run below is rows the
+    Selector wrote - which is also what makes a Run outlive the branch it
+    worked on, since a merged-and-deleted branch takes the forge's copy of the
+    work with it and leaves the Journal's untouched.
+    """
+    config = cycle.Config.from_env()
+    events, spend, error = _read_journal()
+    return {
+        # History is what has ended. A Run still going has no bound, no
+        # duration and no Proposal; /loop shows it live on the panel built
+        # for it, and a card here would be three empty cells.
+        "runs": [run for run in _runs(events) if not run.get("in_flight")],
+        "budget": _budget(config, spend),
+        "error": error,
+        "live_url": _path(request, "/loop/history/live"),
+        "events_url": _path(request, "/loop/events"),
+        "loop_url": _path(request, "/loop"),
     }
 
 
@@ -528,6 +610,24 @@ def loop_live(request: Request):
     delay is for.
     """
     return _page(request, "_loop_live.html", _loop_context(request))
+
+
+@app.get("/loop/history", response_class=HTMLResponse)
+def history_page(request: Request):
+    """Every Run that has ended, and what is left of today's budget (#160)."""
+    return _page(request, "history.html", _history_context(request))
+
+
+@app.get("/loop/history/live", response_class=HTMLResponse)
+def history_live(request: Request):
+    """The history's live region on its own, for the swap.
+
+    Its own route rather than /loop/live: the two pages show different
+    regions, and a history page that re-fetched /loop's would swap a queue
+    board it never rendered into the middle of itself - and reach the tracker
+    to build it, which is the one thing this page does not do.
+    """
+    return _page(request, "_history_live.html", _history_context(request))
 
 
 # --- The push ---------------------------------------------------------------

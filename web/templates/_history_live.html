@@ -1,0 +1,30 @@
+{# The history's live region (#160): the budget, and every Run that has ended.
+
+   Everything here comes from the Journal, so unlike /loop's region there is
+   nothing on it that a tracker outage can empty. Same swap mechanism as
+   /loop - the trigger sits on the element being replaced - but pointed at
+   /loop/history/live, because re-fetching /loop's region would swap a queue
+   board this page never rendered into the middle of itself. #}
+<div id="loop-live"
+     hx-get="{{ live_url }}"
+     hx-trigger="journal from:body delay:400ms"
+     hx-swap="outerHTML">
+    {% if error %}
+    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
+    {% endif %}
+
+    <section class="strip">
+{% include "_budget.html" %}
+    </section>
+
+    <h2>Runs that have ended</h2>
+    <p>One card per Run, newest first: the bound it ended on, how long it
+       took, and the Proposal it left behind. Read from the Journal alone, so
+       a Run stays here after its branch is merged and deleted - and stays
+       here when the tracker cannot be reached at all.</p>
+    {% if runs %}
+{% include "_runs.html" %}
+    {% elif not error %}
+    <p>No Run has ended yet. The history fills as the Selector dispatches.</p>
+    {% endif %}
+</div>

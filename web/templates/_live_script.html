@@ -1,0 +1,33 @@
+<script>
+// The push (#159). The Journal's NOTIFY reaches an open page here: the
+// stream carries a signal, not content, and the content comes from HTMX
+// re-fetching the live region. That split is deliberate - the fragment is
+// rendered by the same handler that rendered the page, so there is one
+// definition of what a page looks like rather than one per transport.
+//
+// Shared by every live page in the terminal shell (/loop, /loop/history):
+// each renders its own region and its own `live_url`, and they all listen to
+// the same stream, because a Journal row is a Journal row whichever page is
+// open in front of it.
+(function () {
+  var live = document.getElementById("live");
+  function state(on) { live.setAttribute("data-live", on ? "on" : "off"); }
+  if (!window.EventSource) { return; }
+  var source = new EventSource("{{ events_url }}");
+  // `ready` means the server's LISTEN is up, so from here the page is
+  // covered. `open` alone would only mean the socket connected.
+  source.addEventListener("ready", function () { state(true); });
+  // One listener for two things that mean the same: EventSource dispatches
+  // its own connection failures as `error`, and the server sends an `error`
+  // frame when the Journal is unreachable. Either way the page is no longer
+  // live. EventSource reconnects on its own and carries Last-Event-ID when
+  // it does, so recovery needs nothing here but the indicator coming back.
+  source.addEventListener("error", function () { state(false); });
+  source.addEventListener("journal", function () {
+    // Dispatched on the body because that is what the live region's
+    // hx-trigger listens to, and the region is replaced on every swap - a
+    // listener bound to the region itself would go with it.
+    document.body.dispatchEvent(new Event("journal"));
+  });
+})();
+</script>

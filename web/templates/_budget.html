@@ -1,0 +1,22 @@
+{# The daily-cap budget (#160), one cell, shared by /loop's status strip and
+   the history page.
+
+   It leads with what is left rather than with what is spent. "2 of 4" is the
+   same arithmetic, but the operator's question is "can the Selector still
+   start one today?", and a tile that leaves him to subtract is one that gets
+   read wrong the day the cap changes. The spend is kept underneath because it
+   is what the Journal actually holds.
+
+   `remaining` is None, not 0, when the Journal could not be read: an unknown
+   budget rendered as a full one would be the page inventing headroom. #}
+      <div class="cell cell-budget">
+        <span class="cell-label">runs remaining today</span>
+        {% if budget.remaining is none %}
+        <span class="cell-value">unknown</span>
+        <span class="detail">the Journal could not be read.</span>
+        {% else %}
+        <span class="cell-value">{{ budget.remaining }} remaining</span>
+        <span class="detail">{{ budget.spent }} of {{ budget.cap }}
+          dispatches in the last {{ budget.window }}h</span>
+        {% endif %}
+      </div>

@@ -6,6 +6,7 @@ nothing about a branch that changed how Run cards look. This fixture is what
 makes every state visible - which makes these tests the ones that fail when a
 branch breaks a state, and when the fixture stops covering one.
 """
+import re
 from pathlib import Path
 
 import psycopg
@@ -58,6 +59,33 @@ def test_the_fixture_renders_every_state_the_page_has(seeded):
     assert "unavailable" not in body.lower()
     for state in STATES:
         assert state in body, f"the fixture no longer shows: {state}"
+
+
+# The Run states the history page shows (#160). A subset of STATES rather than
+# all of it: the history is the ended Runs, so "in flight" is deliberately
+# absent, and the cycle cards it does not render take their states with them.
+HISTORY_STATES = [
+    "awaiting-review",
+    "ready-for-human",
+    "retrying",
+    "no Run was started",
+    "did not finish",
+]
+
+
+def test_the_fixture_renders_every_state_the_history_has(seeded):
+    body = client.get("/loop/history").text
+    assert "unavailable" not in body.lower()
+    for state in HISTORY_STATES:
+        assert state in body, f"the fixture no longer shows: {state}"
+    # The two facts the history adds to a card, so a preview of a branch that
+    # broke either one shows it: how long the Run took, and the Proposal that
+    # outlives its branch.
+    assert re.search(r"after \d+[hms]", body), "no Run duration on the history"
+    assert "/pull/701" in body
+    # And not the Run still going, which belongs on /loop. The badge rather
+    # than the words: the page's own prose says where the in-flight Run is.
+    assert '<span class="badge">in flight</span>' not in body
 
 
 def test_both_ends_of_the_retry_are_visible(seeded):

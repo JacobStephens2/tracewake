@@ -1,76 +1,21 @@
-<!doctype html>
-{# Standalone on purpose: /loop wears the factory's terminal.css identity, not
-   the lab chrome in base.html. When a second terminal page arrives (queue
-   board, current-Run panel), extract the shared shell into a terminal base.
+{# /loop: the Selector Journal and the queue, live.
 
    Everything a Journal row can change lives in _loop_live.html, which this
    page renders inline and then re-fetches whole whenever a row lands (#159).
-   What is left here is the shell: the parts that do not change while the page
-   is open, and the script that opens the stream. #}
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Loop // lab.etadventures.com</title>
-<link rel="stylesheet" href="{{ static_base }}/terminal.css">
-<link rel="stylesheet" href="{{ static_base }}/loop.css">
-{# HTMX does the swapping. Loaded here rather than inherited, because this
-   page does not extend base.html - which is where every other page gets it.
-   Not deferred: the live region below is processed on DOMContentLoaded and a
-   deferred htmx would still be in time, but the stream is opened at the foot
-   of the body and there is no reason to race it. #}
-<script src="{{ static_base }}/htmx.min.js"></script>
-</head>
-<body class="terminal">
-{% include "_preview_banner.html" %}
-<div class="container">
-  <header>
-    <div class="logo">THE LOOP // SELECTOR JOURNAL</div>
-    <nav aria-label="Lab"><a href="/">lab</a></nav>
-  </header>
-  <main>
+   What is left here is the shell's own content: the heading, and the link to
+   the history. #}
+{% extends "terminal_base.html" %}
+{% block title %}The Loop{% endblock %}
+{% block logo %}THE LOOP // SELECTOR JOURNAL{% endblock %}
+{% block nav %}<a href="/">lab</a> <a href="{{ history_url }}">history</a>{% endblock %}
+{% block main %}
     <h1>Selector Journal
-      {#- Whether this page is actually live. It starts as "not live" and the
-          stream turns it on: a page whose EventSource never connected, or
-          silently died, is otherwise indistinguishable from a Selector with
-          nothing to say - and the second is what an operator would assume. -#}
-      <span id="live" class="live" data-live="off">
-        <span class="live-on">live</span>
-        <span class="live-off">not live &middot; reload to update</span>
-      </span></h1>
+      {%- include "_live_indicator.html" -%}
+    </h1>
     <p>Every Selector decision and Run outcome, appended and never edited
        (ADR 0015). Newest first, read when this page was rendered and
-       re-rendered the moment a row lands.</p>
+       re-rendered the moment a row lands. The Runs that have already ended
+       are on the <a href="{{ history_url }}">history</a>, which needs no
+       tracker to render.</p>
 {% include "_loop_live.html" %}
-  </main>
-</div>
-<script>
-// The push (#159). The Journal's NOTIFY reaches an open page here: the
-// stream carries a signal, not content, and the content comes from HTMX
-// re-fetching the live region. That split is deliberate - the fragment is
-// rendered by the same handler that rendered the page, so there is one
-// definition of what /loop looks like rather than one per transport.
-(function () {
-  var live = document.getElementById("live");
-  function state(on) { live.setAttribute("data-live", on ? "on" : "off"); }
-  if (!window.EventSource) { return; }
-  var source = new EventSource("{{ events_url }}");
-  // `ready` means the server's LISTEN is up, so from here the page is
-  // covered. `open` alone would only mean the socket connected.
-  source.addEventListener("ready", function () { state(true); });
-  // One listener for two things that mean the same: EventSource dispatches
-  // its own connection failures as `error`, and the server sends an `error`
-  // frame when the Journal is unreachable. Either way the page is no longer
-  // live. EventSource reconnects on its own and carries Last-Event-ID when
-  // it does, so recovery needs nothing here but the indicator coming back.
-  source.addEventListener("error", function () { state(false); });
-  source.addEventListener("journal", function () {
-    // Dispatched on the body because that is what the live region's
-    // hx-trigger listens to, and the region is replaced on every swap - a
-    // listener bound to the region itself would go with it.
-    document.body.dispatchEvent(new Event("journal"));
-  });
-})();
-</script>
-</body>
-</html>
+{% endblock %}

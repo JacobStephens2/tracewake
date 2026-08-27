@@ -43,6 +43,13 @@ JOURNAL = "journal.py"
 LIVE_REGION = "../../webapp/templates/_loop_live.html"
 LIVENESS_SUITE = "../../webapp/tests/test_liveness.py"
 
+# Run history and the budget (#160). The same window module, a suite of its
+# own: history's claim is what it does NOT read, and a mutation checked
+# against test_loop_page.py - which drives a page that reads the tracker on
+# every request - would be checked by tests that cannot tell the difference.
+HISTORY_REGION = "../../webapp/templates/_history_live.html"
+HISTORY_SUITE = "../../webapp/tests/test_run_history.py"
+
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
@@ -467,6 +474,52 @@ MUTATIONS = {
         '     hx-get="{{ live_url }}"\n',
         "",
     ),
+    # --- Run history and the budget (#160) ---------------------------------
+    #
+    # The history is the page that answers "what has the Selector already
+    # done?" from the Journal alone. Each mutation here leaves a page that
+    # still renders Run cards while quietly ceasing to be that.
+
+    # The history reaches the tracker after all, by rendering /loop's context
+    # instead of its own - so the record of what the Selector has done goes
+    # down whenever GitHub does, and takes a queue board it never asked for
+    # with it.
+    "the-history-reads-the-tracker": (WINDOW, HISTORY_SUITE,
+        "    events, spend, error = _read_journal()\n"
+        "    return {\n"
+        "        # History is what has ended.",
+        "    return _loop_context(request)\n"
+        "    events, spend, error = _read_journal()\n"
+        "    return {\n"
+        "        # History is what has ended.",
+    ),
+    # The Run in flight is filed as history: a card with no bound, no duration
+    # and no Proposal, shown as though the Run had ended.
+    "an-unfinished-run-is-filed-as-history": (WINDOW, HISTORY_SUITE,
+        '        "runs": [run for run in _runs(events) if not run.get("in_flight")],',
+        '        "runs": _runs(events),',
+    ),
+    # An unreadable Journal renders as a full budget, so the page promises
+    # four Runs remaining on the strength of rows it never read.
+    "an-unknown-budget-reads-as-full": (WINDOW, HISTORY_SUITE,
+        '        "remaining": None if spent is None else max(0, config.daily_cap - spent),',
+        '        "remaining": config.daily_cap - (spent or 0),',
+    ),
+    # A Run stops reporting how long it took, which is the one fact about it
+    # that exists nowhere else: the box persists no record of a finished Run.
+    "a-run-reports-no-duration": (WINDOW, HISTORY_SUITE,
+        '        card["duration"] = _duration(\n'
+        '            card.get("started_at"), card.get("finished_at")\n'
+        "        )",
+        '        card["duration"] = None',
+    ),
+    # The history swaps in /loop's region instead of its own, so the first
+    # Journal row to land replaces the page with a queue board - and reaches
+    # the tracker to build it.
+    "the-history-swaps-in-the-loops-region": (HISTORY_REGION, HISTORY_SUITE,
+        '     hx-get="{{ live_url }}"', '     hx-get="/loop/live"',
+    ),
+
     # Not mutated, and deliberately: the guard that the row re-read happens
     # OUTSIDE `conn.notifies()` - which holds the connection's lock while it is
     # iterated - is structural, not a clause. There is no one line to break.

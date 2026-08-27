@@ -131,6 +131,15 @@ would be a bug in whichever one you did not read.
 _Avoid_: kanban, backlog, dashboard (the page is the dashboard; this is one
 panel on it)
 
+**Run History**:
+Every Run that has ended, on `/loop/history`, replayed from the Selector
+Journal and from nothing else: its Bound, how long it took, and its Proposal.
+Reading nothing but the Journal is the point rather than an economy - it is
+what lets a Run stay inspectable after the branch it worked on has been merged
+and deleted, and what keeps the record readable when the tracker cannot be
+reached. The Run in flight is not history and is not on it.
+_Avoid_: log, audit trail, archive
+
 **Owning Area**:
 The one part of a task a single Run is scoped to, named in the Plan at Seeding.
 The rest of the task is out of scope for that Run and is not remaining work: an

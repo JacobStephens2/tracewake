@@ -692,6 +692,41 @@ rather than unbounded: each label's read is capped by
 `SELECTOR_BOARD_TIMEOUT_SECONDS` and a failed one renders as a column error,
 so a slow or rate-limited tracker degrades the board rather than the stream.
 
+### Run history and the budget (#160)
+
+`/loop/history` is the page `/loop` cannot be. `/loop`'s live region contains
+the queue board, and the board is a tracker read - so `/loop` is only as
+available as GitHub. The history reads the Journal and nothing else, which is
+also why a Run stays on it after the branch it worked on has been merged and
+deleted: the forge's copy of that work is gone, and the Journal's - the issue,
+the title, the bound the Run ended on, the Proposal URL - is not. The Proposal
+link is the durable one and is rendered as a link; the branch is named but
+never linked, because a link to a deleted branch is a 404 dressed up as a
+working one.
+
+Two things it computes rather than replays:
+
+- **Duration**, the gap between the `run.dispatched` row and the `run.outcome`
+  row. Nothing reports it - the box persists no record of a finished Run at
+  all - so those two timestamps are the only account of how long the operator
+  waited. Two units at most (`1h 40m`, `42s`).
+- **Runs remaining today**, `daily_cap - spend.recent_dispatches`, read
+  through `cycle.spend` like the strip's cell and floored at zero. `None`
+  rather than the cap when the Journal cannot be read: an unknown budget
+  rendered as a full one would be the page inventing headroom the Selector
+  would refuse.
+
+It shows ended Runs only. A Run still going has no bound, no duration and no
+Proposal, and `/loop` already shows it live on the panel built for it.
+
+The two pages share `_runs.html` (the Run card), `_budget.html` (the budget
+cell) and `terminal_base.html` (the shell and the stream script), and differ
+in the `runs` list they pass in and the region each re-fetches -
+`/loop/history/live` rather than `/loop/live`, because a history page pointed
+at the other one would swap in a queue board it never rendered and reach the
+tracker to build it. `lab/webapp/tests/test_run_history.py` is the suite;
+its first assertion is that no tracker command was asked anything.
+
 **Seeing it move in a preview.** An Attended Preview reads `selector_staging`,
 and nothing writes to that database on its own - the page will connect, say
 `live`, and then sit still, which is correct and looks like a bug. To watch it
@@ -814,7 +849,7 @@ psql -d selector_staging -f schema.sql -f seed.sql
 `seed.sql` is not decoration. The live Journal has never held a
 `run.dispatched` or a `run.outcome` row, so a preview reading real data shows
 a page with no Run cards and proves nothing about a branch that changed how
-Run cards look. The fixture covers every state `/loop` renders, and
-`lab/webapp/tests/test_staging_seed.py` fails when it stops covering one -
-**adding a state to the page means adding it to `seed.sql` in the same
-change.**
+Run cards look. The fixture covers every state `/loop` and `/loop/history`
+render, and `lab/webapp/tests/test_staging_seed.py` fails when it stops
+covering one - **adding a state to either page means adding it to `seed.sql`
+in the same change.**

@@ -63,7 +63,8 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
 targets=(cycle.py dispatch.py watcher.py board.py journal.py ../../webapp/app.py
-         ../../webapp/templates/_loop_live.html)
+         ../../webapp/templates/_loop_live.html
+         ../../webapp/templates/_history_live.html)
 backup_dir="$(mktemp -d)"
 # Backed up under a flattened name - `../../webapp/app.py` would otherwise
 # write outside the backup directory, which is a mutation runner quietly

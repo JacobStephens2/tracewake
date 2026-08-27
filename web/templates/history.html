@@ -1,0 +1,20 @@
+{# /loop/history: what the Selector has already done, and what is left of
+   today's budget (#160).
+
+   The page /loop cannot be. /loop's board reads the tracker at request time,
+   so it is only as available as GitHub; this one reads the Journal and
+   nothing else, which is also why a Run stays on it after the branch it
+   worked on has been merged and deleted. #}
+{% extends "terminal_base.html" %}
+{% block title %}Run history{% endblock %}
+{% block logo %}THE LOOP // RUN HISTORY{% endblock %}
+{% block nav %}<a href="/">lab</a> <a href="{{ loop_url }}">loop</a>{% endblock %}
+{% block main %}
+    <h1>Run history
+      {%- include "_live_indicator.html" -%}
+    </h1>
+    <p>Every Run the Selector has finished, read from the Journal alone
+       (ADR 0015) - no tracker, no forge. The queue as it stands now, and the
+       Run in flight, are on <a href="{{ loop_url }}">/loop</a>.</p>
+{% include "_history_live.html" %}
+{% endblock %}

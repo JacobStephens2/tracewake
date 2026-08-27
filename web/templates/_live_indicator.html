@@ -1,0 +1,8 @@
+{#- Whether this page is actually live. It starts as "not live" and the
+    stream turns it on: a page whose EventSource never connected, or silently
+    died, is otherwise indistinguishable from a Selector with nothing to say -
+    and the second is what an operator would assume. -#}
+<span id="live" class="live" data-live="off">
+        <span class="live-on">live</span>
+        <span class="live-off">not live &middot; reload to update</span>
+      </span>

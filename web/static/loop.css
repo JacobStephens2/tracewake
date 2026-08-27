@@ -55,7 +55,9 @@
 /* The status strip (#156): four cells across the top of /loop, wrapping to
    one per line on a narrow screen. Grid rather than flex so the cells keep
    equal widths and the box card - the widest by far - does not squeeze the
-   other three into their labels. */
+   other three into their labels. The history page (#160) wears the same strip
+   with only the budget cell in it, which auto-fit renders as one full-width
+   row without needing a rule of its own. */
 .strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
