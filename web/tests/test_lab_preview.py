@@ -171,6 +171,32 @@ class TestTheLease(PreviewTestCase):
         self.assertIn("--force", result.stderr)
         self.assertFalse(self.restarted())
 
+    def test_a_lease_whose_unit_has_stopped_does_not_claim_to_be_running(self):
+        """Hit within minutes of provisioning: stop a preview and the next run
+        answers "a preview is already running" over a unit in `inactive`. The
+        refusal is right - the lease still names somebody, and it is theirs
+        until it expires - but a script whose whole job is saying what is
+        running must not say a thing is running when it can see that it is
+        not, and forcing here displaces nobody.
+        """
+        self.write_lease(age_seconds=600, branch="feat/status-strip", by="vsto")
+        result = self.run_script("feat/queue-board")
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("already running", result.stderr)
+        self.assertIn("feat/status-strip", result.stderr)
+        self.assertIn("vsto", result.stderr)
+        self.assertIn("--force", result.stderr)
+        self.assertNotIn("does not know it", result.stderr)
+
+    def test_a_lease_backed_by_a_running_unit_still_says_running(self):
+        self.write_lease(age_seconds=600, branch="feat/status-strip", by="vsto")
+        result = self.run_script(
+            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"}
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("already running", result.stderr)
+        self.assertIn("does not know it", result.stderr)
+
     def test_a_refused_run_leaves_the_existing_preview_alone(self):
         """The refusal has to be total. Half-taking a preview - checking the
         branch out but leaving the lease - is worse than either outcome,
