@@ -12,6 +12,7 @@ here, and schema.sql's guard triggers hold the same line inside the database.
 from __future__ import annotations
 
 import os
+from typing import AsyncIterator
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -92,12 +93,27 @@ def events(conn: psycopg.Connection, limit: int = 200) -> list[dict]:
 
 # How long a listener waits before saying something anyway. A stream silent
 # for minutes is indistinguishable from a dead one, and an idle connection
-# through a proxy is eventually reaped.
-KEEPALIVE_SECONDS = 20.0
+# through a proxy is eventually reaped. Overridable in the same shape as
+# `dsn()` - default and env read in one place, so there is one answer to
+# "where does this come from".
+_DEFAULT_KEEPALIVE_SECONDS = 20.0
+
+# How many rows one read fetches. A cap rather than a limit on what is
+# delivered: `_drain` pages until a short batch says it is done, because a
+# replay that stopped at the cap would leave a reconnecting page stale with
+# nothing left to wake it - the exact failure the replay exists to prevent.
+_BATCH = 500
+
+
+def keepalive_seconds() -> float:
+    return float(
+        os.environ.get("SELECTOR_SSE_KEEPALIVE_SECONDS")
+        or _DEFAULT_KEEPALIVE_SECONDS
+    )
 
 
 async def listen(after: int | None = None, to: str | None = None,
-                 keepalive: float = KEEPALIVE_SECONDS):
+                 keepalive: float | None = None) -> AsyncIterator[tuple]:
     """Yield `(what, payload)` as rows land: the Journal, pushed.
 
     `what` is one of:
@@ -120,6 +136,8 @@ async def listen(after: int | None = None, to: str | None = None,
     the hours a page stays open; the Selector's own paths stay synchronous and
     do not call this.
     """
+    if keepalive is None:
+        keepalive = keepalive_seconds()
     conn = await psycopg.AsyncConnection.connect(to or dsn(), autocommit=True)
     try:
         await conn.execute(f"LISTEN {CHANNEL}")
@@ -132,7 +150,7 @@ async def listen(after: int | None = None, to: str | None = None,
         # inserted during the query above is in it.
         sent = newest or 0
         if after is not None:
-            for row in await _since(conn, after):
+            async for row in _drain(conn, after):
                 sent = max(sent, row["id"])
                 yield "event", row
         while True:
@@ -152,14 +170,32 @@ async def listen(after: int | None = None, to: str | None = None,
             # Re-read rather than trust the notification: NOTIFY carries only
             # the id (its payload is capped at 8000 bytes), and the kind is
             # what a reader decides with.
-            for row in await _since(conn, sent):
+            async for row in _drain(conn, sent):
                 sent = max(sent, row["id"])
                 yield "event", row
     finally:
         await conn.close()
 
 
-async def _since(conn, after: int, limit: int = 500) -> list[dict]:
+async def _drain(conn: psycopg.AsyncConnection,
+                 after: int) -> AsyncIterator[dict]:
+    """Every row newer than `after`, in batches, oldest first.
+
+    Paged rather than one capped read, because the caller has no way to ask
+    for the rest: a replay truncated at the cap leaves a reconnected page
+    holding a stale id with no later NOTIFY coming to correct it.
+    """
+    while True:
+        rows = await _since(conn, after, limit=_BATCH)
+        for row in rows:
+            after = row["id"]
+            yield row
+        if len(rows) < _BATCH:
+            return
+
+
+async def _since(conn: psycopg.AsyncConnection, after: int,
+                 limit: int = _BATCH) -> list[dict]:
     """Rows newer than `after`, oldest first - the order they happened in."""
     cursor = await conn.execute(
         "SELECT id, kind FROM journal.events WHERE id > %s"

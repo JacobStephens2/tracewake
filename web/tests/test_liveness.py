@@ -142,8 +142,9 @@ def test_the_stream_is_an_event_stream(db, server):
     with open_stream(server) as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        # Caddy buffers a proxied response by default, which would hold every
-        # event until the stream ended - that is, forever.
+        # For an nginx-family proxy, which buffers by default and would hold
+        # every event until the stream ended - that is, forever. Caddy, which
+        # fronts this app today, flushes an event stream without being asked.
         assert response.headers["x-accel-buffering"] == "no"
         assert response.headers["cache-control"] == "no-store"
 
@@ -227,6 +228,39 @@ def test_a_reconnecting_client_that_missed_nothing_is_told_nothing(db, server):
         assert stream.data()["id"] == fresh
 
 
+def test_a_long_absence_is_replayed_whole(db, server):
+    """A replay reads in batches, and a batch-sized one is the case where a
+    cap that was mistaken for a limit would truncate.
+
+    Truncation here is not a slow page but a permanently stale one: the client
+    would be left holding an id it had already passed, with no later NOTIFY
+    coming to correct it.
+    """
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO journal.events (kind, payload)"
+            " SELECT 'run.iteration', jsonb_build_object('iteration', n)"
+            " FROM generate_series(1, %s) AS n",
+            (journal_batch() + 20,),
+        )
+        newest = conn.execute("SELECT max(id) FROM journal.events").fetchone()[0]
+    with open_stream(server, headers={"Last-Event-ID": "0"}) as response:
+        stream = Stream(response)
+        assert stream.event()["event"] == "ready"
+        seen = []
+        while len(seen) < journal_batch() + 20:
+            seen.append(stream.data()["id"])
+    assert seen == sorted(seen), "replayed out of order"
+    assert seen[-1] == newest
+
+
+def journal_batch() -> int:
+    """The Journal's own page size, so this test cannot drift from it."""
+    import journal
+
+    return journal._BATCH
+
+
 def test_a_nonsense_last_event_id_is_not_a_500(db, server):
     """`Last-Event-ID` is whatever the client sent."""
     with open_stream(server, headers={"Last-Event-ID": "not-a-number"}) as response:
@@ -267,9 +301,7 @@ def test_an_unreachable_journal_closes_the_stream_rather_than_hanging(
 # --- The live region --------------------------------------------------------
 
 
-LIVE_REGION = re.compile(
-    r'<div id="loop-live"[^>]*>', re.DOTALL
-)
+LIVE_REGION = re.compile(r'<div id="loop-live"[^>]*>')
 
 
 def test_the_page_carries_a_live_region_that_asks_for_itself(db):

@@ -74,6 +74,7 @@ the Journal answers "what would it have picked?" as well as "what did it?".
 | `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
 | `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |
+| `SELECTOR_SSE_KEEPALIVE_SECONDS` | `20` | how long an open `/loop` stream may say nothing before a keepalive |
 
 Two timeouts because the two waits are nothing like each other: everything
 except the Run should answer in seconds, and giving a comment or a fetch the
@@ -672,6 +673,32 @@ Three things about it are easy to get wrong and are pinned by
 Those tests run against a real uvicorn on a loopback port rather than the
 `TestClient` the rest of that suite uses: its transport runs the app to
 completion and buffers the body, so a stream that never ends never returns.
+
+**The proxy.** Caddy fronts this app with `encode gzip` + `reverse_proxy`, and
+a proxy that buffers would hold every event until the page closed - a failure
+indistinguishable from a Selector that never runs. Caddy flushes a
+`text/event-stream` without being asked; measured through that exact directive
+pair with the client requesting gzip, the events arrived the moment their rows
+did. The `X-Accel-Buffering: no` the endpoint sends is for an nginx-family
+proxy, which does not, and is inert here.
+
+**What a live page costs.** The live region contains the queue board, and the
+board is a tracker read - so a Journal row now costs one `gh` call per label,
+where before it cost one per page load. The `delay:` collapses a cycle's burst
+into a single re-render; the drip it cannot collapse is the watcher's, roughly
+one Iteration a minute while a Run is in flight. That is the price of #159's
+"the board counts update the moment a Journal row lands", and it is bounded
+rather than unbounded: each label's read is capped by
+`SELECTOR_BOARD_TIMEOUT_SECONDS` and a failed one renders as a column error,
+so a slow or rate-limited tracker degrades the board rather than the stream.
+
+**Seeing it move in a preview.** An Attended Preview reads `selector_staging`,
+and nothing writes to that database on its own - the page will connect, say
+`live`, and then sit still, which is correct and looks like a bug. To watch it
+move, append to it: `./preview-cycle.sh` runs a whole cycle against the faked
+edges, or a single `psql -d selector_staging -c "INSERT INTO journal.events
+(kind, payload) VALUES ('run.iteration', '{\"issue\":9001,\"iteration\":1}')"`
+lands one row.
 
 ## Host setup
 

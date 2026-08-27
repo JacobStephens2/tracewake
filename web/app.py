@@ -495,7 +495,13 @@ def _loop_context(request: Request) -> dict:
         "state": (
             _selector_state(runs, budget, timer) if error is None else None
         ),
+        # Both halves of the live mechanism, resolved in one place: the
+        # fragment the region re-fetches and the stream that tells it to. The
+        # fragment does not use `events_url` - the page opens the stream once,
+        # not per swap - but splitting them across two handlers is how the
+        # next one gets wired into the wrong half.
         "live_url": _path(request, "/loop/live"),
+        "events_url": _path(request, "/loop/events"),
     }
 
 
@@ -506,11 +512,7 @@ def loop_page(request: Request):
     Sync def on purpose: psycopg blocks, so FastAPI runs this handler in its
     threadpool instead of on the event loop.
     """
-    return _page(
-        request,
-        "loop.html",
-        {**_loop_context(request), "events_url": _path(request, "/loop/events")},
-    )
+    return _page(request, "loop.html", _loop_context(request))
 
 
 @app.get("/loop/live", response_class=HTMLResponse)
@@ -552,13 +554,8 @@ async def _journal_stream(after: int | None):
     header this endpoint honours rather than client state to keep.
     """
     yield f"retry: {SSE_RETRY_MS}\n\n"
-    keepalive = float(
-        os.environ.get("SELECTOR_SSE_KEEPALIVE_SECONDS")
-        or journal.KEEPALIVE_SECONDS
-    )
     try:
-        stream = journal.listen(after=after, keepalive=keepalive)
-        async for what, payload in stream:
+        async for what, payload in journal.listen(after=after):
             if what == "silence":
                 # A comment: it keeps the connection warm and is ignored by
                 # EventSource, so it cannot be mistaken for a Journal row.
@@ -596,10 +593,13 @@ async def loop_events(request: Request):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-store",
-            # Caddy buffers a proxied response by default, which would hold
-            # every event until the stream ended - that is, until the page
-            # closed. This is the header that turns that off, and the failure
-            # it prevents looks exactly like a Selector that never runs.
+            # Not for Caddy, which is what fronts this app today and which
+            # flushes a `text/event-stream` on its own - measured through the
+            # real `encode gzip` + `reverse_proxy` pair, events landing the
+            # moment their row did. It is for an nginx-family proxy, which
+            # buffers by default and would hold every event until the page
+            # closed. A failure that looks exactly like a Selector that never
+            # runs is worth one header nobody currently reads.
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },

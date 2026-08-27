@@ -36,6 +36,13 @@ BOARD_SUITE = "../../webapp/tests/test_queue_board.py"
 WINDOW = "../../webapp/app.py"
 WINDOW_SUITE = "../../webapp/tests/test_loop_page.py"
 
+# The push (#159). The stream is Journal SQL and lives with the Journal; the
+# region it re-fetches is a template, which is a mutation target like any
+# other - a swap that drops its own trigger is one attribute deleted.
+JOURNAL = "journal.py"
+LIVE_REGION = "../../webapp/templates/_loop_live.html"
+LIVENESS_SUITE = "../../webapp/tests/test_liveness.py"
+
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
@@ -428,6 +435,44 @@ MUTATIONS = {
         "        if number in in_flight_numbers:",
         "        if False:",
     ),
+
+    # --- The push (#159) ----------------------------------------------------
+    #
+    # A live page fails quietly: it renders, it says `live`, and it is simply
+    # not told about the row that landed. Every mutation here leaves a page
+    # that looks exactly like one watching a Selector with nothing to do.
+
+    # Nothing is listening, so no row ever reaches an open page - and the page
+    # goes on claiming it is live, because the stream connected.
+    "the-stream-listens-to-nothing": (JOURNAL, LIVENESS_SUITE,
+        "        await conn.execute(f\"LISTEN {CHANNEL}\")",
+        "        pass",
+    ),
+    # The replay stops at one batch. A page that missed more than that is
+    # handed the first batch and left holding a stale id, with no later NOTIFY
+    # coming to correct it - permanently stale rather than slow.
+    "a-long-replay-is-truncated": (JOURNAL, LIVENESS_SUITE,
+        "        if len(rows) < _BATCH:\n            return",
+        "        return",
+    ),
+    # A reconnecting page is re-sent everything it already had, because the
+    # stream forgets what the Journal's newest row was when it started.
+    "a-reconnect-replays-what-was-seen": (JOURNAL, LIVENESS_SUITE,
+        "        sent = newest or 0",
+        "        sent = 0",
+    ),
+    # The swapped-in region drops the attribute that asks for the next one, so
+    # the page updates exactly once and then looks live forever after.
+    "the-region-does-not-rearm": (LIVE_REGION, LIVENESS_SUITE,
+        '     hx-get="{{ live_url }}"\n',
+        "",
+    ),
+    # Not mutated, and deliberately: the guard that the row re-read happens
+    # OUTSIDE `conn.notifies()` - which holds the connection's lock while it is
+    # iterated - is structural, not a clause. There is no one line to break.
+    # Dropping `stop_after=1` alone no longer deadlocks; it only delays each
+    # event by up to a keepalive, which the suite catches on its wait rather
+    # than on the fault. Recorded here so the absence is visible.
 }
 
 

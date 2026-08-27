@@ -84,13 +84,23 @@ def _drop(name: str, attempts: int = 20) -> None:
     test whose subject connects from a subprocess (the Selector's cycle tests
     do), so it is retried here rather than left as an occasional red teardown
     that means nothing.
+
+    The second retried error is subtler. FORCE terminates every backend on the
+    database, and an autovacuum worker is a backend - one owned by a role this
+    connection is not, so terminating it is refused outright ("permission
+    denied to terminate process"). Nothing is wrong when that happens: the
+    worker finishes on its own within a moment and the next attempt has
+    nothing left to signal. It shows up on the tests that write enough rows in
+    one statement to interest autovacuum, which is why it reads as a flake in
+    a different file each time it appears.
     """
+    transient = (psycopg.errors.ObjectInUse, psycopg.errors.InsufficientPrivilege)
     with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
         for attempt in range(attempts):
             try:
                 admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
                 return
-            except psycopg.errors.ObjectInUse:
+            except transient:
                 if attempt == attempts - 1:
                     raise
                 time.sleep(0.1)

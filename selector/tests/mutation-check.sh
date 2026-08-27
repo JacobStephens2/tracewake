@@ -62,7 +62,8 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # strip is the Journal's window and its guards are the Selector's guards
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
-targets=(cycle.py dispatch.py watcher.py board.py ../../webapp/app.py)
+targets=(cycle.py dispatch.py watcher.py board.py journal.py ../../webapp/app.py
+         ../../webapp/templates/_loop_live.html)
 backup_dir="$(mktemp -d)"
 # Backed up under a flattened name - `../../webapp/app.py` would otherwise
 # write outside the backup directory, which is a mutation runner quietly
@@ -119,6 +120,21 @@ while IFS=$'\t' read -r mutation target suite; do
     case "${suite}" in
         ../../webapp/*) suite_python="${selector_dir}/../../webapp/.venv/bin/python" ;;
     esac
+    # An interpreter that is not there fails the OTHER way round: pytest never
+    # runs, no `FAILED` line is printed, and the mutation is reported
+    # SURVIVED - so a missing venv reads as "the suite verifies none of this"
+    # and would send someone writing tests that already exist. Reachable
+    # normally, not exotically: `.venv/` is gitignored, so every worktree
+    # starts without one, and CLAUDE.md sends factory work into a worktree.
+    if [[ ! -x ${suite_python} ]]; then
+        printf 'mutation-check.sh: %s is missing - %s cannot run.\n' \
+            "${suite_python}" "${suite}" >&2
+        printf '  Build it: python3 -m venv %s && %s/bin/pip install -r %s\n' \
+            "$(dirname -- "$(dirname -- "${suite_python}")")" \
+            "$(dirname -- "$(dirname -- "${suite_python}")")" \
+            "${selector_dir}/../../webapp/requirements-dev.txt" >&2
+        exit 2
+    fi
 
     output="$("${suite_python}" -m pytest "${selector_dir}/${suite}" -q --no-header \
         -p no:cacheprovider </dev/null 2>&1 || true)"
