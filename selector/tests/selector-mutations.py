@@ -361,10 +361,11 @@ MUTATIONS = {
     # The Run's Iterations render newest first, so a Run reads as counting
     # backwards and the page disagrees with the log it is showing.
     "iterations-render-newest-first": (WINDOW, WINDOW_SUITE,
-        '        card["seen"] = sorted(\n'
-        '            card.get("seen", []), key=lambda record: record.get("iteration") or 0\n'
+        '        card["iteration_records"] = sorted(\n'
+        '            card.get("iteration_records", []),\n'
+        '            key=lambda record: record.get("iteration") or 0,\n'
         "        )",
-        '        card["seen"] = card.get("seen", [])',
+        'card["iteration_records"] = card.get("iteration_records", [])',
     ),
 
     # The strip stops saying anything about a timer that is not running, so a

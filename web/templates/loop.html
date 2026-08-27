@@ -103,11 +103,11 @@
           the Run rather than all at once when it ends. Shown on an ended card
           too: the box persists no record of a Run, so afterwards these rows
           are the only account of it there is. -#}
-      {% if r.seen %}
+      {% if r.iteration_records %}
       <table class="iterations">
         <thead><tr><th>iteration</th><th>started</th><th>agent</th><th>head</th><th>observed</th></tr></thead>
         <tbody>
-        {% for i in r.seen %}
+        {% for i in r.iteration_records %}
           <tr>
             <td>{{ i.iteration }}</td>
             <td>{{ i.started }}</td>

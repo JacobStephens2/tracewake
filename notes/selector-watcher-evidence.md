@@ -81,6 +81,23 @@ neither failing the dispatch nor being reported more than once.
 
 Six mutations were added to `tests/selector-mutations.py`, one per guard.
 
+## What the review added
+
+Two findings from `/code-review` were worth code rather than a note:
+
+- **A Run heading the agent wrote was a block boundary.** The lesson above was
+  applied to `### Iteration` records and not to `## Run started`, and the
+  fixture proves the hazard is real - it holds an agent-written `## Iteration
+  2` at column 0. A `## Run started` line the agent wrote would have discarded
+  every record found so far and left the block undatable, which is dropped
+  whole: no Iterations for the rest of the Run, and no `run.watch-failed` row
+  either, because nothing failed. A boundary now needs a stamp that parses.
+- **The turn bound was on the line and thrown away.** `run.sh` writes `- Turn
+  bound: N` on every record and it is one of the Termination Contract's five;
+  spec #151's story 25 wants a Run's bounds visible while it runs, and this is
+  the only place they reach this side before the Run ends. It is carried on
+  the record now.
+
 ## The criterion that needs a live Run
 
 > Viewing: during a live Run, refreshing /loop shows Iteration records landing

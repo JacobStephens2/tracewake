@@ -276,12 +276,12 @@ def _runs(events: list[dict]) -> list[dict]:
                 routed_outcome=payload.get("outcome"),
             )
         elif event["kind"] == "run.iteration":
-            # The watcher's rows (#157): what the Run is doing, while it does
-            # it. Collected rather than merged, because there are many per
-            # card and the card's own `iterations` is a COUNT the box reported
-            # when the Run ended - a different fact from these, and one that
-            # does not exist yet while the Run is in flight.
-            card.setdefault("seen", []).append(
+            # The watcher's rows (#157): what the Run is doing, while it
+            # does it. Named for what they are rather than folded into the
+            # card's `iterations`, which is a COUNT the box reported when the
+            # Run ended - a different fact, and one that does not exist yet
+            # while the Run is in flight.
+            card.setdefault("iteration_records", []).append(
                 {**payload, "at": _utc(event["at"])}
             )
         elif event["kind"] == "run.watch-failed":
@@ -318,8 +318,9 @@ def _runs(events: list[dict]) -> list[dict]:
     for card in whole:
         # The Journal reads newest first; a Run's own Iterations read in the
         # order the Run executed them.
-        card["seen"] = sorted(
-            card.get("seen", []), key=lambda record: record.get("iteration") or 0
+        card["iteration_records"] = sorted(
+            card.get("iteration_records", []),
+            key=lambda record: record.get("iteration") or 0,
         )
     return sorted(whole, key=lambda c: c["id"], reverse=True)
 

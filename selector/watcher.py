@@ -64,6 +64,7 @@ _ITERATION_HEADING = re.compile(
 )
 
 _AGENT_EXIT = re.compile(r"^- Agent exit: (?P<code>-?\d+)(?: \((?P<note>.*)\))?\s*$")
+_TURN_BOUND = re.compile(r"^- Turn bound: (?P<turns>\d+)\s*$")
 _HEAD = re.compile(r"^- Head: (?P<before>\S+) -> (?P<after>\S+)\s*$")
 _NOOP = re.compile(r"^- No-op Iteration: head unchanged at (?P<head>\S+)\s*$")
 _PROMISE = re.compile(r"^- Completion Promise: (?P<state>.*?)\s*$")
@@ -74,10 +75,6 @@ _STAMP = "%Y-%m-%dT%H:%M:%SZ"
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _stamp(when: datetime) -> str:
-    return when.strftime(_STAMP)
 
 
 def _parse_stamp(value: str) -> datetime | None:
@@ -126,7 +123,16 @@ def iteration_records(text: str) -> list[dict]:
 
     for line in text.splitlines():
         run_heading = _RUN_HEADING.match(line)
-        if run_heading:
+        # A block boundary needs a stamp that parses. The agent writes its own
+        # headings into this file, so the same caution the Iteration record
+        # gets is owed here: a line the agent wrote that happens to read
+        # `## Run started ...` would otherwise discard every record already
+        # found AND leave the block undatable, which `of_this_run` then drops
+        # entirely - the page silently showing no Iterations for the rest of
+        # the Run, with nothing saying why. That is the exact failure this
+        # watcher exists to prevent, so the boundary is only taken from a line
+        # that looks like the one `run.sh` writes.
+        if run_heading and _parse_stamp(run_heading.group("stamp")):
             close(current)
             current = None
             in_fields = False
@@ -145,6 +151,12 @@ def iteration_records(text: str) -> list[dict]:
                 "run_started": run_started,
                 "agent_exit": None,
                 "exit_note": None,
+                # One of the Termination Contract's five bounds, and the box
+                # writes it on every record. Carried because the Run's panel
+                # is supposed to show the bounds it is running under (spec
+                # #151, story 25) and this is the only place they reach this
+                # side while a Run is in flight.
+                "turn_bound": None,
                 "noop": False,
                 "head_before": None,
                 "head_after": None,
@@ -168,6 +180,10 @@ def iteration_records(text: str) -> list[dict]:
         if exit_line:
             current["agent_exit"] = int(exit_line.group("code"))
             current["exit_note"] = exit_line.group("note")
+            continue
+        turn_bound = _TURN_BOUND.match(line)
+        if turn_bound:
+            current["turn_bound"] = int(turn_bound.group("turns"))
             continue
         head = _HEAD.match(line)
         if head:
@@ -276,7 +292,11 @@ class Watcher:
         self._stop.set()
         # Bounded: a watcher that will not come back must not hold a cycle
         # open past the Run it was watching. It is a daemon thread, so a join
-        # that times out costs a missing final read and nothing else.
+        # that times out costs a missing final read and nothing else - and a
+        # final read that lands slowly can append its last `run.iteration`
+        # after `run.outcome`. Harmless by construction: the page keys a card
+        # by issue and attempt and orders Iterations by their own number, so
+        # the Journal's own ordering carries no meaning here.
         self._thread.join(timeout=self.config.timeout_seconds + 5)
 
     # -- inside the thread --------------------------------------------------

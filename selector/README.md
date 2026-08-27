@@ -174,7 +174,11 @@ are told apart by when the Run started: one that started before this watch did
 is over. The skew tolerance above is what keeps two NTP-synced clocks that are
 only approximately equal from hiding a live Run's Iterations, and the cost of
 it being loose is at worst attributing an attempt that ended in the last five
-minutes.
+minutes - which the thirty-minute timer makes impossible in practice, since a
+retry is a cycle later and not five minutes later. Shortening that timer below
+the skew would mean shortening the skew with it: `iterations_seen` is scoped
+by attempt, so an attempt's Iterations read under the next attempt's number
+would not be deduplicated away.
 
 **It cannot fail a dispatch.** A watcher is a window. A box that will not hand
 over its log is journaled `run.watch-failed` **once** - not once a minute for
@@ -183,9 +187,20 @@ its own and pages on its own. The single row is what stops a Run whose log
 could not be read from looking like a Run with nothing happening, which is the
 opposite fact.
 
+That is the same knowing narrowing of story 31 that `box.unreachable` above
+is, and for the same reason: this SSH failure sits underneath a dispatch that
+will page on its own if it fails too, and paging twice for one outage is how
+an alert stops being read. The difference from `box.unreachable` is that there
+is always a dispatch behind this one - a watcher exists only while a Run
+does - so the residual that note carries does not apply here.
+
 A half-written record is not a record. The log is read while it is being
 appended to, so an Iteration heading with no `Agent exit` line under it yet is
-left for the next poll.
+left for the next read. Neither is a Run heading the agent wrote: a block
+boundary is only taken from a line carrying a stamp that parses, because one
+that did not would discard every record already found and leave the block
+undatable - and an undatable block is dropped whole, so the page would show no
+Iterations at all for the rest of the Run with nothing saying why.
 
 **Most of a Progress Log is not the Loop's.** The agent writes its own
 narrative into it - that is what the log is for - headings and bullet lists

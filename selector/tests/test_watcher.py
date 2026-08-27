@@ -76,6 +76,12 @@ Agent output, last 40 lines:
 """
 
 
+def now_stamp():
+    """The box's own stamp format, for the tests that need a Run block the
+    clock guard will accept."""
+    return watcher._now().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def log(stamp="2026-08-27T12:00:00Z", *iterations):
     return SEEDED + RUN_HEADER.format(stamp=stamp) + "".join(iterations)
 
@@ -92,6 +98,7 @@ def test_an_iteration_record_is_read_whole():
     assert record["iteration"] == 1
     assert record["started"] == "2026-08-27T12:00:05Z"
     assert record["agent_exit"] == 0
+    assert record["turn_bound"] == 100
     assert record["noop"] is False
     assert record["head_before"] == "111111111111"
     assert record["head_after"] == "222222222222"
@@ -137,6 +144,22 @@ def test_a_half_written_record_is_not_a_record_yet():
     partial = log("2026-08-27T12:00:00Z", ITERATION_ONE) + \
         "\n### Iteration 2 - 2026-08-27T12:10:05Z\n"
     assert [r["iteration"] for r in watcher.iteration_records(partial)] == [1]
+
+
+def test_a_run_heading_the_agent_wrote_is_not_a_block_boundary():
+    """The agent writes its own headings into this file, and one that read
+    `## Run started ...` without a stamp would otherwise discard every record
+    already found and leave the block undatable - which `of_this_run` drops
+    entirely, so the page shows no Iterations for the rest of the Run and
+    nothing says why."""
+    quoted = (
+        log("2026-08-27T12:00:00Z", ITERATION_ONE)
+        + "\n## Run started when I say so\n\nsomething the agent wrote\n"
+        + ITERATION_TWO
+    )
+    records = watcher.iteration_records(quoted)
+    assert [r["iteration"] for r in records] == [1, 2]
+    assert {r["run_started"] for r in records} == {"2026-08-27T12:00:00Z"}
 
 
 def test_a_run_older_than_the_watch_is_not_this_run(monkeypatch):
@@ -227,7 +250,7 @@ def test_iterations_are_journaled_while_the_run_is_in_flight(db, watched_box):
     """The offline acceptance criterion: exactly the new Iteration records,
     never a duplicate, from a log that grew three times under a watcher that
     read it far more often than that."""
-    now = watcher._stamp(watcher._now())
+    now = now_stamp()
     result = _run_with_a_progress_log(
         watched_box, db,
         SEEDED + RUN_HEADER.format(stamp=now),
@@ -249,7 +272,7 @@ def test_the_last_iteration_lands_even_though_the_run_ended(db, watched_box):
     """The final read. An Iteration written in the last seconds of a Run would
     otherwise be missing from the page forever, because the watcher's next
     poll never comes."""
-    now = watcher._stamp(watcher._now())
+    now = now_stamp()
     result = _run_with_a_progress_log(
         watched_box, db,
         SEEDED + RUN_HEADER.format(stamp=now) + ITERATION_ONE + ITERATION_TWO,
@@ -281,7 +304,7 @@ def test_the_watcher_reads_the_box_through_one_substitutable_command(db, watched
     """ADR 0004, and the seam this suite drives: the log is read by a command
     that is handed the Run's branch, so a box reached another way is another
     script and no change here."""
-    now = watcher._stamp(watcher._now())
+    now = now_stamp()
     _run_with_a_progress_log(
         watched_box, db, SEEDED + RUN_HEADER.format(stamp=now) + ITERATION_ONE
     )
