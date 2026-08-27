@@ -136,7 +136,9 @@ preview_is_running() {
 }
 
 holder="$(lease_holder)"
-if [[ -z "$holder" ]] && preview_is_running; then
+running=0
+preview_is_running && running=1
+if [[ -z "$holder" && "$running" -eq 1 ]]; then
     # Up, but the lease cannot say whose. Still somebody's preview.
     holder=$'unknown\tunknown'
 fi
@@ -144,9 +146,19 @@ if [[ -n "$holder" && "$force" -eq 0 ]]; then
     held_branch="${holder%%$'\t'*}"
     held_by="${holder##*$'\t'}"
     {
-        echo "a preview is already running: $held_branch, started by $held_by"
-        echo "It exits on its own within $((MAX_AGE / 3600)) hours, or pass --force to take it now."
-        echo "Forcing means $held_by is looking at your branch and does not know it."
+        # Two refusals, because they are two different situations and only one
+        # of them has somebody to displace. The lease is theirs until it
+        # expires either way - but a script whose job is saying what is
+        # running must not claim a preview is up when it can see it is not.
+        if [[ "$running" -eq 1 ]]; then
+            echo "a preview is already running: $held_branch, started by $held_by"
+            echo "It exits on its own within $((MAX_AGE / 3600)) hours, or pass --force to take it now."
+            echo "Forcing means $held_by is looking at your branch and does not know it."
+        else
+            echo "the unit is stopped, but the lease is still $held_by's: $held_branch"
+            echo "Nothing is being served, so --force takes it now and displaces nobody."
+            echo "Left alone the lease clears $((MAX_AGE / 3600)) hours after it was taken."
+        fi
     } >&2
     exit 4
 fi
