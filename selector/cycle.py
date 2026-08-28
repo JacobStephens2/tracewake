@@ -64,6 +64,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import control  # noqa: E402
 import dispatch  # noqa: E402
 import journal  # noqa: E402
 import watcher  # noqa: E402
@@ -1041,7 +1042,12 @@ def run_cycle(
                 return_failures += 1
 
     halted, pick, picked_record = None, None, None
-    if not queue:
+    if control.is_paused(conn):
+        # The timer keeps running while paused. It still reads the queue and
+        # journals Eligibility so the page remains an explanation of what
+        # would have happened; only the Dispatch is stopped.
+        halted = "paused"
+    elif not queue:
         halted = "queue-empty"
     elif cycle_spend.in_flight:
         halted = "run-in-flight"
