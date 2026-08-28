@@ -7,7 +7,8 @@ What exists is **a cycle that picks, dispatches and does the bookkeeping**
 (issues #153, #154, #155) on top of the **Selector Journal** (ADR 0015, issue
 #152), **run unattended by a timer** (#156), with the **Iteration watcher**
 (#157) reading the box's Progress Log while a Run is in flight so that the
-activity is visible while it happens.
+activity is visible while it happens, and a **pause flag** on `/loop` that
+stops new Dispatches without stopping the timer (#161).
 
 ## The cycle
 
@@ -47,6 +48,17 @@ is not shouted at for a gap.
 calendar boundary would let eight Runs happen inside three hours across
 midnight. A cap that halts a cycle still lets it reason and journal first, so
 the Journal answers "what would it have picked?" as well as "what did it?".
+
+**Pause.** `/loop` is the flag's only writer. A paused Selector still runs its
+timer, reads the queue, applies Eligibility and journals the cycle; it stops
+before picking or dispatching and writes `halted: paused` on `cycle.finished`.
+That is why the next cycle card explains the quiet instead of disappearing.
+Resuming lets the next ordinary cycle dispatch again; a Run already in flight
+is not cancelled.
+
+The singleton `selector.control` row is deliberately outside
+`journal.events`. The flag is control input. The Journal records the paused
+decision downstream, but it does not become a work source (ADR 0015).
 
 **Configuration**, all environment, all with working defaults:
 
@@ -563,6 +575,8 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
 - `dispatch.py` - the five mechanical steps between a pick and a started Run.
   It decides nothing and journals nothing: `cycle.py` journals what it
   returns, so the Journal's shape is settled in one file rather than two.
+- `control.py` - the pause flag's whole interface: read before a Cycle picks,
+  write only from `/loop`. Its singleton table is not Journal history.
 - `tracker-sources/github.sh` - the default `SELECTOR_TRACKER_COMMAND`: one
   `gh api graphql` call normalized to a flat record per issue (labeler,
   native blocker count and the blockers themselves, open sub-issues, open
@@ -597,10 +611,10 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   puts the box's checkout on the Run's branch and runs `run.sh --propose
   --notify`, printing what the Run reported. It holds no credential of its
   own and starts nothing else.
-- `schema.sql` - one append-only `journal.events` table in the local
-  Postgres. NOTIFY on insert and the append-only guard both live in schema
-  triggers, so every append path behaves the same, including a hand `psql`
-  INSERT. Idempotent; re-apply freely.
+- `schema.sql` - the pause flag and the append-only `journal.events` table in
+  local Postgres. NOTIFY on insert and the append-only guard both live in
+  schema triggers, so every append path behaves the same, including a hand
+  `psql` INSERT. Idempotent; re-apply freely without resetting Pause.
 - `journal.py` - the whole write surface (`append`) plus the reader
   (`events`, newest first). No update, no delete. `SELECTOR_JOURNAL_DSN`
   overrides the DSN (tests do); default is `dbname=selector`, peer auth over
@@ -749,13 +763,13 @@ lands one row.
 ## Host setup
 
 Three roles in `site.yml`, in this order: `selector_journal` (the Postgres
-below), `selector_cycle` (the venv the timer's unit execs, correctly
+state below), `selector_cycle` (the venv the timer's unit execs, correctly
 labelled), and `timers` (which installs and enables the timer itself).
 
-`ansible/roles/selector_journal` owns the Journal: PostgreSQL 16,
+`ansible/roles/selector_journal` owns the Selector state: PostgreSQL 16,
 socket-only (`listen_addresses = ''`), a peer-auth `conductor` role with
-CREATEDB, the `selector` database, schema applied. A rebuilt VM gets all of
-it back from the playbook.
+CREATEDB, the `selector` database, schema applied. A rebuilt VM gets the
+Journal and an active-by-default pause flag back from the playbook.
 
 ## Running the tests
 
@@ -862,5 +876,11 @@ psql -d selector_staging -f schema.sql -f seed.sql
 a page with no Run cards and proves nothing about a branch that changed how
 Run cards look. The fixture covers every state `/loop` and `/loop/history`
 render, and `lab/webapp/tests/test_staging_seed.py` fails when it stops
-covering one - **adding a state to either page means adding it to `seed.sql`
-in the same change.**
+covering one - **adding a Journal-backed state to either page means adding it
+to `seed.sql` in the same change.** Pause is the exception because it is
+control state and can be exercised directly through the button.
+
+The preview runtime may read the staging Journal and may update exactly the
+staging pause column. It still cannot append Journal rows or connect to the
+live `selector` database, so clicking Pause in a preview exercises the real
+UI without changing the live Selector.

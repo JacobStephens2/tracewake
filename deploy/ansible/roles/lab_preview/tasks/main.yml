@@ -77,10 +77,10 @@
     - seed.sql
   changed_when: false
 
-- name: labstage may read the staging journal, and only read it
-  # The webapp is a window (ADR 0015). A previewed branch that tries to WRITE
-  # gets a permission error, which is the correct outcome: a preview shows
-  # what the Selector decided, it does not decide.
+- name: labstage may read staging state and write only the pause flag
+  # The webapp is a window except for the pause flag - its one write (#161).
+  # A preview may exercise that control against selector_staging, but it may
+  # neither append Journal rows nor touch any other Selector state.
   become: true
   become_user: conductor
   ansible.builtin.shell: |
@@ -90,6 +90,9 @@
     GRANT USAGE ON SCHEMA journal TO labstage;
     GRANT SELECT ON ALL TABLES IN SCHEMA journal TO labstage;
     ALTER DEFAULT PRIVILEGES IN SCHEMA journal GRANT SELECT ON TABLES TO labstage;
+    GRANT USAGE ON SCHEMA selector TO labstage;
+    GRANT SELECT ON selector.control TO labstage;
+    GRANT UPDATE (paused) ON selector.control TO labstage;
     SQL
   changed_when: false
 

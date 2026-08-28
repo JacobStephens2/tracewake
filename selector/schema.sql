@@ -1,7 +1,22 @@
--- The Selector Journal (ADR 0015): one append-only events table in the local
--- Postgres, peer auth over the unix socket. Idempotent: safe to re-apply to
--- the live `selector` database and applied fresh to every throwaway test
--- database by testdb.py.
+-- The Selector's local Postgres state: one mutable pause flag plus the
+-- append-only Journal (ADR 0015), reached through peer auth over the unix
+-- socket. Idempotent: safe to re-apply to the live `selector` database and
+-- applied fresh to every throwaway test database by testdb.py.
+
+-- The pause flag is control state, not Journal history. Keeping it outside
+-- `journal.events` preserves ADR 0015's direction: the Journal records why a
+-- cycle did not dispatch, but it does not become the source that decides
+-- whether dispatch is allowed.
+CREATE SCHEMA IF NOT EXISTS selector;
+
+CREATE TABLE IF NOT EXISTS selector.control (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    paused    boolean NOT NULL DEFAULT false
+);
+
+INSERT INTO selector.control (singleton)
+VALUES (true)
+ON CONFLICT (singleton) DO NOTHING;
 
 CREATE SCHEMA IF NOT EXISTS journal;
 

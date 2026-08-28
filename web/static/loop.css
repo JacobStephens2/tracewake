@@ -87,6 +87,24 @@
    long before the other cells do. */
 .strip .cell-box { grid-column: 1 / -1; }
 
+/* The page's only control (#161). Paused is a page-wide operating state, so
+   its banner sits above the strip rather than pretending to be one status
+   cell among four. */
+.pause-control {
+  display: flex;
+  justify-content: flex-end;
+  margin: 1rem 0;
+}
+.pause-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-color: var(--error-color);
+  color: var(--error-color);
+}
+.pause-banner button { flex: 0 0 auto; }
+
 /* The Iteration records the watcher journals during a Run (#157). Tabular,
    because they are one row per Iteration with the same four facts each time,
    and the operator reads down the column that changed. */
