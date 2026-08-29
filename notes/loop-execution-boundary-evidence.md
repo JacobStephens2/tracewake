@@ -898,3 +898,163 @@ Overriding the hold in that one task is the point rather than a loophole: the
 hold exists to stop an unattended `apt upgrade` moving the boundary with no
 commit recording it, and that task is the commit. It is re-asserted immediately
 afterwards - `apt-mark showhold` still returns `docker-sbx`.
+
+
+## A PHP-capable guest (issue #164)
+
+2026-08-29. Spec #151's story 33: the boundary an Iteration runs in had no PHP,
+so a tourbot Iteration told to work test-first had nothing to run tests with.
+The story pre-agreed a fallback - stay on the stock image - and it was not
+taken. What follows is what was observed rather than what was planned.
+
+### What the stock guest is, and what it is missing
+
+`sbx create claude` boots Ubuntu 26.04 (`resolute`) as uid 1000 `agent`, in
+groups `sudo` and `docker`, with apt 3.2.0 and `sudo` available. No `php`, no
+`composer`. The image also carries Docker's own apt repository in
+`/etc/apt/sources.list.d/docker.list`, which matters below.
+
+### The build, and the two things that had to be found out on the box
+
+`ansible/roles/loop_guest_template` creates a sandbox from the stock image,
+installs the packages, records the recipe at `/etc/loop-guest-template`, stops
+the sandbox and `sbx template save`s it as `loop-php:1`. Two of its lines exist
+because the obvious version failed:
+
+- **The docker repository is excluded from the `apt-get update`.** The build's
+  egress allowlist is `archive.ubuntu.com:80` and `security.ubuntu.com:80` at
+  `sandbox:` scope, so an unrestricted update ends:
+
+  ```
+  E: Failed to fetch https://download.docker.com/linux/ubuntu/dists/resolute/InRelease  403  Forbidden [IP: fdc5:f78b:8a53:: 3128]
+  ```
+
+  That 403 is the egress proxy, not Docker. Excluding the source for one
+  command (`-o Dir::Etc::SourceParts=/dev/null -o
+  Dir::Etc::sourcelist=sources.list.d/ubuntu.sources`) leaves the saved image's
+  apt configuration the vendor's; allowing the host would have widened the
+  boundary for a repository nothing installs from.
+
+- **A fresh guest is running its own `apt-get` when it comes up.** The first
+  apply of the role failed here:
+
+  ```
+  E: Could not get lock /var/lib/apt/lists/lock. It is held by process 296 (apt-get)
+  ```
+
+  It never appeared while the same steps were driven by hand, because typing
+  the next command takes longer than the guest's own apt does. The role waits
+  for it and passes `DPkg::Lock::Timeout=300` as a backstop.
+
+### Egress at Iteration time, and what it cost to get wrong
+
+`composer install` against tourbot's lock file needs two hosts the boundary did
+not allow. Both are now in `loop_execution_boundary_egress_common`, because
+what needs them is the repository rather than the agent:
+
+| host | what happens without it |
+| --- | --- |
+| `repo.packagist.org:443` | nothing resolves; there is no test runner at all |
+| `codeload.github.com:443` | Composer degrades rather than failing, which is why it is easy to miss |
+
+The degradation was measured rather than reasoned about. Same lock file, same
+guest, cold `vendor/`:
+
+```
+with codeload allowed        13s, exit 0
+without it                   4m37s, exit 100 - each package retried from source
+                             (`git clone` via github.com, which IS allowed), then
+                             failed outright on phpstan/phpstan, which publishes
+                             no installable source
+```
+
+One more thing learned there: **a `sbx policy allow` added to a sandbox that is
+already running does not reach the proxy that sandbox is using.** The rule
+appears in `sbx policy ls <sandbox> --wide` and requests keep getting 403.
+Every allow the role adds is therefore added before anything inside the sandbox
+touches the network.
+
+### The kit survives a custom image
+
+The concern worth checking before moving off the vendor's image was whether
+`-t` replaces the `claude` kit - the rule that attaches `api.anthropic.com` and
+five more at `sandbox:` scope, which #100 deliberately did not duplicate
+globally. It does not. `sbx policy ls <sandbox> --wide` against a sandbox made
+with `sbx create -t loop-php:1 claude ...`:
+
+```
+kit   sandbox:<name>   network   allow   api.anthropic.com:443
+                                         bridge.claudeusercontent.com:443
+                                         claude.com:443
+                                         downloads.claude.ai:443
+                                         mcp-proxy.anthropic.com:443
+                                         platform.claude.com:443
+```
+
+The image and the agent are two different arguments, and the adapter passes
+both.
+
+### The suite actually runs
+
+A fresh guest from `loop-php:1`, with the box's own tourbot checkout mounted:
+
+```
+php:      8.5.4
+composer: Composer version 2.9.5
+runner:   PHPUnit 10.5.63
+
+./vendor/bin/phpunit --testsuite "Unit Tests" --no-coverage
+Tests: 1202, Assertions: 6726, Errors: 1, Deprecations: 57
+Time: 00:10.166, Memory: 84.01 MB
+```
+
+Ten seconds for twelve hundred tests, which is what makes `/tdd` affordable
+inside an Iteration's wall clock rather than a thing it would skip.
+
+The one error is why `php-sqlite3` is in the package list and tourbot's CI
+workflow does not name it:
+
+```
+ETA\Tests\Unit\GroupPermissionResolverTest::testTableRowsDistinguishNoOpinionGrantAndDeny
+PDOException: could not find driver
+tests/Unit/GroupPermissionResolverTest.php:193   new \PDO('sqlite::memory:')
+```
+
+CI passes without asking for it because `shivammathur/setup-php` ships
+`pdo_sqlite` whether or not the workflow lists it. Reading the workflow was not
+enough; running the suite was.
+
+### PHP 8.5, where CI is 8.4
+
+Ubuntu 26.04 ships PHP 8.5.4 and that is what the guest holds. `composer.json`
+requires `>=8.0` so nothing refuses to install, and the suite is green on it
+apart from the driver above - but 57 deprecations are reported, and an
+Iteration will see them. Worth stating plainly: **a Run's suite result is from
+a PHP one minor ahead of the one CI grades the Proposal on.** The direction is
+the safe one - a Run sees deprecations CI does not - and moving the guest to
+8.4 means an external repository, which is a wider build-time allowlist for a
+smaller difference than this note's other trade-offs.
+
+### `vendor/` is written through the bind mount, on a uid coincidence
+
+The smoke assertion's `composer install` runs inside the guest as `agent`, uid
+1000, and writes into `/home/loop/tourbot`, which on the host belongs to `loop`
+- also uid 1000, "on this box today only because it was the first account
+created", as `loop_execution_boundary` already says of the same number. It
+works, and it would stop working on a box where `loop` was not uid 1000.
+
+This is not new with the PHP guest: an Iteration's own commits go through the
+same bind mount as the same uid, so a box that got this wrong would have failed
+long before now. Written down here because `vendor/` is the first thing to make
+it visible - it is 70MB of files an apply leaves behind, owned by whoever the
+guest thinks it is.
+
+### What this does not establish
+
+- That an Iteration's Progress Log records the suite running. That is observed
+  from a Run rather than asserted here; #164's third acceptance criterion is
+  where it lands.
+- That the image is reproducible byte for byte. It is not: the build installs
+  whatever `resolute` and `resolute-security` are serving that day, and the
+  marker records the package NAMES, not their versions. What a rebuild
+  guarantees is the recipe, not the bytes.

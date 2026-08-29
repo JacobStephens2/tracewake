@@ -64,3 +64,10 @@
     - loop_credentials # the signing key, generated here, and the git identity that uses it
     - loop_agent       # the agent named by loop_agent_name, pinned. On the host for the login; a Run only ever runs it inside the boundary
     - loop_scripts     # the Loop itself, and the checkout a Run works in
+    # Last, and it has to be: it snapshots a template with `sbx` (the boundary
+    # role) and proves it against the checkout (loop_scripts). Its smoke
+    # assertion boots a real microVM and runs `composer install` in that
+    # checkout, so an apply is a minute or two longer than it was - which is the
+    # price of the play ENDING with a proof that a Run can run the suite,
+    # rather than a Run being where that is discovered.
+    - loop_guest_template # the PHP-capable guest an Iteration is built from (#164)

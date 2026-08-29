@@ -91,6 +91,24 @@ loop_execution_boundary_egress_common:
     need: >-
       `gh pr create`. The draft pull request is the Run's only external effect
       (Proposal-Only Output), so this is the one host the Run is FOR.
+  # The two below arrived with the PHP-capable guest (#164). They are `_common`
+  # rather than per-agent because what needs them is the REPOSITORY - tourbot's
+  # `composer.lock` - and the repository does not change when the agent does.
+  - host: repo.packagist.org:443
+    need: >-
+      Composer's metadata, and the dist archive for any package packagist
+      itself serves. Without it `composer install` cannot resolve the lock file
+      at all, so an Iteration has no test runner and `/tdd` has nothing to run.
+  - host: codeload.github.com:443
+    need: >-
+      Where GitHub serves the dist archive Composer asks for by URL - a
+      different host from `github.com`, which is already allowed and is only
+      the git endpoint. Composer degrades without it rather than failing, which
+      is why it is easy to leave off and expensive to: it falls back to
+      `--prefer-source` and clones each of 90-odd packages one at a time.
+      Measured on the box, same lock file, same guest: 13 seconds with this
+      host allowed, and over four minutes without it before the run failed
+      outright on `phpstan/phpstan`, which publishes no installable source.
 
 # Per-agent, keyed by loop_execution_boundary_agent. Keeping the two sets apart
 # in the data - rather than in a comment on one merged list - is what makes the

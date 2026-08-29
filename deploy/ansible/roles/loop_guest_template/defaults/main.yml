@@ -1,0 +1,131 @@
+---
+# The guest template an Iteration's microVM is built from: `sbx`'s own `claude`
+# image with PHP and Composer added, so a Run working on tourbot can run the
+# test suite INSIDE the Execution Boundary rather than describing what it would
+# have run.
+#
+# Spec #151 user story 33 is the reason, and it is about `/tdd` rather than
+# about PHP: red-green-refactor with no runner is an Iteration asserting that a
+# test would have failed. The stock image ships node and python and no PHP at
+# all, so every tourbot Iteration until now was in exactly that position.
+#
+# This role is the whole of the change on the box. The Loop's half is one line
+# in `agents/claude.sh` - the tag it answers `--guest-template` with and hands
+# to `sbx create -t` - and that line names the tag below.
+
+# The tag, and the version in it is the one knob in this role.
+#
+# `sbx template save` stores into the local image store as
+# `docker.io/library/<name>:<tag>`, and `sbx create -t` accepts either that or
+# the short form. The short form is what is written here because it is also what
+# the box card on /loop prints (#156): the card reads the adapter's answer
+# verbatim, and `docker.io/library/loop-php:1` in a status cell is a registry
+# path nobody has, for an image that has never left this box.
+#
+# Bumping the version is NOT what triggers a rebuild - the recipe marker below
+# is, so a package added to the list rebuilds on the next apply whether or not
+# anyone remembered. The version is here so the box card can say WHICH boundary
+# a Run was bounded by, which is what ADR 0003 makes worth recording, and a tag
+# that never moved would make every rebuild invisible.
+loop_guest_template_version: 1
+loop_guest_template_tag: "loop-php:{{ loop_guest_template_version }}"
+
+# The agent kit the guest is built for, and it stays `claude` under the custom
+# image. That is worth stating because it is easy to assume `-t` replaces it: it
+# does not. `sbx create -t <image> claude` uses the image for the filesystem and
+# still attaches the vendor's kit, which is what carries the six Anthropic
+# egress rules at `sandbox:` scope - the rules `loop_execution_boundary`
+# deliberately does not duplicate globally. Verified on the box with `sbx policy
+# ls <sandbox> --wide` against a sandbox created from this template: the kit
+# rule is there, source `kit`, unchanged.
+loop_guest_template_agent: claude
+
+# What goes in, and why it is this list rather than "PHP".
+#
+# Tourbot's CI (`.github/workflows/phpunit.yml`) names the extensions the suite
+# needs: dom, curl, libxml, mbstring, zip, pcntl, pdo, pdo_mysql, bcmath, soap,
+# intl, gd, exif, iconv, imagick, xdebug. Ubuntu 26.04's `php-cli` already
+# carries pcntl, pdo, exif and iconv, and dom and libxml arrive with `php-xml`,
+# so the list below is CI's with the built-ins removed and two corrections that
+# came from running the suite rather than from reading the workflow:
+#
+#   php-sqlite3  CI does not name it and the suite needs it. Fifteen hundred
+#                unit tests pass without it and `GroupPermissionResolverTest`
+#                fails with `PDOException: could not find driver` on a
+#                `new \PDO('sqlite::memory:')`. It works on GitHub's runner
+#                because `shivammathur/setup-php` ships pdo_sqlite whether or
+#                not the workflow asks for it.
+#   php-xdebug   NOT installed, though CI names it. It is there to produce a
+#                coverage report, which the Loop does not; loading it taxes
+#                every test run in every Iteration for an artefact nobody
+#                reads. An Iteration that genuinely needs coverage finds out
+#                loudly - PHPUnit says which driver is missing - which is the
+#                right direction to fail.
+loop_guest_template_packages:
+  - php-cli
+  - php-xml
+  - php-mbstring
+  - php-zip
+  - php-curl
+  - php-mysql
+  - php-sqlite3
+  - php-bcmath
+  - php-intl
+  - php-gd
+  - php-soap
+  - php-imagick
+  - composer
+
+# The hosts the BUILD reaches, allowed at `sandbox:` scope on the build sandbox
+# only and gone with it. Nothing here widens the box's global posture, which is
+# the point: `deny-all` plus a short allowlist is what #100 established, and a
+# template build is not a reason to move it.
+#
+# Ports are explicit and both are :80, which is not an oversight - the stock
+# image's `ubuntu.sources` points at `http://archive.ubuntu.com`, and apt
+# verifies by signature rather than by transport.
+loop_guest_template_build_egress:
+  - host: archive.ubuntu.com:80
+    need: >-
+      The distribution's own archive: every package in the list above, plus the
+      `resolute-updates` and `resolute-backports` suites the stock
+      `ubuntu.sources` enables.
+  - host: security.ubuntu.com:80
+    need: >-
+      The `resolute-security` suite, enabled by the same file. Without it the
+      build installs the release version of each package and misses every
+      security update published since the image was cut.
+
+# The escape hatch, and it is deliberately not a default anybody sets in a file:
+#
+#     ansible-playbook loop.yml -e loop_guest_template_rebuild=true
+#
+# It forces a build the recipe comparison would have skipped. There is one case
+# that needs it and it is worth naming, because the role cannot detect it: the
+# recipe records package NAMES, not versions, so an image built two months ago
+# from an identical list is "current" however many security updates have shipped
+# since. Refreshing that is an operator's decision on an operator's cadence,
+# which is what an explicit flag says and a silent rebuild-on-age would not.
+loop_guest_template_rebuild: false
+
+# Where the recipe is recorded INSIDE the image, so a fresh guest can be asked
+# what it was built from rather than the answer being inferred from a tag
+# somebody may not have moved. The build writes it; the build's own idempotence
+# check and the smoke assertion both read it back.
+loop_guest_template_marker: /etc/loop-guest-template
+
+# The checkout the smoke assertion proves the suite runner against. It is the
+# real one a Run works in rather than a fixture, and that is deliberate twice
+# over: a fixture would prove Composer can install SOMETHING rather than that it
+# can install tourbot's lock file under this PHP, and the install leaves
+# `vendor/` warm in a checkout that is gitignored and persists to the next Run.
+#
+# Reached through loop_scripts' variable rather than repeated, so the two roles
+# cannot disagree about where the checkout is.
+loop_guest_template_workspace: "{{ loop_scripts_workspace }}"
+
+# Where the two scripts land on the box. Beside the Loop's own rather than in
+# /usr/local, for the reason loop_scripts gives: these are the Run account's
+# scripts, they are edited by re-applying this play, and root has no reason to
+# be able to hand them to anything.
+loop_guest_template_dir: /home/loop/guest-template

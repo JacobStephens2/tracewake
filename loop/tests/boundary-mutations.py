@@ -86,8 +86,15 @@ MUTATIONS = {
     # outside the session's allowed directories and an Iteration cannot grade
     # itself.
     "check-not-mounted": (
-        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro"',
-        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}"',
+        '"${sbx}" create --quiet --name "${sandbox}" -t "${guest_template}" claude "${workspace}" "${loop_dir}:ro"',
+        '"${sbx}" create --quiet --name "${sandbox}" -t "${guest_template}" claude "${workspace}"',
+    ),
+    # The boundary is built from the vendor's stock image again, so an Iteration
+    # working on tourbot has no PHP, no Composer and no test runner - and `/tdd`
+    # is back to asserting that a test would have failed (#164).
+    "stock-guest-template": (
+        '-t "${guest_template}" claude "${workspace}" "${loop_dir}:ro"',
+        'claude "${workspace}" "${loop_dir}:ro"',
     ),
     # The scripts are mounted writable, so a Run could edit the thing that
     # grades it.

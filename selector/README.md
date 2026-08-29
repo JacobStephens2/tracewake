@@ -414,7 +414,7 @@ box over SSH and they are journaled as `box.observed`:
 | fact | why it is on the card |
 | --- | --- |
 | loop scripts hash | the box's copy of the Loop is placed by an ansible apply, not by a merge, so it drifts from the reviewed copy in this repository silently and nothing else would say so (story 34) |
-| guest template | the `sbx` template every Iteration's microVM is built from - the Execution Boundary's identity (ADR 0003), and a thing story 33 may change |
+| guest template | the `sbx` template every Iteration's microVM is built from - the Execution Boundary's identity (ADR 0003). Story 33 did change it: it reads `loop-php:1` since #164, the vendor's image plus PHP and Composer, and the version in the tag is what makes a rebuild visible here rather than only in an apply's output |
 | agent version | the Termination Contract's five numbers are calibrated against a Run, and a Run by another agent version is a Run against another calibration |
 
 The template is *asked of* the agent adapter (`agents/claude.sh

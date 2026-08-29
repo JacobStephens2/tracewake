@@ -1,0 +1,92 @@
+---
+# The PHP-capable guest template, built on the box and proved on the box.
+#
+# Two scripts and four tasks. The role deliberately holds almost no logic: the
+# build's idempotence decision and the smoke assertion are both sequences with
+# cleanup obligations, and each says what it does more clearly as a script with
+# a trap than as six `command:` tasks and a `block`/`always`. What lives HERE is
+# the recipe (defaults/main.yml) and the fact that a build is followed by a
+# proof.
+#
+# Ordering in loop.yml: after `loop_execution_boundary`, which puts `sbx` on the
+# box and chooses its egress posture, and after `loop_scripts`, which makes the
+# checkout the smoke assertion installs into.
+
+- name: Somewhere for the template's own scripts to live
+  ansible.builtin.file:
+    path: "{{ loop_guest_template_dir }}"
+    state: directory
+    owner: loop
+    group: loop
+    mode: "0755"
+
+- name: The build and the proof, as scripts on the box
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ loop_guest_template_dir }}/{{ item }}"
+    owner: loop
+    group: loop
+    mode: "0755"
+  loop:
+    - build-guest-template.sh
+    - smoke-guest-template.sh
+
+# The build decides for itself whether there is anything to do - the recipe
+# recorded inside the image against the one declared here - so this task runs on
+# every apply and is a no-op on a box already holding the right template. That
+# is the same shape `loop_execution_boundary` uses for the egress reconcile, and
+# for the same reason: a role that only acts on a REBUILT box leaves this one
+# unconverged forever.
+#
+# `changed_when` on the script's own word rather than on its exit status. It
+# exits 0 both when it built and when it found nothing to build, which is what
+# makes it safe to run every time; the two are told apart by what it prints.
+#
+# Skipped under `--check`, like every command task in this play. Proof is an
+# apply, and there is no dry run of building an image.
+- name: The guest template is built from the declared recipe
+  become: true
+  become_user: loop
+  ansible.builtin.command:
+    argv: >-
+      {{ [loop_guest_template_dir ~ '/build-guest-template.sh',
+          '--tag', loop_guest_template_tag,
+          '--agent', loop_guest_template_agent,
+          '--marker', loop_guest_template_marker,
+          '--packages', loop_guest_template_packages | join(' '),
+          '--allow', loop_guest_template_build_egress | map(attribute='host') | join(',')]
+         + (['--force'] if (loop_guest_template_rebuild | default(false) | bool) else []) }}
+  register: loop_guest_template_build
+  changed_when: "'Built ' in loop_guest_template_build.stdout"
+
+# The provisioning smoke assertion spec #151 asks for, run on every apply rather
+# than only after a build. An image that was fine yesterday and cannot boot
+# today is exactly what an unattended Run would discover at 03:00, and this is
+# the cheapest place to discover it instead.
+- name: A fresh guest from the template runs php, composer and the suite runner
+  become: true
+  become_user: loop
+  ansible.builtin.command:
+    argv:
+      - "{{ loop_guest_template_dir }}/smoke-guest-template.sh"
+      - --tag
+      - "{{ loop_guest_template_tag }}"
+      - --agent
+      - "{{ loop_guest_template_agent }}"
+      - --marker
+      - "{{ loop_guest_template_marker }}"
+      - --workspace
+      - "{{ loop_guest_template_workspace }}"
+  register: loop_guest_template_smoke
+  changed_when: false
+
+# The assertion's own words, in the play's output. The task above passes or
+# fails silently otherwise, and "which php, which Composer, which runner" is
+# the thing an operator ran the apply to find out.
+#
+# `default([])` because under `--check` the command task above is skipped and
+# registers no stdout - and a debug task that tracebacks is a dry run that
+# fails for a reason that has nothing to do with the box.
+- name: What the fresh guest answered
+  ansible.builtin.debug:
+    msg: "{{ loop_guest_template_smoke.stdout_lines | default([]) }}"
