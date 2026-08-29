@@ -20,6 +20,7 @@ import pathlib
 import sys
 
 CYCLE = "cycle.py"
+CONTROL = "control.py"
 DISPATCH = "dispatch.py"
 WATCHER = "watcher.py"
 BOARD = "board.py"
@@ -430,6 +431,23 @@ MUTATIONS = {
         '        return "stopped - nothing will start a cycle"',
         "    if False:\n        pass",
     ),
+    # The page says dispatch is paused, but the next cycle ignores the flag
+    # and starts a Run anyway.
+    "the-pause-flag-is-ignored": (CYCLE, UNATTENDED_SUITE,
+        "    if control.is_paused(conn):",
+        "    if False:",
+    ),
+    # Clicking Pause writes `false`, so the response quietly returns the
+    # ordinary active page and the operator believes a control did nothing.
+    "the-pause-control-does-nothing": (CONTROL, WINDOW_SUITE,
+        "        (paused,),",
+        "        (False,),",
+    ),
+    # The flag is set but the page hides the banner and the Resume control.
+    "the-paused-banner-is-hidden": (LIVE_REGION, WINDOW_SUITE,
+        "    {% elif paused %}",
+        "    {% elif False %}",
+    ),
     # The box card shows the last SUCCESSFUL read instead of the last read, so
     # a box that has been unreachable for a week still renders last week's
     # hash, template and version as though they were current.
@@ -523,9 +541,9 @@ MUTATIONS = {
     # down whenever GitHub does, and takes a queue board it never asked for
     # with it.
     "the-history-reads-the-tracker": (WINDOW, HISTORY_SUITE,
-        "    (events, older), spend, error = _read_journal(_history_rows, ([], 0))",
+        "    (events, older), spend, error = _read_journal(_history_rows, empty)",
         "    return _loop_context(request)\n"
-        "    (events, older), spend, error = _read_journal(_history_rows, ([], 0))",
+        "    (events, older), spend, error = _read_journal(_history_rows, empty)",
     ),
     # The Run in flight is filed as history: a card with no bound, no duration
     # and no Proposal, shown as though the Run had ended.

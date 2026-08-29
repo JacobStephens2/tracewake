@@ -20,6 +20,27 @@
     <p class="terminal-alert terminal-alert-error">{{ error }}</p>
     {% endif %}
 
+    {% if paused is none %}
+    <p class="pause-control detail">Pause control unavailable while the
+       Selector database cannot be read.</p>
+    {% elif paused %}
+    <aside class="pause-banner terminal-alert" data-selector-pause="paused">
+      <div><strong>Selector paused.</strong> Scheduled cycles still inspect
+        and journal the queue, but dispatch nothing.</div>
+      <button type="button" class="btn btn-primary"
+              hx-post="{{ resume_url }}"
+              hx-target="#live-region"
+              hx-swap="outerHTML">Resume dispatch</button>
+    </aside>
+    {% else %}
+    <div class="pause-control">
+      <button type="button" class="btn btn-error btn-ghost"
+              hx-post="{{ pause_url }}"
+              hx-target="#live-region"
+              hx-swap="outerHTML">Pause dispatch</button>
+    </div>
+    {% endif %}
+
     {#- The status strip (#156). Unattended operation is a claim, and these four
         cells are where it is proved: what the Selector is doing, when the timer
         fires next, what is left of today's budget, and what the box it

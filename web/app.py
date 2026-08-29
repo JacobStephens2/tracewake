@@ -17,6 +17,7 @@ import subprocess
 import sys
 from datetime import timezone
 from pathlib import Path
+from typing import Callable, TypeVar
 
 import markdown as md
 import psycopg
@@ -34,6 +35,7 @@ ADR_DIR = PROJECT / "docs" / "adr"
 # the SQL.
 sys.path.insert(0, str(PROJECT / "selector"))
 import board as queue_board  # noqa: E402
+import control  # noqa: E402
 import cycle  # noqa: E402
 import journal  # noqa: E402
 
@@ -462,7 +464,9 @@ def _box(events: list[dict]) -> dict | None:
     return None
 
 
-def _selector_state(runs: list[dict], budget: dict, timer: dict) -> str:
+def _selector_state(
+    runs: list[dict], budget: dict, timer: dict, paused: bool
+) -> str:
     """What the Selector is doing, in the words the Journal already uses.
 
     The timer is read here and not only in its own cell, because "idle" and
@@ -477,6 +481,8 @@ def _selector_state(runs: list[dict], budget: dict, timer: dict) -> str:
         # A Run in flight is a Run in flight whatever the timer is doing: the
         # cycle holding it is already running and will record its outcome.
         return f"in flight: #{in_flight[0]['issue']}"
+    if paused:
+        return "paused - dispatch is off"
     if timer.get("state") != "active":
         return "stopped - nothing will start a cycle"
     if budget["spent"] >= budget["cap"]:
@@ -493,7 +499,12 @@ def _selector_state(runs: list[dict], budget: dict, timer: dict) -> str:
 HISTORY_RUNS = 50
 
 
-def _read_journal(read, default) -> tuple[object, "cycle.Spend | None", str | None]:
+_ReadT = TypeVar("_ReadT")
+
+
+def _read_journal(
+    read: Callable[[psycopg.Connection], _ReadT], default: _ReadT
+) -> tuple[_ReadT, "cycle.Spend | None", str | None]:
     """One read of the Journal: what `read` asks of it, and what has been spent.
 
     Both pages start here, so "the Journal is down" is one sentence written
@@ -530,6 +541,11 @@ def _history_rows(conn) -> tuple[list[dict], int]:
     return journal.events(conn, since=floor, kinds=sorted(RUN_KINDS)), older
 
 
+def _loop_rows(conn) -> tuple[list[dict], bool]:
+    """The Journal rows and pause flag rendered together on `/loop`."""
+    return journal.events(conn), control.is_paused(conn)
+
+
 def _budget(cap: int, spend) -> dict:
     """Today's cap, and what is left of it.
 
@@ -558,7 +574,8 @@ def _loop_context(request: Request) -> dict:
     that a static one cannot.
     """
     config = cycle.Config.from_env()
-    events, spend, error = _read_journal(journal.events, [])
+    empty: tuple[list[dict], bool] = ([], False)
+    (events, paused), spend, error = _read_journal(_loop_rows, empty)
     budget = _budget(config.daily_cap, spend)
     view = [
         {
@@ -586,8 +603,10 @@ def _loop_context(request: Request) -> dict:
         "timer": timer,
         "box": _box(events),
         "board": board_view,
+        "paused": paused if error is None else None,
         "state": (
-            _selector_state(runs, budget, timer) if error is None else None
+            _selector_state(runs, budget, timer, paused)
+            if error is None else None
         ),
         # Both halves of the live mechanism, resolved in one place: the
         # fragment the region re-fetches and the stream that tells it to. The
@@ -597,6 +616,8 @@ def _loop_context(request: Request) -> dict:
         "live_url": _path(request, "/loop/live"),
         "events_url": _path(request, "/loop/events"),
         "history_url": _path(request, "/loop/history"),
+        "pause_url": _path(request, "/loop/pause"),
+        "resume_url": _path(request, "/loop/resume"),
     }
 
 
@@ -612,7 +633,8 @@ def _history_context(request: Request) -> dict:
     work with it and leaves the Journal's untouched.
     """
     config = cycle.Config.from_env()
-    (events, older), spend, error = _read_journal(_history_rows, ([], 0))
+    empty: tuple[list[dict], int] = ([], 0)
+    (events, older), spend, error = _read_journal(_history_rows, empty)
     return {
         # History is what has ended. A Run still going has no bound, no
         # duration and no Proposal; /loop shows it live on the panel built
@@ -654,6 +676,23 @@ def loop_live(request: Request):
     return _page(request, "_loop_live.html", _loop_context(request))
 
 
+def _set_selector_paused(request: Request, paused: bool):
+    """Set the page's one control and return the live region it changes."""
+    with journal.connect() as conn:
+        control.set_paused(conn, paused)
+    return _page(request, "_loop_live.html", _loop_context(request))
+
+
+@app.post("/loop/pause", response_class=HTMLResponse)
+def pause_selector(request: Request):
+    return _set_selector_paused(request, True)
+
+
+@app.post("/loop/resume", response_class=HTMLResponse)
+def resume_selector(request: Request):
+    return _set_selector_paused(request, False)
+
+
 @app.get("/loop/history", response_class=HTMLResponse)
 def history_page(request: Request):
     """Every Run that has ended, and what is left of today's budget (#160)."""
@@ -691,9 +730,10 @@ async def _journal_stream(after: int | None):
 
     SSE rather than a WebSocket for the reason the rest of this app is
     server-rendered: the traffic is one-directional and the page's only write
-    is a form post. EventSource also reconnects on its own, and carries
-    `Last-Event-ID` when it does, so recovering from a dropped connection is a
-    header this endpoint honours rather than client state to keep.
+    is the pause flag's POST. EventSource also reconnects on its own, and
+    carries `Last-Event-ID` when it does, so recovering from a dropped
+    connection is a header this endpoint honours rather than client state to
+    keep.
     """
     yield f"retry: {SSE_RETRY_MS}\n\n"
     try:

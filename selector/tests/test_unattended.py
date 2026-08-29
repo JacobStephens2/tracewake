@@ -18,6 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import psycopg
+
 from conftest import BOX_FACTS, CYCLE, events, issue, last, one
 
 
@@ -85,6 +87,38 @@ def test_the_lock_is_released_when_the_cycle_ends(db, box, tmp_path):
 
 
 # --- The daily cap, across cycles -------------------------------------------
+
+
+def test_a_paused_cycle_dispatches_nothing_and_journals_why(db, box):
+    """The flag stops the next Run, but not the cycle's explanation of what
+    it found. The timer keeps running while paused, so the Journal must say
+    why an otherwise Eligible issue stayed put."""
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute("UPDATE selector.control SET paused = true")
+
+    result = box.run(db, [issue(645)])
+
+    assert result.returncode == 0, result.stderr
+    assert events(db, "run.dispatched") == []
+    assert "seed " not in box.commands()
+    assert "box " not in box.commands()
+    finished = last(db, "cycle.finished")
+    assert finished["halted"] == "paused"
+    assert finished["eligible"] == [645]
+
+
+def test_resuming_allows_the_next_cycle_to_dispatch_again(db, box):
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute("UPDATE selector.control SET paused = true")
+    box.run(db, [issue(645)])
+
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute("UPDATE selector.control SET paused = false")
+    result = box.run(db, [issue(645)])
+
+    assert result.returncode == 0, result.stderr
+    assert len(events(db, "run.dispatched")) == 1
+    assert "box loop/645-the-nightly-sync-script" in box.commands()
 
 
 def test_the_fifth_dispatch_of_a_day_is_refused_and_journaled(db, box, dispatch):

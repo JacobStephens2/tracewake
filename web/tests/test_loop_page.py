@@ -38,6 +38,29 @@ def test_home_links_to_loop():
     assert 'href="/loop"' in resp.text
 
 
+def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
+    paused = client.post("/loop/pause", headers={"HX-Request": "true"})
+
+    assert paused.status_code == 200
+    assert 'data-selector-pause="paused"' in paused.text
+    assert "Resume dispatch" in paused.text
+    assert 'data-selector-pause="paused"' in client.get("/loop").text
+
+    resumed = client.post("/loop/resume", headers={"HX-Request": "true"})
+
+    assert resumed.status_code == 200
+    assert 'data-selector-pause="paused"' not in resumed.text
+    assert "Pause dispatch" in resumed.text
+    assert 'data-selector-pause="paused"' not in client.get("/loop").text
+
+
+def test_the_pause_control_posts_back_to_the_same_mounted_instance(db):
+    prefixed = TestClient(app, root_path="/loop-staging")
+    body = prefixed.get("/loop").text
+
+    assert 'hx-post="/loop-staging/loop/pause"' in body
+
+
 def test_the_cycle_card_shows_the_pick_and_every_skip_with_its_reason(db):
     """Issue #153's viewing criterion, at HTTP level over a seeded Journal."""
     with journal.connect(db) as conn:
@@ -114,6 +137,30 @@ def test_a_cycle_that_picked_nothing_says_why(db):
     body = client.get("/loop").text
     assert "picked nothing" in body
     assert "run-in-flight" in body
+
+
+def test_a_paused_cycle_card_says_paused(db):
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        journal.append(
+            conn,
+            "cycle.finished",
+            {
+                "cycle": cycle,
+                "considered": 1,
+                "eligible": [645],
+                "skipped": {},
+                "picked": None,
+                "halted": "paused",
+                "dispatched_in_window": 0,
+                "daily_cap": 4,
+                "dry_run": False,
+            },
+        )
+
+    body = client.get("/loop").text
+    assert "picked nothing" in body
+    assert "paused" in body
 
 
 def test_events_outside_a_cycle_still_reach_the_page(db):

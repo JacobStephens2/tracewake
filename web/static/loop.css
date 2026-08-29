@@ -87,6 +87,24 @@
    long before the other cells do. */
 .strip .cell-box { grid-column: 1 / -1; }
 
+/* The page's only control (#161). Paused is a page-wide operating state, so
+   its banner sits above the strip rather than pretending to be one status
+   cell among four. */
+.pause-control {
+  display: flex;
+  justify-content: flex-end;
+  margin: 1rem 0;
+}
+.pause-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-color: var(--error-color);
+  color: var(--error-color);
+}
+.pause-banner button { flex: 0 0 auto; }
+
 /* The Termination Contract the Run is under (#162). Open on the Run in
    flight, where "what is it allowed to do for the next ninety minutes" is the
    question being asked, and folded shut on the ended Runs below it so a
