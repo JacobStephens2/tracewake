@@ -22,7 +22,7 @@ MUTATIONS = {
     # itself lives in contract.sh, which both this script and run.sh source;
     # what is mutated here is this script's use of it.
     "base-guessed": (
-        '    base="$(loop_base_branch "${repo}" "${remote}" || true)"',
+        '    base="${default_base}"',
         '    base="main"',
     ),
     # The push is forced, so a Run resolves a conflict by discarding whatever
@@ -62,9 +62,24 @@ MUTATIONS = {
     # line that GitHub silently ignores for an actor without write access on
     # the other repository - a proposal that claims to retire a task and does
     # not.
-    "closes-cross-repository": (
+    "closes-repository-guard-dropped": (
+        '    if [[ -n ${task_ref} && ${task_ref} == "${target_repo}#"* && ${base_is_default} == yes ]]; then',
+        '    if [[ -n ${task_ref} && ${base_is_default} == yes ]]; then',
+    ),
+    # The default-branch guard goes, so a proposal aimed at a release branch
+    # with --base carries a Closes line GitHub never fires: the keyword acts on
+    # a merge into the default branch and nowhere else.
+    "closes-default-branch-guard-dropped": (
+        '    if [[ -n ${task_ref} && ${task_ref} == "${target_repo}#"* && ${base_is_default} == yes ]]; then',
         '    if [[ -n ${task_ref} && ${task_ref} == "${target_repo}#"* ]]; then',
-        "    if [[ -n ${task_ref} ]]; then",
+    ),
+    # The default is compared against a guess rather than the remote's own
+    # HEAD, which is the same fault as `base-guessed` one step later: on a
+    # repository whose default branch is not `master` every proposal silently
+    # loses its Closes line.
+    "closes-default-guessed": (
+        'default_base="$(loop_base_branch "${repo}" "${remote}" || true)"',
+        'default_base="master"',
     ),
     # The proposal's target is taken from where git actually pushes rather than
     # from what the remote declares, so a rewrite aims it somewhere else.
