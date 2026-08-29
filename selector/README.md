@@ -217,6 +217,17 @@ The last read happens after the Run has ended, on the way out: an Iteration
 written in a Run's final seconds has no next poll coming, and would otherwise
 be missing from the page for good.
 
+**The Contract comes across the same hop.** The bounds a Run executes under
+are the box's - the environment `run.sh` was started with - and the only place
+they cross to this side is the summary the Run writes into its log before its
+first Iteration. The watcher journals that summary as one `run.contract` row
+per Run, so the current-Run panel shows the terms THAT Run was given rather
+than this side's configuration read back at the operator (story 25), and the
+discipline skills the Iterations were told to invoke come with it (#162). The
+same three properties hold: complete or nothing, this Run's or none, and
+exactly one row however many times the cumulative log is re-read
+(`journal.contract_seen` is what makes a restarted watch idempotent too).
+
 **The work checkout is not created for you.** Seeding commits the Plan, so the
 checkout needs an identity to commit as - the operator's, because that is
 whose Handover this is. On this VM `conductor`'s global git config already
@@ -588,8 +599,8 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   nothing.
 - `watcher.py` - the Iteration watcher: the Progress Log parser, and the
   thread that polls the box for the length of a Run. It journals
-  `run.iteration` and `run.watch-failed` and nothing else, and it never
-  raises into the dispatch it is watching.
+  `run.iteration`, `run.contract` and `run.watch-failed` and nothing else, and
+  it never raises into the dispatch it is watching.
 - `box-sources/progress.sh` - the default `SELECTOR_BOX_PROGRESS_COMMAND`: one
   SSH hop that `cat`s the box checkout's Progress Log. Read-only, holds no
   credential, touches no working tree.

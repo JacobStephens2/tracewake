@@ -268,6 +268,14 @@ killed_count=0
 turn_bound_count=0
 promise_count=0
 
+# The whole of what an Iteration is told. A fresh process each time, so this
+# file is the entire briefing: the Plan for the task, the Progress Log for what
+# is already known, and - since a Run occupies the slot a person would have
+# invoked `/implement` from - that checklist too, naming the discipline skills
+# the agent may invoke for itself (#162). The names come from the Contract
+# rather than being spelled out here, because the Progress Log records them as
+# well and a prompt that named a different discipline from the record of the
+# Run would be wrong in the one place nobody was watching.
 prompt_for_iteration() {
     local n="$1"
     cat <<PROMPT
@@ -280,13 +288,16 @@ You have no memory of earlier Iterations. Everything you know is on disk.
    do not repeat exploration it already reports.
 3. Do exactly ONE task from the Plan. One, so that a bad Iteration is small,
    reviewable, and revertible on its own.
-4. Update ${LOOP_PLAN_PATH} to reflect what is now done and what remains.
-5. Append to ${LOOP_PROGRESS_LOG_PATH} under a heading for this Iteration: what
+4. Work it in the discipline the repository's own skills define, invoking them
+   by name for yourself: ${LOOP_DISCIPLINE_SKILLS}. Run the tests for what you
+   touched as you go, and the suite once before you commit.
+5. Update ${LOOP_PLAN_PATH} to reflect what is now done and what remains.
+6. Append to ${LOOP_PROGRESS_LOG_PATH} under a heading for this Iteration: what
    you did, what you DECIDED and why, and anything BLOCKED. A later Iteration
    reads this instead of rediscovering it. A log of completed tasks alone is
    not enough.
-6. Commit everything you changed, with a message naming the task.
-7. Exit.
+7. Commit everything you changed, with a message naming the task.
+8. Exit.
 
 Do not push, do not open a pull request, and do not merge - the Run's only
 external effect is a proposal a human reviews.

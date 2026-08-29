@@ -374,6 +374,44 @@ MUTATIONS = {
         "        if self._reported_failure:\n            return None",
         "        if False:\n            return None",
     ),
+    # --- The Contract the Run is under (#162) -------------------------------
+
+    # The Contract is journaled on every poll, so one Run's terms become a row
+    # a minute for ninety minutes - the same burial as the Iterations above,
+    # in a Journal that can only be appended to.
+    "the-contract-is-journaled-every-poll": (WATCHER, WATCHER_SUITE,
+        "        if self._contract_journaled:\n            return",
+        "        if False:\n            return",
+    ),
+    # A summary caught mid-write is journaled, so the panel shows a Run bound
+    # by however many of its five bounds had been printed when the poll landed
+    # - and the row can never be corrected.
+    "half-written-contracts-are-journaled": (WATCHER, WATCHER_SUITE,
+        "    if not (run_started and lines and complete):",
+        "    if not (run_started and lines):",
+    ),
+    # A retry shows the terms of the attempt before it: the block its watcher
+    # reads while the box is still checking out is that attempt's, and its
+    # Contract is not necessarily this dispatch's.
+    "another-runs-contract-is-journaled": (WATCHER, WATCHER_SUITE,
+        "        if not of_this_run([record], self.started,"
+        " self.config.clock_skew_seconds):\n            return",
+        "        if False:\n            return",
+    ),
+    # The Contract summary runs on past the line that ends it, so Iteration
+    # 1's own fields - its agent exit, its head - are rendered on the panel as
+    # bounds the Run is executing under.
+    "the-contract-swallows-the-first-record": (WATCHER, WATCHER_SUITE,
+        "        if run_started is None or complete:",
+        "        if run_started is None:",
+    ),
+    # The panel stops carrying the Contract the box reported, so a Run in
+    # flight says nothing about what it is allowed to do - which is the whole
+    # of what the card is for.
+    "the-contract-never-reaches-the-card": (WINDOW, WINDOW_SUITE,
+        '            card["contract"] = payload.get("contract")',
+        "            pass",
+    ),
     # The Run's Iterations render newest first, so a Run reads as counting
     # backwards and the page disagrees with the log it is showing.
     "iterations-render-newest-first": (WINDOW, WINDOW_SUITE,

@@ -277,6 +277,7 @@ ROUTE_KINDS = set(ROUTE_NAMES)
 # rather than a set union rebuilt per event.
 RUN_KINDS = ROUTE_KINDS | {
     "run.dispatched", "run.outcome", "run.iteration", "run.watch-failed",
+    "run.contract",
 }
 
 
@@ -326,6 +327,13 @@ def _runs(events: list[dict]) -> list[dict]:
             card.setdefault("iteration_records", []).append(
                 {**payload, "at": _utc(event["at"])}
             )
+        elif event["kind"] == "run.contract":
+            # The terms this Run is executing under (#162), read by the
+            # watcher out of the summary the box writes at Run start. It is
+            # the BOX's Contract and not this side's configuration: the two
+            # can differ, and a panel showing the wrong one would reassure
+            # about bounds nothing is enforcing.
+            card["contract"] = payload.get("contract")
         elif event["kind"] == "run.watch-failed":
             # Said once per Run by the watcher, and shown, because a Run with
             # no Iterations on its card and a Run whose Progress Log could not

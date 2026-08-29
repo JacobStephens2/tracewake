@@ -103,6 +103,34 @@ The rest are still first guesses. One Run corrects at most the bounds that
 fired, which is why they live in one file rather than scattered through
 `run.sh`.
 
+## What an Iteration is told
+
+An Iteration is a fresh process with no memory, so its prompt is the whole
+briefing: read the Plan for the task, read the Progress Log for what is already
+known, do exactly one task, update both, commit. Since a Run occupies the slot
+a person would have invoked `/implement` from, that checklist is in the prompt
+too - and with it the discipline skills the agent may invoke for itself:
+
+```
+/tdd for code work, /diagnosing-bugs for something broken or slow,
+/code-review before every commit
+```
+
+They are declared once, as `LOOP_DISCIPLINE_SKILLS` in `contract.sh`, because
+two readers need the same names: the prompt names them to the agent, and
+`loop_contract_summary` writes them into the Progress Log with the five bounds.
+A prompt naming one discipline while the Run's own record named another would
+be wrong in the one place nobody is watching - the prompt is a scratch file the
+Run deletes, so the log is the only account that survives.
+
+All three are **model-invocable** in the repository's vendored set, and the list
+stops there on purpose: naming a user-invoked skill would mean an Iteration
+invoking something whose frontmatter says a person invokes it, and forking that
+frontmatter to suit the Loop is the change spec #151 refuses to make.
+`/implement`'s last two steps are absent for the same kind of reason - the box
+holds no Issues permission, so it cannot check acceptance criteria off a ticket,
+and pushing is the Run's act rather than the Iteration's.
+
 ## How a Run reports itself
 
 Stdout, first lines, machine-readable so that triage is one line rather than a
