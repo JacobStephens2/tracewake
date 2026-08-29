@@ -63,6 +63,10 @@ _ITERATION_HEADING = re.compile(
     r"^### Iteration (?P<number>\d+) - (?P<stamp>\S+)\s*$"
 )
 
+# The line `run.sh` prints above the Contract summary, from contract.sh's
+# `loop_contract_summary`. Copied for the same reason the headings above are.
+_CONTRACT_HEADING = re.compile(r"^Termination Contract:\s*$")
+
 _AGENT_EXIT = re.compile(r"^- Agent exit: (?P<code>-?\d+)(?: \((?P<note>.*)\))?\s*$")
 _TURN_BOUND = re.compile(r"^- Turn bound: (?P<turns>\d+)\s*$")
 _HEAD = re.compile(r"^- Head: (?P<before>\S+) -> (?P<after>\S+)\s*$")
@@ -209,6 +213,70 @@ def iteration_records(text: str) -> list[dict]:
     return records
 
 
+def contract_record(text: str) -> dict | None:
+    """The Termination Contract of the log's LAST Run block, or None.
+
+    The bounds a Run executes under are the box's, not this side's: they are
+    the environment `run.sh` was started with, and the only place they cross
+    the SSH hop is the summary it writes into the Progress Log at Run start.
+    Reading them here is what lets the current-Run panel show the Contract the
+    Run is actually under (spec #151, story 25) rather than repeating this
+    side's own configuration back at the operator, and it carries the
+    discipline skills with the bounds because they are one summary (#162).
+
+    The summary is written once per Run, before the first Iteration, so it
+    reaches the page within a poll of the dispatch - which covers most of a
+    Run's first quarter of an hour, when there is otherwise nothing to show.
+
+    Complete or nothing, like an Iteration record: the summary is taken only
+    once the line that ends it has arrived. The log is read while it is being
+    appended to and the Journal is append-only, so half a Contract journaled
+    here is a wrong row that can only ever be contradicted.
+
+    The lines come back as the box rendered them and are never parsed into
+    fields. That is the point rather than a shortcut: what the panel should
+    show is the summary the Run wrote about itself, so a reader here that
+    understood the bounds would be a second definition of them on the side of
+    the hop that does not set them.
+
+    It is also not the only run of `- ` lines in the block - every Iteration
+    record is one too - so it ends at the first line that is not one of its
+    own. A reader that ran to the end of the block instead would put Iteration
+    1's agent exit on the panel as one of the Run's bounds.
+    """
+    run_started = None
+    lines: list[str] | None = None
+    complete = False
+    for line in text.splitlines():
+        heading = _RUN_HEADING.match(line)
+        # The same guard the records get: only a heading carrying a stamp that
+        # parses is a block boundary, because the agent writes headings here.
+        if heading and _parse_stamp(heading.group("stamp")):
+            run_started = heading.group("stamp")
+            lines, complete = None, False
+            continue
+        if run_started is None or complete:
+            continue
+        if lines is None:
+            if _CONTRACT_HEADING.match(line):
+                lines = []
+            continue
+        if line.startswith("- "):
+            lines.append(line[2:].strip())
+        elif lines:
+            complete = True
+        elif line.strip():
+            # Bullets that do not FOLLOW the heading are not the summary. The
+            # blank line `run.sh` writes between the two is allowed through;
+            # anything else means this heading is the agent quoting the words
+            # rather than the Loop writing its terms, and the next run of
+            # bullets in the file is Iteration 1's own record.
+            lines = None
+    if not (run_started and lines and complete):
+        return None
+    return {"run_started": run_started, "contract": lines}
+
+
 def of_this_run(records: list[dict], watch_started: datetime,
                 skew: float) -> list[dict]:
     """The records that belong to the Run being watched, by when it started.
@@ -284,6 +352,9 @@ class Watcher:
             target=self._watch, name="iteration-watcher", daemon=True
         )
         self._reported_failure = False
+        # Set from the Journal when the watch starts (`_watch`), so a second
+        # watcher for one Run cannot append a second Contract row.
+        self._contract_journaled = False
 
     def start(self) -> None:
         self._thread.start()
@@ -312,6 +383,9 @@ class Watcher:
             seen = journal.iterations_seen(
                 conn, self.run["issue"], self.run.get("attempt")
             )
+            self._contract_journaled = journal.contract_seen(
+                conn, self.run["issue"], self.run.get("attempt")
+            )
             while True:
                 self._poll(conn, seen)
                 if self._stop.wait(self.config.interval_seconds):
@@ -326,6 +400,7 @@ class Watcher:
         text = self._read(conn)
         if text is None:
             return
+        self._journal_contract(conn, text)
         for record in of_this_run(
             iteration_records(text), self.started, self.config.clock_skew_seconds
         ):
@@ -333,6 +408,27 @@ class Watcher:
                 continue
             seen.add(record["iteration"])
             journal.append(conn, "run.iteration", {**self.run, **record})
+
+    def _journal_contract(self, conn: psycopg.Connection, text: str) -> None:
+        """The Run's terms, once.
+
+        The log is cumulative and every poll re-reads the whole of it, so the
+        flag is what keeps ninety polls from leaving ninety identical rows -
+        and it is seeded from the Journal rather than from False, so a watch
+        that started over mid-Run does not add a second one either. The clock
+        guard is the same one the records get: the block a retry's watcher
+        reads for its first seconds is the previous attempt's, and that attempt
+        ran under the Contract of its own dispatch.
+        """
+        if self._contract_journaled:
+            return
+        record = contract_record(text)
+        if record is None:
+            return
+        if not of_this_run([record], self.started, self.config.clock_skew_seconds):
+            return
+        self._contract_journaled = True
+        journal.append(conn, "run.contract", {**self.run, **record})
 
     def _read(self, conn: psycopg.Connection) -> str | None:
         try:

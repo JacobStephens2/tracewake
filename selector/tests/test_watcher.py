@@ -47,7 +47,16 @@ Task: acme/widgets#645
 
 Termination Contract:
 
-- Iterations: at most 5
+- Iterations per Run: 5
+- Iteration wall clock: 900s
+- Turns per Iteration: 100
+- Run wall clock: 5400s
+- Consecutive No-op Iterations that abort: 2
+- Completion Promise: recorded, never terminal
+- Agent command: /home/loop/loop/agents/claude.sh
+- Discipline skills: /tdd for code work, /diagnosing-bugs for something \
+broken or slow, /code-review before every commit
+
 """
 
 ITERATION_ONE = """
@@ -219,6 +228,62 @@ def test_the_agents_own_narrative_is_not_read_as_a_record():
     assert first["dirty"] is False
 
 
+# --- The Termination Contract the Run is under (#162) -----------------------
+
+
+def test_the_contract_is_read_from_the_run_block():
+    """The bounds a Run is executing under exist only on the box, and the Run
+    writes them into its log once at Run start. Reading them here is what lets
+    the current-Run panel show the Contract rather than repeating whatever this
+    side's own configuration happens to say (spec #151, story 25)."""
+    record = watcher.contract_record(log("2026-08-27T12:00:00Z", ITERATION_ONE))
+    assert record["run_started"] == "2026-08-27T12:00:00Z"
+    assert "Iterations per Run: 5" in record["contract"]
+    # The discipline the Iterations were told to work in, carried with the
+    # bounds because it is part of the same summary (#162).
+    (skills,) = [
+        line for line in record["contract"]
+        if line.startswith("Discipline skills:")
+    ]
+    assert "/tdd" in skills
+    assert "/diagnosing-bugs" in skills
+    assert "/code-review" in skills
+
+
+def test_the_contract_ends_where_the_summary_ends():
+    """The bullets under the Contract are not the only bullets in the file.
+    A reader that ran to the end of the block would swallow Iteration 1's own
+    fields into the Contract and put them on the panel as bounds."""
+    record = watcher.contract_record(log("2026-08-27T12:00:00Z", ITERATION_ONE))
+    assert not any("Agent exit" in line for line in record["contract"])
+
+
+def test_a_half_written_contract_is_not_a_contract_yet():
+    """Same rule as an Iteration record: the log is read while it is being
+    appended to, and a Contract journaled mid-write can never be corrected."""
+    partial = SEEDED + RUN_HEADER.format(stamp="2026-08-27T12:00:00Z").rstrip("\n")
+    assert watcher.contract_record(partial) is None
+
+
+def test_a_log_with_no_contract_block_yields_nothing():
+    """A box that wrote no summary - an older `run.sh`, or the trimmed log this
+    suite keeps as a fixture - leaves the panel with no Contract card rather
+    than with an empty one."""
+    assert watcher.contract_record(SEEDED) is None
+    assert watcher.contract_record(
+        (FIXTURES / "box-progress-run-648.md").read_text()
+    ) is None
+
+
+def test_the_contract_of_an_earlier_attempt_is_not_this_runs():
+    """Told apart by when the Run started, exactly as its Iterations are: a
+    retry's watcher reads the previous attempt's block while the box is still
+    checking out, and that attempt ran under whatever the Contract said then."""
+    started = watcher._parse_stamp("2026-08-27T14:00:00Z")
+    old = watcher.contract_record(log("2026-08-27T12:00:00Z", ITERATION_ONE))
+    assert watcher.of_this_run([old], started, skew=300) == []
+
+
 # --- The watcher against a live dispatch ------------------------------------
 
 
@@ -357,3 +422,35 @@ def test_a_previous_attempts_iterations_are_not_journaled_as_this_ones(
     )
     assert result.returncode == 0, result.stderr
     assert events(db, "run.iteration") == []
+
+
+def test_the_contract_is_journaled_once_for_the_run(db, watched_box):
+    """The Contract reaches the Journal as its own row, written the first poll
+    that can read the whole of it - so the panel can show the terms of a Run
+    before its first Iteration has ended, which is most of a Run's first
+    quarter-hour. Once, from a log that was re-read many times over."""
+    now = now_stamp()
+    result = _run_with_a_progress_log(
+        watched_box, db,
+        SEEDED + RUN_HEADER.format(stamp=now),
+        ITERATION_ONE,
+    )
+    assert result.returncode == 0, result.stderr
+    rows = events(db, "run.contract")
+    assert len(rows) == 1, "said once, not once per poll"
+    payload = rows[0]["payload"]
+    assert payload["issue"] == 645
+    assert payload["attempt"] == 1
+    assert any("/code-review" in line for line in payload["contract"])
+
+
+def test_an_earlier_attempts_contract_is_not_journaled_as_this_ones(
+    db, watched_box
+):
+    """The clock guard, end to end: the only Run block on the box is one that
+    ended hours ago, and its terms are not this Run's."""
+    result = _run_with_a_progress_log(
+        watched_box, db, log("2026-08-27T02:00:00Z", ITERATION_ONE)
+    )
+    assert result.returncode == 0, result.stderr
+    assert events(db, "run.contract") == []

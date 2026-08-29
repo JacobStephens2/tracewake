@@ -71,6 +71,36 @@ def iterations_seen(conn: psycopg.Connection, issue: int,
     return {row[0] for row in rows}
 
 
+def contract_seen(conn: psycopg.Connection, issue: int,
+                  attempt: int | None) -> bool:
+    """Whether this Run's Termination Contract is already journaled.
+
+    The question `iterations_seen` answers, for the row there is exactly one
+    of per Run: the watcher re-reads a cumulative log every minute, and a watch
+    that started over - a restarted cycle, a retry on the same branch - must
+    not append a second Contract for one Run. Scoped by attempt because a retry
+    is its own Run and can be dispatched under different terms.
+
+    Unbounded in time, exactly like `iterations_seen`, and it inherits that
+    query's residual: `cycle.attempts` counts dispatches since the issue was
+    last labeled, so a fresh Handover of an issue worked before is attempt 1
+    again. Its rows then land on the earlier attempt's card - the page keys a
+    card by issue and attempt - and this query finds that card's Contract and
+    writes none. The card is already the wrong shape in that case; a Contract
+    scoped differently from the Iterations beside it would make it wrong in a
+    second, less visible way instead.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM journal.events"
+        " WHERE kind = 'run.contract'"
+        "   AND payload->>'issue' = %s"
+        "   AND payload->>'attempt' IS NOT DISTINCT FROM %s"
+        " LIMIT 1",
+        (str(issue), None if attempt is None else str(attempt)),
+    ).fetchone()
+    return row is not None
+
+
 def events(conn: psycopg.Connection, limit: int = 200,
            since: int | None = None,
            kinds: list[str] | None = None) -> list[dict]:

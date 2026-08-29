@@ -760,3 +760,96 @@ def test_a_box_that_could_not_be_read_says_so_on_the_card(db):
 
 def test_a_box_never_observed_is_absent_rather_than_invented(db):
     assert "not read yet" in strip(client.get("/loop").text).lower()
+
+
+# --- The Contract the Run is under (#162) -----------------------------------
+
+
+CONTRACT = [
+    "Iterations per Run: 5",
+    "Iteration wall clock: 900s",
+    "Turns per Iteration: 100",
+    "Run wall clock: 5400s",
+    "Consecutive No-op Iterations that abort: 2",
+    "Completion Promise: recorded, never terminal",
+    "Agent command: /home/loop/loop/agents/claude.sh",
+    "Discipline skills: /tdd for code work, /diagnosing-bugs for something "
+    "broken or slow, /code-review before every commit",
+]
+
+
+def _contract_row(conn, cycle, **over):
+    payload = {
+        "cycle": cycle,
+        "issue": 645,
+        "attempt": 1,
+        "branch": "loop/645-the-nightly-sync-script",
+        "run_started": "2026-08-27T12:00:00Z",
+        "contract": CONTRACT,
+    }
+    payload.update(over)
+    return journal.append(conn, "run.contract", payload)
+
+
+def test_the_card_of_the_run_in_flight_names_the_discipline_skills(db):
+    """Issue #162's viewing criterion. The three skills are on the card
+    because they are on the Contract the box wrote into its Progress Log -
+    the page is showing what THAT Run was told, not what this side's own
+    configuration would have told it."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _contract_row(conn, cycle)
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "/tdd" in runs
+    assert "/diagnosing-bugs" in runs
+    assert "/code-review" in runs
+
+
+def test_the_contract_card_shows_the_bounds_the_box_reported(db):
+    """The bounds, from the same row. A Run in flight showed nothing about its
+    terms before this: they are the box's environment, and the summary in its
+    log is the only place they cross the hop (spec #151, story 25)."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _contract_row(conn, cycle)
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "Iterations per Run: 5" in runs
+    assert "Run wall clock: 5400s" in runs
+
+
+def test_a_run_with_no_contract_row_shows_no_contract_card(db):
+    """A watcher that could not read the log, or a box on an older `run.sh`,
+    leaves the card off rather than inventing terms from this side."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "Termination Contract" not in runs
+
+
+def test_a_contract_is_shown_on_the_run_it_was_read_for(db):
+    """Paired by issue and attempt like every other row on a card: a retry can
+    be dispatched under different terms from the attempt before it."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle, attempt=1)
+        _contract_row(conn, cycle, attempt=1,
+                      contract=["Iterations per Run: 5"])
+        journal.append(
+            conn, "run.outcome",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "outcome": "agent-failed", "exit": 4, "iterations": 1,
+             "faults": "agent-failed"},
+        )
+        _dispatch_row(conn, cycle, attempt=2)
+        _contract_row(conn, cycle, attempt=2,
+                      contract=["Iterations per Run: 9"])
+    cards = client.get("/loop").text.split("<h2>Cycles</h2>")[0].split(
+        '<section class="run'
+    )[1:]
+    assert len(cards) == 2
+    newest, oldest = cards
+    assert "Iterations per Run: 9" in newest and "Run: 5" not in newest
+    assert "Iterations per Run: 5" in oldest and "Run: 9" not in oldest

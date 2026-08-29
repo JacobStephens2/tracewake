@@ -32,7 +32,7 @@ was deliberately left off are in
 
 | File | What it is |
 | --- | --- |
-| `contract.sh` | The Termination Contract. Five bounds, one place. |
+| `contract.sh` | The Termination Contract. Five bounds, one place - plus the discipline an Iteration is told to work in. |
 | `seed-run.sh` | The setup step. One chosen task in, a Plan and a Progress Log out (#82). |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `propose.sh` | Proposal-Only Output. The push and the draft pull request (#83). |
@@ -102,6 +102,34 @@ about four minutes apart, so whichever bites, bites alone. The evidence is in
 The rest are still first guesses. One Run corrects at most the bounds that
 fired, which is why they live in one file rather than scattered through
 `run.sh`.
+
+## What an Iteration is told
+
+An Iteration is a fresh process with no memory, so its prompt is the whole
+briefing: read the Plan for the task, read the Progress Log for what is already
+known, do exactly one task, update both, commit. Since a Run occupies the slot
+a person would have invoked `/implement` from, that checklist is in the prompt
+too - and with it the discipline skills the agent may invoke for itself:
+
+```
+/tdd for code work, /diagnosing-bugs for something broken or slow,
+/code-review before every commit
+```
+
+They are declared once, as `LOOP_DISCIPLINE_SKILLS` in `contract.sh`, because
+two readers need the same names: the prompt names them to the agent, and
+`loop_contract_summary` writes them into the Progress Log with the five bounds.
+A prompt naming one discipline while the Run's own record named another would
+be wrong in the one place nobody is watching - the prompt is a scratch file the
+Run deletes, so the log is the only account that survives.
+
+All three are **model-invocable** in the repository's vendored set, and the list
+stops there on purpose: naming a user-invoked skill would mean an Iteration
+invoking something whose frontmatter says a person invokes it, and forking that
+frontmatter to suit the Loop is the change spec #151 refuses to make.
+`/implement`'s last two steps are absent for the same kind of reason - the box
+holds no Issues permission, so it cannot check acceptance criteria off a ticket,
+and pushing is the Run's act rather than the Iteration's.
 
 ## How a Run reports itself
 
@@ -373,7 +401,7 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and eighty-eight tests, no model and no network. Fifty-six drive `run.sh`
+Two hundred and ninety tests, no model and no network. Fifty-eight drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history, and what it told the operator.
 Thirty-two drive `check-inventory.sh` against small fixture checkouts. Forty-eight
@@ -405,9 +433,10 @@ component (spec issue #73, Seam B).
 Contract, each guard of the check, each credential family, each guard of the
 seed step, each thing holding Proposal-Only Output up, each property of the
 boundary, each thing that makes a notification honest - and confirms the suite
-goes red. A hundred and eighteen deliberate breaks. The twenty-seven covering
-`run.sh` and the notification surface were re-run whole for #110 and all
-twenty-seven were caught; the rest were caught when they were written, and each
+goes red. A hundred and twenty-one deliberate breaks. The twenty-three covering
+`run.sh` and the two covering `contract.sh` were re-run whole for #162 and all
+twenty-five were caught; the five covering the notification surface were re-run
+whole for #110; the rest were caught when they were written, and each
 subject's set can be re-run on its own. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs

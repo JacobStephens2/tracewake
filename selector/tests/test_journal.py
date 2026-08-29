@@ -50,7 +50,7 @@ def test_writer_surface_is_append_only():
         # they hold a LISTEN and re-read the rows a notification names, and
         # they write nothing - a Journal that could be changed by something
         # watching it would not be a Journal.
-        "events", "iterations_seen", "run_window",
+        "events", "iterations_seen", "contract_seen", "run_window",
         "keepalive_seconds", "listen", "_drain", "_since",
     }
 

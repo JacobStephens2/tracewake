@@ -29,6 +29,20 @@
           &middot; owning area: {{ r.area }}
           &middot; dispatched {{ r.at }}</span>
       </p>
+      {#- The terms the Run is executing under (#162, and story 25's second
+          half). Read by the watcher out of the summary the box writes into
+          its Progress Log at Run start, so it is the Contract THAT Run was
+          given - including the discipline skills its Iterations were told to
+          invoke - and not this side's configuration read back. Absent when
+          the log could not be read: no card beats an invented one. -#}
+      {% if r.contract %}
+      <details class="contract" {% if r.in_flight %}open{% endif %}>
+        <summary>Termination Contract</summary>
+        <ul>
+          {% for line in r.contract %}<li>{{ line }}</li>{% endfor %}
+        </ul>
+      </details>
+      {% endif %}
       {#- What the Run is doing, while it does it (#157). The watcher reads
           the box's Progress Log about once a minute, so these appear during
           the Run rather than all at once when it ends. Shown on an ended card

@@ -32,6 +32,7 @@ loop_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # and the mutations to apply. Adding a script to the Loop means adding a row.
 subjects=(
     "run.sh|tests/loop.bats|tests/mutations.py"
+    "contract.sh|tests/loop.bats|tests/contract-mutations.py"
     "check-inventory.sh|tests/check-inventory.bats|tests/check-mutations.py"
     "assert-credentials.sh|tests/assert-credentials.bats|tests/credential-mutations.py"
     "seed-run.sh|tests/seed-run.bats|tests/seed-mutations.py"

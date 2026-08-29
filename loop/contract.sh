@@ -90,6 +90,41 @@
 # verifies it and Pocock documents his agent lying with it.
 : "${LOOP_COMPLETION_PROMISE:=LOOP: WORK COMPLETE}"
 
+# --- The discipline the Iterations work in ----------------------------------
+#
+# The skills an Iteration is told to invoke for itself, as one line, because
+# both readers want the same names: `prompt_for_iteration` in run.sh names them
+# to the agent, and `loop_contract_summary` below writes them into the Progress
+# Log. Two spellings would be a Run whose record says it worked in a discipline
+# its prompt never asked for, and nothing offline could notice.
+#
+# A Run occupies the slot a person would have invoked `/implement` from, so
+# nobody is there to choose a skill per task - which is why the prompt absorbs
+# that checklist and names these three. All three are MODEL-INVOCABLE in the
+# vendored set, and the list stops there deliberately: a user-invoked skill
+# named here would be an Iteration told to invoke something whose frontmatter
+# says a person invokes it, and forking that frontmatter to suit the Loop is
+# exactly the change spec #151 refuses to make (ADR 0014's skills mount is
+# read-write, so a fork would land in the Proposal diff as the Loop editing the
+# repository's own rules).
+#
+# It is NOT a sixth bound. It ends nothing, and no Run reports it as the thing
+# that ended it; it rides in the summary because the summary is where a Run's
+# record of its own terms is written, which is the same reason the agent command
+# is there. The five bounds are still five.
+#
+# Nothing offline can verify that these three still exist in the repository the
+# Run works, or that they are still model-invocable: the skills arrive as
+# reviewed re-vendor commits in another repository, and this suite runs here.
+# A re-vendor that renamed one would leave the prompt naming a skill the agent
+# cannot invoke - which costs an Iteration its discipline, not a Run its bounds.
+#
+# `/implement`'s last two steps are deliberately absent. Checking acceptance
+# criteria off on the ticket is impossible here - the box holds no Issues
+# permission at all (ADR 0010) - and pushing is the Run's own act, not the
+# Iteration's.
+: "${LOOP_DISCIPLINE_SKILLS:=/tdd for code work, /diagnosing-bugs for something broken or slow, /code-review before every commit}"
+
 # How much of a faulting Iteration's agent output is quoted into the Progress
 # Log. Not a bound - a Run nobody watched has to be diagnosable from the file it
 # leaves behind.
@@ -181,5 +216,6 @@ loop_contract_summary() {
 - Consecutive No-op Iterations that abort: ${LOOP_MAX_CONSECUTIVE_NOOPS}
 - Completion Promise: recorded, never terminal
 - Agent command: ${LOOP_AGENT_COMMAND}
+- Discipline skills: ${LOOP_DISCIPLINE_SKILLS}
 SUMMARY
 }

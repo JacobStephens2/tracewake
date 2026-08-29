@@ -198,6 +198,14 @@ setup() {
     [[ "$log" == *"Run wall clock: 17s"* ]]
     [[ "$log" == *"Consecutive No-op Iterations that abort: 2"* ]]
     [[ "$log" == *"Completion Promise: recorded, never terminal"* ]]
+    # The discipline skills are part of the Contract's summary and not only of
+    # the prompt (#162): the prompt is a scratch file the Run deletes, so the
+    # Progress Log is the only place a reviewer can afterwards read what
+    # discipline the Iterations were told to work in.
+    [[ "$log" == *"Discipline skills:"* ]]
+    [[ "$log" == *"/tdd"* ]]
+    [[ "$log" == *"/diagnosing-bugs"* ]]
+    [[ "$log" == *"/code-review"* ]]
 }
 
 @test "the Run records the task it was started against" {
@@ -240,6 +248,41 @@ setup() {
     [[ "$prompt" == *"ONE task"* ]]
     # The Promise is asked for as evidence, and explicitly not as an exit.
     [[ "$prompt" == *"does not end the Run"* ]]
+}
+
+@test "every Iteration is named the discipline skills it is to work in" {
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    # The Run occupies the slot a person would have invoked /implement from,
+    # so the prompt has to carry that checklist itself and name the skills a
+    # model may invoke for itself (#162). Asserted on the prompt for the same
+    # reason the decisions test is: what the fake writes into the log is the
+    # fake's, but the prompt is run.sh's.
+    prompt="$(cat "${FAKE_AGENT_STATE}.prompt")"
+    [[ "$prompt" == *"/tdd"* ]]
+    [[ "$prompt" == *"/diagnosing-bugs"* ]]
+    [[ "$prompt" == *"/code-review"* ]]
+    # The checklist absorbed with them: the type check and the tests as the
+    # work goes, and the whole suite before the commit that ends the Iteration.
+    [[ "$prompt" == *"type check"* ]]
+    [[ "$prompt" == *"whole suite"* ]]
+}
+
+@test "the prompt and the Progress Log name the same skills" {
+    export LOOP_DISCIPLINE_SKILLS="/only-this-one when it matters"
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    # One source for the names. A prompt naming one discipline while the
+    # Contract summary in the log named another would be a record of a Run
+    # that did not happen, and nothing would ever notice.
+    [[ "$(cat "${FAKE_AGENT_STATE}.prompt")" == *"/only-this-one when it matters"* ]]
+    [[ "$(progress_log)" == *"Discipline skills: /only-this-one when it matters"* ]]
 }
 
 @test "the Plan and the Progress Log are committed" {

@@ -209,7 +209,26 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'title', 'Traveler search: match on the preferred name too',
         'url', 'https://github.com/' || repo || '/issues/661',
         'branch', 'loop/661-traveler-search', 'task_ref', repo || '#661',
-        'area', 'Traveler search'));
+        'area', 'Traveler search')),
+    -- The Contract the watcher read out of the box's Progress Log a minute
+    -- after the dispatch (#162). Seeded here because it is the current-Run
+    -- panel's contract card, and an Attended Preview of a branch that changes
+    -- that card has nothing to show without it.
+    (now() - interval '29 minutes', 'run.contract',
+     jsonb_build_object('cycle', cycle_id, 'issue', 661, 'attempt', 1,
+        'branch', 'loop/661-traveler-search',
+        'run_started', to_char(now() - interval '30 minutes',
+                               'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+        'contract', jsonb_build_array(
+            'Iterations per Run: 5',
+            'Iteration wall clock: 900s',
+            'Turns per Iteration: 100',
+            'Run wall clock: 5400s',
+            'Consecutive No-op Iterations that abort: 2',
+            'Completion Promise: recorded, never terminal',
+            'Agent command: /home/loop/loop/agents/claude.sh',
+            'Discipline skills: /tdd for code work, /diagnosing-bugs for '
+            || 'something broken or slow, /code-review before every commit')));
 
 -- 8. A cycle that failed outright: the tracker could not be read, so there
 --    was no queue to reason about.

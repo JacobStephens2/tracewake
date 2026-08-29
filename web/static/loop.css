@@ -105,6 +105,23 @@
 }
 .pause-banner button { flex: 0 0 auto; }
 
+/* The Termination Contract the Run is under (#162). Open on the Run in
+   flight, where "what is it allowed to do for the next ninety minutes" is the
+   question being asked, and folded shut on the ended Runs below it so a
+   history of cards does not become eight bound lists. */
+.run .contract {
+  margin: 0 0 1rem 0;
+  font-size: 0.9em;
+}
+.run .contract summary {
+  cursor: pointer;
+  color: var(--secondary-color);
+}
+.run .contract ul {
+  margin: 0.4rem 0 0 0;
+  padding-left: 1.2rem;
+}
+
 /* The Iteration records the watcher journals during a Run (#157). Tabular,
    because they are one row per Iteration with the same four facts each time,
    and the operator reads down the column that changed. */

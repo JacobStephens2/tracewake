@@ -54,6 +54,16 @@ MUTATIONS = {
         "what\n   you did, what you DECIDED and why, and anything BLOCKED.",
         "what\n   you did.",
     ),
+    # The Iteration is no longer named the discipline skills, so a Run works
+    # the way an unprompted agent happens to work: no test first, no review
+    # before the commit, and nothing in the Progress Log admitting the
+    # difference (#162).
+    "prompt-skills-unnamed": (
+        "   by name for yourself: ${LOOP_DISCIPLINE_SKILLS}. Run the type check and the\n"
+        "   tests for what you touched as you go, and the whole suite once before you\n"
+        "   commit.",
+        "   as you see fit.",
+    ),
     # The Plan and Progress Log paths stop coming from the Contract.
     "hardcoded-state-paths": (
         'progress_log="${repo}/${LOOP_PROGRESS_LOG_PATH}"',
