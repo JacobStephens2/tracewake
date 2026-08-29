@@ -1049,11 +1049,57 @@ long before now. Written down here because `vendor/` is the first thing to make
 it visible - it is 70MB of files an apply leaves behind, owned by whoever the
 guest thinks it is.
 
+### The rebuild path, run rather than assumed
+
+`--force` skips the recipe comparison and asks `sbx template save` to write a
+tag that already exists. Nothing in the vendor's documentation says what that
+does, so it was run:
+
+```
+$ build-guest-template.sh --tag loop-php:1 ... --force
+Save complete.
+Built loop-php:1.
+
+$ sbx template ls
+docker.io/library/loop-php   1   5bfa93344728   claude-code-docker
+```
+
+One row, not two, and a new image id - it was `a7578accecc2` before. So the tag
+moves and the old image is dereferenced rather than kept alongside it. The smoke
+assertion passes against the rebuilt image, and no sandbox is left behind.
+
+Worth knowing for the case that needs it: the recipe records package NAMES, not
+versions, so an image built weeks ago from an identical list reads as current
+however many security updates have shipped. `-e loop_guest_template_rebuild=true`
+is how that gets refreshed, and this is the evidence it works.
+
+### An Iteration really does run the suite
+
+Run on tourbot#645, 2026-08-29. Iteration 1's Progress Log entry, quoted rather
+than summarised, because this is the observation the whole ticket was for:
+
+```
+- ./vendor/bin/phpunit tests/Unit/GuideOptionDispositionTest.php - OK, 6 tests, 7 assertions.
+- ./vendor/bin/phpunit --testsuite="Unit Tests" - 1322 tests before the change,
+  1328 after, same 57 deprecations and 6 skips. The +6 are mine.
+- ./vendor/bin/phpunit (whole suite, after the change) - OK, 3476 tests,
+  15804 assertions, 57 deprecations, 476 skipped.
+- phpstan level 6 - [OK] No errors.
+```
+
+The same Iteration wrote a section headed "Honest note on TDD" separating two
+genuine red-then-green slices from three tests that passed the moment they were
+written. An Iteration that can run the suite is an Iteration that can tell those
+apart, which is what story 33 was actually asking for.
+
+The Run then ended `agent-failed` at Iteration 2 on `OAuth session expired and
+could not be refreshed` - the box's Claude login, nothing to do with the guest.
+Recorded here because it is the credential with the shortest life and no alarm
+behind it, and an unattended Run will keep dying this way until something
+watches it.
+
 ### What this does not establish
 
-- That an Iteration's Progress Log records the suite running. That is observed
-  from a Run rather than asserted here; #164's third acceptance criterion is
-  where it lands.
 - That the image is reproducible byte for byte. It is not: the build installs
   whatever `resolute` and `resolute-security` are serving that day, and the
   marker records the package NAMES, not their versions. What a rebuild
