@@ -59,8 +59,9 @@ MUTATIONS = {
     # before the commit, and nothing in the Progress Log admitting the
     # difference (#162).
     "prompt-skills-unnamed": (
-        "   by name for yourself: ${LOOP_DISCIPLINE_SKILLS}. Run the tests for what you\n"
-        "   touched as you go, and the suite once before you commit.",
+        "   by name for yourself: ${LOOP_DISCIPLINE_SKILLS}. Run the type check and the\n"
+        "   tests for what you touched as you go, and the whole suite once before you\n"
+        "   commit.",
         "   as you see fit.",
     ),
     # The Plan and Progress Log paths stop coming from the Contract.

@@ -160,6 +160,15 @@ one that ended it: `iteration-cap`, `run-clock`, `consecutive-noops`,
 name for the whole Contract, which is what the entry above is guarding.
 _Avoid_: limit, guardrail, timeout
 
+**Discipline Skills**:
+The model-invocable skills an Iteration is told to invoke for itself - `/tdd`
+for code work, `/diagnosing-bugs` for something broken, `/code-review` before
+every commit - because a Run occupies the slot a person would have invoked
+`/implement` from. Declared once in `contract.sh` and written into the Progress
+Log with the Contract summary, so the record of a Run says what discipline it
+was asked for. Not a Bound: naming them ends nothing.
+_Avoid_: rules, guidelines, workflow
+
 **No-op Iteration**:
 An Iteration after which `HEAD` is unchanged. Consecutive No-op Iterations are the
 project's non-progress signal; neither published Ralph source has one.

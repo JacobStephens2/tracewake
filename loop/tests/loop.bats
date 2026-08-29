@@ -265,9 +265,10 @@ setup() {
     [[ "$prompt" == *"/tdd"* ]]
     [[ "$prompt" == *"/diagnosing-bugs"* ]]
     [[ "$prompt" == *"/code-review"* ]]
-    # The checklist absorbed with them: tests as the work goes, and the suite
-    # before the commit that ends the Iteration.
-    [[ "$prompt" == *"suite"* ]]
+    # The checklist absorbed with them: the type check and the tests as the
+    # work goes, and the whole suite before the commit that ends the Iteration.
+    [[ "$prompt" == *"type check"* ]]
+    [[ "$prompt" == *"whole suite"* ]]
 }
 
 @test "the prompt and the Progress Log name the same skills" {

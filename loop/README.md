@@ -32,7 +32,7 @@ was deliberately left off are in
 
 | File | What it is |
 | --- | --- |
-| `contract.sh` | The Termination Contract. Five bounds, one place. |
+| `contract.sh` | The Termination Contract. Five bounds, one place - plus the discipline an Iteration is told to work in. |
 | `seed-run.sh` | The setup step. One chosen task in, a Plan and a Progress Log out (#82). |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `propose.sh` | Proposal-Only Output. The push and the draft pull request (#83). |
@@ -401,7 +401,7 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and eighty-eight tests, no model and no network. Fifty-six drive `run.sh`
+Two hundred and ninety tests, no model and no network. Fifty-eight drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history, and what it told the operator.
 Thirty-two drive `check-inventory.sh` against small fixture checkouts. Forty-eight
@@ -433,9 +433,10 @@ component (spec issue #73, Seam B).
 Contract, each guard of the check, each credential family, each guard of the
 seed step, each thing holding Proposal-Only Output up, each property of the
 boundary, each thing that makes a notification honest - and confirms the suite
-goes red. A hundred and eighteen deliberate breaks. The twenty-seven covering
-`run.sh` and the notification surface were re-run whole for #110 and all
-twenty-seven were caught; the rest were caught when they were written, and each
+goes red. A hundred and twenty-one deliberate breaks. The twenty-three covering
+`run.sh` and the two covering `contract.sh` were re-run whole for #162 and all
+twenty-five were caught; the five covering the notification surface were re-run
+whole for #110; the rest were caught when they were written, and each
 subject's set can be re-run on its own. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only check-inventory.sh` runs

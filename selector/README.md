@@ -142,7 +142,9 @@ nothing to say for the whole of it.
 
 So while it blocks, a thread reads that log about once a minute through
 `box-sources/progress.sh` and journals `run.iteration` for every Iteration
-record it has not journaled before (story 26). Configuration:
+record it has not journaled before (story 26), plus one `run.contract` for the
+Run's own terms (story 25, and the discipline skills of #162 - below).
+Configuration:
 
 | variable | default | what it is |
 | --- | --- | --- |

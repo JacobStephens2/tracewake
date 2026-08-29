@@ -233,6 +233,12 @@ def contract_record(text: str) -> dict | None:
     appended to and the Journal is append-only, so half a Contract journaled
     here is a wrong row that can only ever be contradicted.
 
+    The lines come back as the box rendered them and are never parsed into
+    fields. That is the point rather than a shortcut: what the panel should
+    show is the summary the Run wrote about itself, so a reader here that
+    understood the bounds would be a second definition of them on the side of
+    the hop that does not set them.
+
     It is also not the only run of `- ` lines in the block - every Iteration
     record is one too - so it ends at the first line that is not one of its
     own. A reader that ran to the end of the block instead would put Iteration

@@ -80,6 +80,15 @@ def contract_seen(conn: psycopg.Connection, issue: int,
     that started over - a restarted cycle, a retry on the same branch - must
     not append a second Contract for one Run. Scoped by attempt because a retry
     is its own Run and can be dispatched under different terms.
+
+    Unbounded in time, exactly like `iterations_seen`, and it inherits that
+    query's residual: `cycle.attempts` counts dispatches since the issue was
+    last labeled, so a fresh Handover of an issue worked before is attempt 1
+    again. Its rows then land on the earlier attempt's card - the page keys a
+    card by issue and attempt - and this query finds that card's Contract and
+    writes none. The card is already the wrong shape in that case; a Contract
+    scoped differently from the Iterations beside it would make it wrong in a
+    second, less visible way instead.
     """
     row = conn.execute(
         "SELECT 1 FROM journal.events"

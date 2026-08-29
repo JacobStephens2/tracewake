@@ -289,8 +289,9 @@ You have no memory of earlier Iterations. Everything you know is on disk.
 3. Do exactly ONE task from the Plan. One, so that a bad Iteration is small,
    reviewable, and revertible on its own.
 4. Work it in the discipline the repository's own skills define, invoking them
-   by name for yourself: ${LOOP_DISCIPLINE_SKILLS}. Run the tests for what you
-   touched as you go, and the suite once before you commit.
+   by name for yourself: ${LOOP_DISCIPLINE_SKILLS}. Run the type check and the
+   tests for what you touched as you go, and the whole suite once before you
+   commit.
 5. Update ${LOOP_PLAN_PATH} to reflect what is now done and what remains.
 6. Append to ${LOOP_PROGRESS_LOG_PATH} under a heading for this Iteration: what
    you did, what you DECIDED and why, and anything BLOCKED. A later Iteration

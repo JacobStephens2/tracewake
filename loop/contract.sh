@@ -108,6 +108,17 @@
 # read-write, so a fork would land in the Proposal diff as the Loop editing the
 # repository's own rules).
 #
+# It is NOT a sixth bound. It ends nothing, and no Run reports it as the thing
+# that ended it; it rides in the summary because the summary is where a Run's
+# record of its own terms is written, which is the same reason the agent command
+# is there. The five bounds are still five.
+#
+# Nothing offline can verify that these three still exist in the repository the
+# Run works, or that they are still model-invocable: the skills arrive as
+# reviewed re-vendor commits in another repository, and this suite runs here.
+# A re-vendor that renamed one would leave the prompt naming a skill the agent
+# cannot invoke - which costs an Iteration its discipline, not a Run its bounds.
+#
 # `/implement`'s last two steps are deliberately absent. Checking acceptance
 # criteria off on the ticket is impossible here - the box holds no Issues
 # permission at all (ADR 0010) - and pushing is the Run's own act, not the
