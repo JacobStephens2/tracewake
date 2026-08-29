@@ -51,6 +51,21 @@ MUTATIONS = {
         "    [[ -n ${task_ref} ]] && printf -- '- Task: %s\\n' \"${task_ref}\"",
         "    :",
     ),
+    # The Closes line is dropped, so merging the proposal leaves the task open
+    # and the queue keeps offering work that is already done (spec #151,
+    # story 18).
+    "closes-line-dropped": (
+        "        printf -- '\\nCloses #%s\\n' \"${task_ref##*#}\"",
+        "        :",
+    ),
+    # The same-repository guard goes, so a cross-repository task gets a Closes
+    # line that GitHub silently ignores for an actor without write access on
+    # the other repository - a proposal that claims to retire a task and does
+    # not.
+    "closes-cross-repository": (
+        '    if [[ -n ${task_ref} && ${task_ref} == "${target_repo}#"* ]]; then',
+        "    if [[ -n ${task_ref} ]]; then",
+    ),
     # The proposal's target is taken from where git actually pushes rather than
     # from what the remote declares, so a rewrite aims it somewhere else.
     "target-from-transport": (

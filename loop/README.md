@@ -433,7 +433,9 @@ component (spec issue #73, Seam B).
 Contract, each guard of the check, each credential family, each guard of the
 seed step, each thing holding Proposal-Only Output up, each property of the
 boundary, each thing that makes a notification honest - and confirms the suite
-goes red. A hundred and twenty-one deliberate breaks. The twenty-three covering
+goes red. A hundred and twenty-three deliberate breaks. The nine covering
+`propose.sh` - two of them on the `Closes #n` line - were re-run whole for
+#163 and all nine were caught; the twenty-three covering
 `run.sh` and the two covering `contract.sh` were re-run whole for #162 and all
 twenty-five were caught; the five covering the notification surface were re-run
 whole for #110; the rest were caught when they were written, and each
