@@ -527,6 +527,15 @@ change in the adapter:
   that reason, with the measurement in the role's defaults: 13 seconds with them
   allowed, and a failed run after four minutes without.
 
+**A green suite in a Run is not a green suite in CI.** Ubuntu 26.04 ships PHP
+8.5 and tourbot's CI grades the Proposal on 8.4, so an Iteration can go green on
+a runtime the checks never use - and it sees 57 deprecations CI does not. The
+direction is the safe one, and it is not free: read a Run's suite result as
+evidence the work is testable, not as the check. The Proposal's checks remain
+the grade. Moving the guest to 8.4 means an external PHP repository on the
+build's allowlist, which is a wider boundary for a smaller difference; the
+evidence note carries the reasoning.
+
 What goes inside is the model credential, the signing key, and the git identity
 that uses it. What does not is the GitHub token. The signing key being inside is
 a stated cost - an agent in the guest can read it - bounded by an egress

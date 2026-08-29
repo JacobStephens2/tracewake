@@ -61,7 +61,7 @@ die() {
 
 tag=""
 packages=""
-marker=/etc/loop-guest-template
+marker=""
 agent=claude
 force=false
 allow=""
@@ -80,6 +80,11 @@ done
 
 [[ -n ${tag} ]] || die "usage: build-guest-template.sh --tag TAG --packages \"p1 p2 ...\""
 [[ -n ${packages} ]] || die "usage: build-guest-template.sh --tag TAG --packages \"p1 p2 ...\""
+# No default, deliberately. The marker path is what the rebuild decision turns
+# on, and a default here would be a second declaration of it - this script and
+# the role's defaults able to disagree about where the recipe is recorded, which
+# reads as "the image was built from something else" and rebuilds on every apply.
+[[ -n ${marker} ]] || die "usage: build-guest-template.sh --marker PATH"
 
 sbx="${LOOP_SBX_COMMAND:-sbx}"
 command -v "${sbx}" >/dev/null 2>&1 ||
@@ -104,18 +109,25 @@ fi
 
 if [[ ${force} == false && ${have_tag} == true ]]; then
     probe="tmpl-probe-$$-$(date +%s)"
-    # shellcheck disable=SC2329  # invoked by the trap below, which shellcheck does not follow
-    drop_probe() { "${sbx}" rm --force "${probe}" >/dev/null 2>&1 || true; }
-    trap drop_probe EXIT INT TERM
     # A workspace is a required argument to `sbx create` and this boot only ever
     # reads one file, so it gets an empty directory of its own rather than the
     # checkout - a probe that mounted the repository could write to it.
+    #
+    # Made BEFORE the trap is armed and removed BY it. The other order looks
+    # equivalent and is not: the `die` below leaves through the trap, so a
+    # directory the trap does not know about is one empty tmpdir left behind per
+    # apply that finds a template it cannot boot.
     probe_ws="$(mktemp -d)"
+    # shellcheck disable=SC2329  # invoked by the trap below, which shellcheck does not follow
+    drop_probe() {
+        "${sbx}" rm --force "${probe}" >/dev/null 2>&1 || true
+        rmdir -- "${probe_ws}" 2>/dev/null || true
+    }
+    trap drop_probe EXIT INT TERM
     "${sbx}" create --quiet --name "${probe}" -t "${tag}" "${agent}" "${probe_ws}" >&2 ||
         die "the image store has ${tag} but a sandbox cannot be created from it"
     on_box="$("${sbx}" exec "${probe}" cat "${marker}" 2>/dev/null || true)"
     drop_probe
-    rmdir -- "${probe_ws}" 2>/dev/null || true
     trap - EXIT INT TERM
 
     if [[ ${on_box} == "${recipe}" ]]; then

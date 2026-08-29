@@ -722,7 +722,7 @@ def test_the_box_card_shows_the_scripts_hash_and_the_agent_version(db):
             "box.observed",
             {
                 "scripts_hash": "8c1f3a90d2",
-                "guest_template": "claude",
+                "guest_template": "loop-php:1",
                 "agent": "claude",
                 "agent_version": "2.1.221 (Claude Code)",
             },
@@ -730,6 +730,12 @@ def test_the_box_card_shows_the_scripts_hash_and_the_agent_version(db):
     cell = strip(client.get("/loop").text)
     assert "8c1f3a90d2" in cell
     assert "2.1.221 (Claude Code)" in cell
+    # The guest template, and it is asserted separately from the agent for a
+    # reason the old fixture hid: both were the string `claude`, so one `in`
+    # check passed whichever of the two cells rendered. They are different
+    # things - the template is an image now (#164) - and the card has to show
+    # the one it says it shows.
+    assert "loop-php:1" in cell
     assert "claude" in cell
 
 

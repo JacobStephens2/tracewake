@@ -60,7 +60,7 @@ die() {
 tag=""
 workspace=""
 agent=claude
-marker=/etc/loop-guest-template
+marker=""
 
 while (($#)); do
     case "$1" in
@@ -77,9 +77,54 @@ done
 [[ -d ${workspace} ]] || die "${workspace} is not a directory - the checkout a Run works in should be there"
 [[ -f "${workspace}/composer.json" ]] ||
     die "${workspace} has no composer.json - this asserts against the tourbot checkout, not an empty directory"
+# No default, for build-guest-template.sh's reason: the marker path belongs to
+# the role's defaults, and a copy here is a second place to be wrong.
+[[ -n ${marker} ]] || die "usage: smoke-guest-template.sh --marker PATH"
 
 sbx="${LOOP_SBX_COMMAND:-sbx}"
 command -v "${sbx}" >/dev/null 2>&1 || die "${sbx} is not on PATH"
+
+# This assertion WRITES to the checkout a Run works in - `composer install`
+# leaves `vendor/` there, which is the side effect the header calls deliberate -
+# so it must not run while an Iteration is using it. Two Composers in one
+# `vendor/` is a Run whose test runner disappears mid-Iteration, and the Run
+# would report that as its own failure with nothing naming the apply that caused
+# it.
+#
+# **`run.sh` is the signal, not a sandbox.** The obvious check is a running
+# `loop-` sandbox - the boundary the adapter builds, named `loop-$$-<epoch>` -
+# and it is the wrong one, which was found by writing it that way first. The
+# boundary is per ITERATION: it is created and destroyed around each agent
+# process, so between Iterations, while the Run is committing its Progress Log
+# and deciding whether to go again, there is no sandbox at all. A check on the
+# sandbox has a hole in it once per Iteration, and a Run that got hit in one of
+# those holes would look exactly like a Run that failed by itself.
+#
+# `run.sh` exists for the whole Run, holes included. Both are checked - the
+# sandbox catches a Run whose `run.sh` died and left a boundary up, which is the
+# one case the process check misses.
+#
+# This assertion WRITES to the checkout a Run works in - `composer install`
+# leaves `vendor/` there, which is the side effect the header calls deliberate -
+# so this is the same hazard `loop_execution_boundary` already states in prose,
+# "do not run an apply against a box mid-Run", made into a refusal rather than a
+# sentence somebody has to have read.
+#
+# Deliberately not a wait. A Run is ninety minutes at its bound, and an apply
+# that silently blocks for an hour and a half is worse than one that stops and
+# says why.
+run_in_flight=""
+if pgrep -f '/run\.sh --repo' >/dev/null 2>&1; then
+    run_in_flight="run.sh is executing"
+elif "${sbx}" ls 2>/dev/null | grep -qE '^loop-'; then
+    run_in_flight="an Iteration's boundary is up with no run.sh behind it"
+fi
+if [[ -n ${run_in_flight} ]]; then
+    die "a Run is in flight on this box - ${run_in_flight}.
+This assertion installs into ${workspace}, which that Run is working in, so it
+would pull the test runner out from under a live Iteration. Wait for the Run to
+end, then apply again."
+fi
 
 sandbox="tmpl-smoke-$$-$(date +%s)"
 # shellcheck disable=SC2329  # invoked by the trap below, which shellcheck does not follow

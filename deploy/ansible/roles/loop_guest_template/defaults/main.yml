@@ -13,22 +13,28 @@
 # in `agents/claude.sh` - the tag it answers `--guest-template` with and hands
 # to `sbx create -t` - and that line names the tag below.
 
-# The tag, and the version in it is the one knob in this role.
+# The tag is ASKED OF THE ADAPTER rather than declared here, and that is the
+# load-bearing decision in this file.
 #
-# `sbx template save` stores into the local image store as
-# `docker.io/library/<name>:<tag>`, and `sbx create -t` accepts either that or
-# the short form. The short form is what is written here because it is also what
-# the box card on /loop prints (#156): the card reads the adapter's answer
-# verbatim, and `docker.io/library/loop-php:1` in a status cell is a registry
-# path nobody has, for an image that has never left this box.
+# `agents/claude.sh` names the image it hands `sbx create -t`, because the
+# adapter is what makes the choice (ADR 0004) and the Selector's box card
+# already reads the same answer off it (#156). A second declaration here would
+# be a third place: bump it, and the role builds `loop-php:2`, the smoke
+# assertion passes against `loop-php:2`, and every Run keeps building boundaries
+# from the `loop-php:1` still sitting in the image store. Nothing fails. The box
+# card reports the old tag, which is the one thing it exists to get right.
 #
-# Bumping the version is NOT what triggers a rebuild - the recipe marker below
-# is, so a package added to the list rebuilds on the next apply whether or not
-# anyone remembered. The version is here so the box card can say WHICH boundary
-# a Run was bounded by, which is what ADR 0003 makes worth recording, and a tag
-# that never moved would make every rebuild invisible.
-loop_guest_template_version: 1
-loop_guest_template_tag: "loop-php:{{ loop_guest_template_version }}"
+# So the version lives in the adapter, once, and moving it is one line there.
+# This is the shape `loop_agent` already uses for Grok's pin - `grok.sh
+# --pinned-version`, read on the controller - and the reason is the same one it
+# gives: a host and a guest pinned by two files is exactly the drift a pin
+# exists to prevent.
+#
+# On the CONTROLLER, not the box: this play is what SHIPS the adapter to the
+# box (`loop_scripts`), so the box's copy may still be the previous one when
+# this is read. The controller's is the one this apply is deploying.
+loop_guest_template_adapter: >-
+  {{ playbook_dir }}/../lab/single-user-factory/loop/agents/{{ loop_guest_template_agent }}.sh
 
 # The agent kit the guest is built for, and it stays `claude` under the custom
 # image. That is worth stating because it is easy to assume `-t` replaces it: it

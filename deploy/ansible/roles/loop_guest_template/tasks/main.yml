@@ -12,6 +12,44 @@
 # box and chooses its egress posture, and after `loop_scripts`, which makes the
 # checkout the smoke assertion installs into.
 
+# The tag, from the file that makes the choice. `loop_agent` reads Grok's pin
+# the same way and for the same reason, and its comment is the one that applies
+# here too: two files pinning the same thing is exactly the drift a pin exists
+# to prevent. Without this the role would build one tag while every Run built
+# its boundary from another, and nothing anywhere would fail.
+#
+# `delegate_to: localhost` because the adapter this apply is SHIPPING is the
+# controller's; the box's copy is whatever the last apply left. Not `become`,
+# for the same reason - it is a local file read, and root has no part in it.
+#
+# `check_mode: false` so a dry run still resolves it. Every other command task
+# in this role is correctly skipped under `--check`, but this one only reads,
+# and skipping it leaves the tag undefined for every task below - a dry run that
+# fails for a reason that has nothing to do with the box.
+- name: The guest template the adapter builds its boundaries from
+  ansible.builtin.command: "{{ loop_guest_template_adapter }} --guest-template"
+  delegate_to: localhost
+  become: false
+  register: loop_guest_template_declared
+  changed_when: false
+  check_mode: false
+
+- name: Name it once, so nothing below asks twice
+  ansible.builtin.set_fact:
+    loop_guest_template_tag: "{{ loop_guest_template_declared.stdout | trim }}"
+
+# An adapter that answered nothing would otherwise reach `sbx create -t ''`,
+# which builds a sandbox from the vendor's default image - the stock guest, with
+# no PHP - and the smoke assertion would then pass or fail for reasons that have
+# nothing to do with the template. A named refusal beats either.
+- name: Refuse an adapter that names no guest template
+  ansible.builtin.assert:
+    that: loop_guest_template_tag | length > 0
+    fail_msg: >-
+      {{ loop_guest_template_adapter }} answered nothing to --guest-template.
+      That is the one place the image is declared, so there is nothing for this
+      role to build or to prove.
+
 - name: Somewhere for the template's own scripts to live
   ansible.builtin.file:
     path: "{{ loop_guest_template_dir }}"
