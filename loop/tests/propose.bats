@@ -95,6 +95,25 @@ setup() { setup_propose_fixture; }
     [ "${closes}" -gt "${last_bullet}" ]
 }
 
+@test "a proposal against a branch that is not the default gets no Closes line" {
+    # GitHub's keyword fires on a merge into the DEFAULT branch and nowhere
+    # else, so a proposal aimed at a release branch would carry a line saying
+    # the task is retired and retire nothing. Same reason as the
+    # cross-repository case below.
+    git -C "${REPO}" push --quiet origin master:release
+    run_propose --base release
+    [ "$status" -eq 0 ]
+    ! grep -q '^Closes ' "${FAKE_PR_STATE}.body"
+}
+
+@test "--base naming the default branch still closes the task" {
+    # The guard is about where the proposal lands, not about whether --base was
+    # typed: passing the default branch explicitly is the same merge.
+    run_propose --base master
+    [ "$status" -eq 0 ]
+    grep -q '^Closes #648$' "${FAKE_PR_STATE}.body"
+}
+
 @test "a task in another repository gets no Closes line" {
     # GitHub's keyword closes a cross-repository reference only for an actor
     # with write access on the OTHER repository, and a line that silently does

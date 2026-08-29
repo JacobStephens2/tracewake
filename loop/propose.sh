@@ -110,11 +110,20 @@ branch="$(git -C "${repo}" symbolic-ref --quiet --short HEAD)" ||
 # or `master`: the target repository's default branch is `master` and this
 # repository's is not, and a wrong base opens a pull request nobody asked for
 # against a branch nobody is watching.
+default_base="$(loop_base_branch "${repo}" "${remote}" || true)"
 if [[ -z ${base} ]]; then
-    base="$(loop_base_branch "${repo}" "${remote}" || true)"
+    base="${default_base}"
     [[ -n ${base} ]] ||
         die "cannot tell what ${remote}'s default branch is - pass --base. \`git remote set-head ${remote} --auto\` records it."
 fi
+
+# Whether this proposal lands on the default branch decides one thing only: the
+# `Closes #n` line below. It is derived here rather than there because an
+# explicit --base has to be compared against the same remote HEAD the default
+# path reads, and a remote with no recorded HEAD leaves it empty - which reads
+# as "not the default", the safe direction.
+base_is_default=no
+[[ -n ${default_base} && ${base} == "${default_base}" ]] && base_is_default=yes
 
 # The one refusal that is a safety property rather than an argument check. A Run
 # on the base branch would push its Iterations straight at the branch the
@@ -211,11 +220,18 @@ BODY
     # list and start a second one under it, which is what a reader sees even
     # though the keyword still works.
     #
-    # Only when the task lives in the repository the proposal is opened
-    # against. GitHub's keyword closes a cross-repository reference too, but
-    # only for an actor with write access on the OTHER repository, and a line
-    # that silently does nothing is worse than none.
-    if [[ -n ${task_ref} && ${task_ref} == "${target_repo}#"* ]]; then
+    # Two conditions, both there for the same reason: a line that silently does
+    # nothing is worse than none.
+    #
+    # The task must live in the repository the proposal is opened against.
+    # GitHub's keyword closes a cross-repository reference too, but only for an
+    # actor with write access on the OTHER repository.
+    #
+    # And the proposal must land on the default branch, which is the only merge
+    # GitHub fires the keyword on. A Run proposed against a release branch with
+    # --base would otherwise carry a line claiming to retire a task that stays
+    # in the queue after the merge.
+    if [[ -n ${task_ref} && ${task_ref} == "${target_repo}#"* && ${base_is_default} == yes ]]; then
         printf -- '\nCloses #%s\n' "${task_ref##*#}"
     fi
 } >"${body_file}"

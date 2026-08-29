@@ -53,8 +53,8 @@
 # the board says so rather than pretending it is whole.
 #
 # proposals are the open pull requests that would close the issue - the
-# `Closes #n` link the Selector itself writes into a Proposal body. An open
-# one means the issue is in flight.
+# `Closes #n` link the Loop's propose.sh writes into a Proposal body on the
+# box. An open one means the issue is in flight.
 
 set -euo pipefail
 
