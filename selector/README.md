@@ -371,10 +371,11 @@ for when widening the labeler allowlist - and the play prints which way it left
 the timer. Out of band it is `sudo systemctl enable --now selector-cycle.timer`.
 Setting it back to `false` stops a running timer, not merely a future one.
 
-**The gate is flipped** (#261, 2026-08-30), so the next apply enables and
-starts the timer. What it waited on, what was read to check it, and what is
-still owed - the box has to be logged in, and the Selector is left paused until
-it is - are in
+**The gate is flipped and the timer is running** (#261, 2026-08-30): it fired
+unattended at 23:30:52 the same evening, journalled the cycle and declined to
+dispatch, because the Selector is paused. What it waited on, what was read to
+check it, and what is still owed - the box has to be logged in before a resume
+means anything - are in
 [`../notes/selector-timer-on-evidence.md`](../notes/selector-timer-on-evidence.md),
 which is the one place any of it is written down.
 
