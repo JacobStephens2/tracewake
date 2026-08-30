@@ -39,6 +39,10 @@ WorkingDirectory=/srv/orchestration/lab/single-user-factory/selector
 # (203/EXEC, no traceback). The venv's bin/ is labelled bin_t by
 # ansible/roles/selinux_labels, and passing the script as an argument means it
 # only has to be readable.
+#
+# git/editor write resets scripts/*.sh to var_t; systemd cannot exec that
+# (203/EXEC). Re-apply the existing fcontext. `+` is root despite User=.
+ExecStartPre=+/bin/sh -c '/usr/sbin/restorecon -v /srv/orchestration/scripts/*.sh'
 ExecStart=/srv/orchestration/scripts/with-orchestration-env.sh \
     /srv/orchestration/lab/single-user-factory/selector/.venv/bin/python \
     /srv/orchestration/lab/single-user-factory/selector/cycle.py
