@@ -1,18 +1,18 @@
 # Turning the timer on: what was checked, and what stopped it
 
-*2026-08-30, issue #261. Nothing here is code. The Selector was finished
-weeks ago; this is the decision to let it dispatch with nobody watching, and
-the checks that make the decision defensible. Two of those checks failed, and
-both of them failed in a way that only this box and the Loop's box could have
-said - which is the argument for running them rather than reasoning about
-them.*
+*2026-08-30, issue #261. Nothing here is code. The Selector was finished weeks
+ago; this is the decision to let it dispatch with nobody watching, and the
+checks that make the decision defensible. Three things turned out to be broken
+that the ticket did not think to list, and all three could only have been found
+by running something on this box or the Loop's - which is the argument for
+running the checks rather than reasoning about them.*
 
 ## What flipping it means
 
-Stated once, plainly, because it is the whole of the risk: up to 4 Runs a day,
-each bounded at 90 minutes, on the operator's subscription, around the clock,
-each ending in a draft Proposal on tourbot and a label change on the issue. The
-gate is one line - `selector_dispatch_enabled` in
+The risk, in full: `SELECTOR_DAILY_CAP` Runs a day (4), each bounded by the
+Termination Contract at ninety minutes, on the operator's subscription, around
+the clock, each ending in a draft Proposal on tourbot and a label change on the
+issue. The gate is one line - `selector_dispatch_enabled` in
 `ansible/roles/timers/defaults/main.yml`, now `true` - and the pause flag on
 `/loop` is the only stop that needs no systemd.
 
@@ -25,6 +25,9 @@ it *safe*: see the credential below, where the mechanism #260 built is present
 and the box it protects is still unable to authenticate.
 
 ## Two things found by checking rather than reading
+
+(The third is the box's credential, at the bottom: it is what stopped the
+ticket rather than something fixed along the way.)
 
 **The executed tree was not the reviewed tree.** `selector-cycle.service` runs
 `/srv/orchestration/lab/single-user-factory/selector/cycle.py` out of the
@@ -110,8 +113,11 @@ $ sudo journalctl -u notify-unit-failure@selector-cycle.service.service
 22:28:15 Finished Alert the operator that selector-cycle.service failed.
 ```
 
-`email, sms` is the notifier naming the channels it actually used, and the
-email arrived on the operator's phone about a minute later. The alert is live.
+`email, sms` is the notifier naming the channels it actually used, which is
+dispatch and not delivery. Delivery was confirmed the only way it can be: the
+operator read the mail out - unit, description, `result: exit-code`, `failed
+at: Sun 2026-08-30 22:28:14 UTC` - within a couple of minutes of the failure.
+The alert reaches a human, which is the claim story 31 makes.
 
 ## The pause flag, proven under systemd
 
@@ -132,6 +138,13 @@ $ sudo systemctl start selector-cycle.service   ->  Result=success
 Nothing was dispatched and the cycle still exited 0: a paused Selector is not a
 failing one. `/loop` reads `paused - dispatch is off`.
 
+Half of the criterion is what was proven. It asks for the flag to stop dispatch
+"while the timer stays enabled", and the timer is not enabled yet, so what this
+shows is the flag stopping a cycle that systemd started - which is the same
+process the timer starts, by the same unit, but started by hand. The other half
+costs nothing once the timer is on: a firing lands, journals `halted: paused`,
+and dispatches nothing.
+
 **A paused cycle still writes to the tracker, and that surprised this ticket.**
 Cycle 222 handed five underspecified issues back before it halted - tourbot
 #596, #599, #603, #606 and #626 each got the contract comment and a swap from
@@ -140,6 +153,13 @@ stops *dispatch*, and the loud skip is not a dispatch), and it is right: an
 issue that cannot be built from should be handed back whether or not the
 operator has the Selector paused. But "paused" reads like "does nothing", and
 it is not that. The five hand-backs are correct and were left standing.
+
+Worth being exact about which step wrote them, since the ticket asks for a dry
+run *before* anything acts: the dry runs wrote nothing anywhere, and these five
+comments and label swaps came from the cycle run afterwards to prove the pause.
+Proving the pause needs a real cycle, and a real cycle hands back what it
+cannot build from. That is the cost of the proof rather than a dry run that
+leaked.
 
 ## What is NOT done, and why
 
