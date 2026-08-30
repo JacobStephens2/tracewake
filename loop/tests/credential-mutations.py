@@ -41,8 +41,15 @@ MUTATIONS = {
     # The third door: a metered credential the Execution Boundary stores, in no
     # environment and no file.
     "boundary-secrets": (
-        '            if grep -qiE "(^|[[:space:]])${service}([[:space:]]|$)" <<<"${sbx_secrets}"; then',
-        "            if false; then",
+        '                grep -qiE "(^|[[:space:]])${service}([[:space:]]|$)" <<<"${secret_row}" || continue',
+        "                continue",
+    ),
+    # The two forms of a service secret stop being told apart, so every one of
+    # them is excused as a captured OAuth session - including a real metered
+    # API key, which is the door this family exists to watch (#259).
+    "boundary-secret-oauth-form": (
+        "                if grep -qiF '(oauth configured)' <<<\"${secret_row}\"; then",
+        "                if true; then",
     ),
     # The GitHub token's mode stops mattering, so a world-readable token passes.
     "token-mode": (

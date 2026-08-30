@@ -1119,6 +1119,35 @@ Worth knowing if anything is ever scripted against `sbx`: `secret rm` prompts
 for confirmation, and with no terminal it prints `Cancelled` and **exits 0**.
 The removal that appears to have worked has not.
 
+*Diagnosed 2026-08-30, and the conclusion above about the cause is wrong.* It is
+not "the one thing a Run does that neither does is run `claude` inside the
+guest": the adapter that reproduced this died at `put` before ever invoking the
+agent. `sandboxd`'s own log names the mechanism:
+
+```
+19:21:32 ERROR proxy: sandbox sent OAuth refresh but host has no refresh token (OAuth state mismatch)
+19:21:37 INFO  http PUT ...?path=%2Fhome%2Fagent%2F.claude          <- the adapter placing the credential
+19:21:38 INFO  proxy: intercepted OAuth token response  service=anthropic
+19:21:38 INFO  oauth: token manager updated tokens  expires_at=2026-08-31T03:21:38Z
+19:21:38 INFO  proxy: masked OAuth tokens in response with sentinels
+```
+
+`sbx`'s egress proxy terminates TLS for `platform.claude.com` and takes custody
+of the tokens when the guest's kit refreshes the session, handing the guest
+sentinels instead. It is the host's own proxy, not an agent reaching outward.
+
+That also explains why the negative control held and why it no longer does. The
+first capture needs a refreshable credential inside the guest, which only the
+adapter's `sbx cp` supplies - so a bare `sbx create claude` against a clean
+store writes nothing, which is what was measured. Once the store holds the
+entry, `proxy: replaced sentinel refresh token in OAuth request` appears on a
+bare `create` and it captures again; reproduced twice. The control ran while the
+token was still fresh, so no exchange happened at all.
+
+Settled in ADR 0011 as an accepted residual, with `assert-credentials.sh`
+reading the SECRET column rather than the service name so the OAuth form is an
+observation and an API key is still a violation.
+
 **The box's model credential goes stale with nothing watching it (#260).** The
 adapter's only `sbx cp` runs one way, host into guest, so a refresh performed
 inside an Iteration is written to a filesystem destroyed seconds later and the
@@ -1127,6 +1156,13 @@ the Selector's timer is thirty minutes, around the clock. Run 645 died at
 Iteration 2 on `OAuth session expired and could not be refreshed`, and nothing
 except that Run's own Progress Log said so - `assert-credentials.sh` reports
 `[held]` from the file's existence and reads no field inside it.
+
+*Half of that is wrong too, found while diagnosing #259.* The refresh does not
+die with the sandbox - the proxy captures it, so the `sbx` store held a session
+minted at 19:27 on 2026-08-30 and good until 03:27 the next day, while
+`/home/loop/.claude/.credentials.json` had not been written since 17:13 on
+2026-08-29. What is true is that nothing the Loop runs reads the store's copy,
+so the file still ages exactly as described.
 
 ### What this does not establish
 

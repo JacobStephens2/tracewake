@@ -497,6 +497,35 @@ publish_upstream() {
     [[ "$output" == *"github"* ]]
 }
 
+# The captured OAuth session (#259). Every Run leaves one, so these two tests
+# are the difference between an inventory an operator reads and one that is
+# always red - and the family is `metered-model-key`, so what has to survive is
+# that a real metered key in the same slot is still caught.
+@test "a captured OAuth session in the boundary is reported, not a violation" {
+    FAKE_SBX_SECRETS="anthropic:oauth" run_assert
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"anthropic"* ]]
+    [[ "$output" != *"metered-model-key: the Execution Boundary"* ]]
+}
+
+@test "a captured OAuth session does not excuse a metered key beside it" {
+    FAKE_SBX_SECRETS="anthropic:oauth openai" run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"metered-model-key: the Execution Boundary stores a 'openai'"* ]]
+    # The captured session is named too - as an observation. What must not
+    # happen is it being counted, so the count is what this asserts.
+    [ "$(field CREDENTIALS_VIOLATIONS)" -eq 1 ]
+}
+
+@test "a metered key for a vendor that also has a captured session is a violation" {
+    # The same service name, the other form. What separates them is the SECRET
+    # column, not the name - so a check keyed on the name alone would call this
+    # one clean the moment the OAuth case was excused.
+    FAKE_SBX_SECRETS="anthropic" run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"metered-model-key"* ]]
+}
+
 # --- The Docker identity, the fourth credential ------------------------------
 
 @test "a boundary that is not signed in is a violation" {
