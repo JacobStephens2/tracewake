@@ -544,6 +544,19 @@ have, and by the key being dedicated to the Loop and revocable on its own
 (ADR 0005). The model credential is inside for a reason worth reading before
 assuming otherwise: ADR 0011.
 
+**All of it lands under `/home/agent`, the guest account's own home, and the git
+identity that goes in is rewritten to name it there.** The signing key used to be
+placed at its host path - `/home/loop/.ssh/...` - which the guest could create
+only by luck: `sbx` synthesises a bind mount's parent directories and owns them
+by depth, so `/home/loop` inside the guest is `agent:agent` when the workspace is
+one level under it and `root:root` when it is two (measured against `loop-php:1`,
+2026-08-30). `loop_scripts_workspace: /home/loop/tourbot` is one level, so every
+real Run worked and the coupling stayed invisible until a deeper workspace hit
+it - at which point every Iteration died before its agent started, saying it
+could not prepare the signing key, for a fault whose cause is the workspace
+argument (#268). The Loop's own directory is still mounted at its host path, and
+that is fine: a mount is not a directory the guest has to create.
+
 ## Two agents, and which properties belong to which
 
 The agent is `LOOP_AGENT_COMMAND`, one line in `run.sh`. Two adapters exist, and

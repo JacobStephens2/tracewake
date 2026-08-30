@@ -39,10 +39,28 @@ MUTATIONS = {
     # The GitHub token goes inside the boundary, and Proposal-Only Output stops
     # being a property of what the agent can reach.
     "token-inside-the-boundary": (
-        'put "${gitconfig}" "${guest_home}/.gitconfig" 0644',
-        'put "${gitconfig}" "${guest_home}/.gitconfig" 0644\n'
+        'put "${guest_gitconfig}" "${guest_home}/.gitconfig" 0644',
+        'put "${guest_gitconfig}" "${guest_home}/.gitconfig" 0644\n'
         'put "${HOME}/.config/loop/github-token"'
         ' "${guest_home}/.config/loop/github-token" 0600',
+    ),
+    # The signing key goes back to its HOST path inside the guest (#268), where
+    # it lands only because the workspace happens to be one level under $HOME.
+    # Move the workspace deeper and every Iteration dies before the agent
+    # starts, saying it could not prepare the signing key.
+    "credentials-at-host-paths": (
+        'guest_signing_key="${guest_home}/.ssh/$(basename -- "${signing_key}")"\n'
+        'guest_allowed_signers="${guest_home}/.config/loop/allowed_signers"',
+        'guest_signing_key="${signing_key}"\n'
+        'guest_allowed_signers="${allowed_signers}"',
+    ),
+    # The key moves to a guest path and the git identity that goes in still
+    # names the host's - so the guest signs with a key that is not where it is
+    # told to look, and the first sighting is a pull request whose commits are
+    # not Verified.
+    "gitconfig-names-the-old-path": (
+        'git config --file "${guest_gitconfig}" user.signingkey "${guest_signing_key}.pub"',
+        ":",
     ),
     # A missing credential is skipped instead of fatal - the shape this had
     # before, which would run an Iteration that commits unsigned.

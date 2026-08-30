@@ -32,6 +32,111 @@ set -euo pipefail
 state="${FAKE_SBX_STATE:?FAKE_SBX_STATE must be set}"
 printf '%s\n' "$*" >>"${state}.calls"
 
+# --- The guest's filesystem, and who may write where ------------------------
+#
+# Added for #268. Until it existed, every `exec` here succeeded, so the offline
+# suite could not tell a placement the guest permits from one it refuses - and
+# `agents/claude.sh` placed the signing key at its HOST path, which the guest
+# permits only by accident.
+#
+# The accident, measured on loop.etadventures.com against `loop-php:1` on
+# 2026-08-30: `sbx` synthesises the parent directories of a bind mount and owns
+# them by depth. A workspace one level under $HOME (`/home/loop/tourbot`) leaves
+# `/home/loop` as `agent:agent 755` and `mkdir -p /home/loop/.ssh` works; two
+# levels (`/home/loop/work/tourbot`) leaves it `root:root 755` and the same call
+# is "mkdir: Permission denied".
+#
+# So this models the GUARANTEE rather than the measurement: writable is the
+# guest's own home and the workspace mount, both of which `sbx` owns to `agent`
+# at every depth. It deliberately refuses the depth-one case too, even though a
+# real guest would allow it - modelling the luck is what let this hide, and an
+# adapter that needs the luck is the bug. `sudo` reaches around it, as the Grok
+# adapter's `put` does and as a real guest's passwordless sudo would.
+guest_home=/home/agent
+workspace_file="${state}.workspace"
+
+# The workspace the boundary was built around, off the create that built it.
+#   create --quiet --name <name> -t <template> <agent> <workspace> [<mount>:ro]
+record_workspace() {
+    local -a rest=()
+    while (($#)); do
+        case "$1" in
+            create | --quiet) shift ;;
+            --name | -t) shift 2 ;;
+            *)
+                rest+=("$1")
+                shift
+                ;;
+        esac
+    done
+    printf '%s\n' "${rest[1]:-}" >"${workspace_file}"
+}
+
+granted_file="${state}.granted"
+
+guest_writable() {
+    local path="$1" workspace="" granted
+    [[ -f ${workspace_file} ]] && workspace="$(cat -- "${workspace_file}")"
+    case "${path}" in
+        "${guest_home}" | "${guest_home}"/*) return 0 ;;
+    esac
+    if [[ -n ${workspace} ]]; then
+        case "${path}" in
+            "${workspace}" | "${workspace}"/*) return 0 ;;
+        esac
+    fi
+    # And anywhere an adapter has already reached around it with `sudo` and
+    # handed the directory to the guest account.
+    if [[ -f ${granted_file} ]]; then
+        while IFS= read -r granted; do
+            [[ -n ${granted} ]] || continue
+            case "${path}" in
+                "${granted}" | "${granted}"/*) return 0 ;;
+            esac
+        done <"${granted_file}"
+    fi
+    return 1
+}
+
+# Root inside the guest, which may write anywhere. The Grok adapter's `put`
+# takes this route on purpose; this one recognises it so that adapter's suite
+# still passes through the same filesystem model.
+is_privileged() {
+    local arg
+    for arg in "$@"; do
+        [[ ${arg} == sudo ]] && return 0
+    done
+    return 1
+}
+
+# What the boundary-preparation `exec`s would do to the guest's filesystem, in
+# the guest's own words. `mkdir -p <dir>` and `chmod <mode> <path>`; anything
+# else is left alone, because nothing else in either adapter writes a path.
+refuse_unwritable_write() {
+    local -a argv=("$@")
+    local i target=""
+    if is_privileged "$@"; then
+        # `sudo chown agent:agent <dir>` is how an adapter buys the write it
+        # did not have; from here on that directory is the guest account's.
+        for ((i = 0; i < ${#argv[@]}; i++)); do
+            [[ ${argv[i]} == chown ]] || continue
+            printf '%s\n' "${argv[${#argv[@]} - 1]}" >>"${granted_file}"
+        done
+        return 0
+    fi
+    for ((i = 0; i < ${#argv[@]}; i++)); do
+        case "${argv[i]}" in
+            mkdir) target="${argv[${#argv[@]} - 1]}" ;;
+            chmod) target="${argv[${#argv[@]} - 1]}" ;;
+            *) continue ;;
+        esac
+        guest_writable "${target}" && return 0
+        printf '%s: Permission denied\n' "${argv[i]}" >&2
+        exit 1
+    done
+    return 0
+}
+
 # The agent's own invocation, told apart from the boundary preparation `exec`s -
 # the mkdir and chmod that place credentials, the install, the version check -
 # by the turn bound, which is the one argument only the agent run carries.
@@ -90,6 +195,7 @@ case "${1:-}" in
             printf 'fake-sbx: no boundary for you\n' >&2
             exit 1
         fi
+        record_workspace "$@"
         ;;
     cp)
         # What actually crossed the boundary, not just that a copy happened.
@@ -103,11 +209,19 @@ case "${1:-}" in
         # flat append would let a test asserting something about the credential
         # be satisfied by the contents of the signing key. `$3` is
         # `<sandbox>:<path>`; the path after the colon is what names it.
+        # A copy into a directory the guest account cannot write fails as the
+        # real one would, so a placement that skipped the mkdir is not quietly
+        # counted as having landed.
+        if ! guest_writable "$(dirname -- "${3##*:}")"; then
+            printf 'cp: Permission denied\n' >&2
+            exit 1
+        fi
         if [[ -f ${2:-} ]]; then
             printf '%s\n' "$(cat -- "$2")" >>"${state}.copied.$(basename -- "${3##*:}")"
         fi
         ;;
     exec)
+        refuse_unwritable_write "$@"
         if is_the_install "$@"; then
             if [[ ${FAKE_SBX_BEHAVIOUR:-ok} == install-fails ]]; then
                 printf 'fake-sbx: curl: (7) Failed to connect to x.ai port 443\n' >&2
