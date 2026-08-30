@@ -23,6 +23,19 @@ credential_env_names() {
     "${LOOP_SRC}/assert-credentials.sh" --list-env-names
 }
 
+# The model credential, with an access token that stops working SECONDS from
+# now. Negative for a login that has already lapsed - the state the whole of
+# #260 is about, and the one a box can be in for sixteen hours a day.
+#
+# `refreshTokenExpiresAt` is three weeks out and is in every fixture on
+# purpose: it is what a reader matching the wrong field would find, and it
+# would report a lapsed box as good until September.
+write_credential() {
+    printf '{"claudeAiOauth":{"accessToken":"not-a-real-token","refreshTokenExpiresAt":%s000,"expiresAt":%s000,"subscriptionType":"max"}}\n' \
+        "$(($(date +%s) + 1814400))" "$(($(date +%s) + $1))" \
+        >"${BOX_HOME}/.claude/.credentials.json"
+}
+
 setup_credential_fixture() {
     LOOP_SRC="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
     export LOOP_SRC
@@ -57,11 +70,16 @@ setup_credential_fixture() {
     git config --file "${BOX_HOME}/.gitconfig" commit.gpgsign true
 
     # The model credential: the operator's Claude Code subscription login, which
-    # #83 put on the box. Its contents are never read - the script asserts that
-    # the box holds one, not what is in it - so an empty object is the honest
-    # fixture.
+    # #83 put on the box.
+    #
+    # This was `{}` until #260, on the grounds that the script asserted the box
+    # held one rather than what was in it. That is exactly what made `[held]`
+    # meaningless - a box whose login lapsed sixteen hours ago satisfied it -
+    # so the contents are now read, and the fixture has to carry the real
+    # shape: the field nested, in milliseconds, beside a longer name that ends
+    # in the same word.
     mkdir -p "${BOX_HOME}/.claude"
-    printf '{}\n' >"${BOX_HOME}/.claude/.credentials.json"
+    write_credential 28800
     chmod 0600 "${BOX_HOME}/.claude/.credentials.json"
 
     # The fake `sbx`. Its two answers are the only things the script asks a

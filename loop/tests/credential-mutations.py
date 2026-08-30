@@ -142,6 +142,22 @@ MUTATIONS = {
         ' - this check would silently stop looking for them"',
         "    [[ -n ${adapter_names} ]] || continue",
     ),
+    # The model credential goes back to being graded on presence, which is what
+    # it was until #260: a subscription login that lapsed sixteen hours ago is
+    # `[held]`, and the only place the consequence shows up is the Progress Log
+    # of the Run that dies on it.
+    "credential-presence-only": (
+        'elif [[ "$(date -u -d "${credential_expiry}" +%s 2>/dev/null || printf 0)" -le \\\n'
+        '    "$(date +%s)" ]]; then',
+        "elif false; then",
+    ),
+    # A credential whose expiry cannot be read is scored as held rather than as
+    # an absence of evidence - the fail-open direction, and the one that makes
+    # this row stop meaning anything the day the vendor changes the file.
+    "credential-unreadable-passes": (
+        'elif [[ -z ${credential_expiry} ]]; then\n    ',
+        'elif false; then\n    ',
+    ),
 }
 
 

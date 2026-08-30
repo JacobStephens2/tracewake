@@ -1,4 +1,6 @@
 """The /loop window at HTTP level: FastAPI test client over a seeded Journal."""
+from datetime import datetime, timedelta, timezone
+
 import psycopg
 from fastapi.testclient import TestClient
 from psycopg.types.json import Json
@@ -758,6 +760,113 @@ def test_a_fact_the_box_did_not_report_is_blank_rather_than_guessed(db):
     cell = strip(client.get("/loop").text)
     assert "deadbeef01" in cell
     assert "not reported" in cell
+
+
+# --- The model credential's clock on the card (#260) ------------------------
+#
+# The other three facts say what the box IS. This one says whether it can
+# currently do anything, which is why it can take the headline off them.
+
+
+def _expiring_in(seconds: int) -> str:
+    """The instant the box would report for a credential with `seconds` left,
+    in the shape the adapter prints."""
+    when = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_the_box_card_shows_when_the_credential_expires_and_what_is_left(db):
+    """Both halves. The instant is what the box actually said and is what a
+    second reader can check; the remaining time is what the operator opened
+    the page to find out. Neither answers on its own."""
+    expires = _expiring_in(6 * 3600 + 20 * 60)
+    with journal.connect(db) as conn:
+        journal.append(
+            conn,
+            "box.observed",
+            {"scripts_hash": "8c1f3a90d2", "credential_expires_at": expires},
+        )
+    cell = strip(client.get("/loop").text)
+    assert expires in cell
+    assert "6h 19m left" in cell or "6h 20m left" in cell
+
+
+def test_the_remaining_time_is_measured_from_the_request_not_from_the_read(db):
+    """The reason the Journal holds an instant rather than a duration. This
+    row was written by a cycle that ran hours ago; if the card were replaying
+    a recorded "8h left" it would still be saying so now, which is the
+    reassuring direction to be wrong in."""
+    with journal.connect(db) as conn:
+        journal.append(
+            conn,
+            "box.observed",
+            {"credential_expires_at": _expiring_in(3600)},
+        )
+    cell = strip(client.get("/loop").text)
+    assert "59m" in cell or "1h 0m" in cell
+
+
+def test_an_expired_credential_is_visibly_distinct_from_a_live_one(db):
+    """The viewing criterion. An operator must not have to open a Run's
+    Progress Log to find out the box cannot authenticate."""
+    lapsed = _expiring_in(-3600)
+    with journal.connect(db) as conn:
+        journal.append(
+            conn,
+            "box.observed",
+            {"scripts_hash": "8c1f3a90d2", "credential_expires_at": lapsed},
+        )
+    body = client.get("/loop").text
+    cell = strip(body)
+    assert "expired" in cell.lower()
+    # Distinct in the markup as well as in the words: the alarm class is what
+    # the strip's other red cells use, and a difference only a careful reader
+    # of the sentence would notice is not a difference on a status card.
+    #
+    # The class and the words are asserted TOGETHER rather than `"alarm" in
+    # body`, which cannot fail: the timer cell on this strip is already in
+    # alarm throughout this suite, because no systemd is answering it.
+    assert 'alarm">the model credential has expired' in body
+    # The rest of the card survives. An operator diagnosing this still needs
+    # to know which box he is looking at.
+    assert "8c1f3a90d2" in cell
+
+
+def test_a_live_credential_does_not_raise_the_alarm(db):
+    """The complement, and it is the test that would catch the comparison
+    being the wrong way round - which would put every healthy box in alarm and
+    make the cell one nobody reads."""
+    with journal.connect(db) as conn:
+        journal.append(
+            conn,
+            "box.observed",
+            {"scripts_hash": "8c1f3a90d2", "credential_expires_at": _expiring_in(28800)},
+        )
+    cell = strip(client.get("/loop").text)
+    assert "expired" not in cell.lower()
+
+
+def test_a_box_that_did_not_report_an_expiry_says_so_rather_than_assuming(db):
+    """Absent is not expired and is not fine. A box whose adapter could not
+    answer must not be rendered as either - one would page for nothing, the
+    other would assert a working login nobody observed."""
+    with journal.connect(db) as conn:
+        journal.append(conn, "box.observed", {"scripts_hash": "deadbeef01"})
+    cell = strip(client.get("/loop").text)
+    assert "expired" not in cell.lower()
+    assert "not reported" in cell
+
+
+def test_an_unparsable_expiry_is_left_unknown_rather_than_called_expired(db):
+    """The box owns the shape of this string. A card that read anything it
+    could not parse as "expired" would page the operator for a format change
+    on a box that is working."""
+    with journal.connect(db) as conn:
+        journal.append(
+            conn, "box.observed", {"credential_expires_at": "sometime next Tuesday"}
+        )
+    cell = strip(client.get("/loop").text)
+    assert "expired" not in cell.lower()
 
 
 def test_a_box_that_could_not_be_read_says_so_on_the_card(db):

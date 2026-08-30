@@ -152,6 +152,25 @@ def test_the_box_facts_are_read_and_journaled(db, box):
     assert observed["agent_version"] == "2.1.221 (Claude Code)"
 
 
+def test_the_credential_expiry_is_journaled_as_the_instant_the_box_gave(db, box):
+    """The fourth fact (#260). Stored as the absolute instant and not as a
+    remaining time: the read happens once a cycle and the page is viewed
+    whenever, so a duration recorded here would be stale by however long the
+    page sat open. The page does that arithmetic against its own clock."""
+    box.run(db, [issue(645)])
+    assert one(db, "box.observed")["credential_expires_at"] == "2026-08-30T01:13:44Z"
+
+
+def test_a_box_that_cannot_say_when_its_credential_expires_says_nothing(db, box):
+    """The adapter answers nothing when there is no credential or no expiry in
+    it, and a fact the box did not report must not be filled in from
+    somewhere else - least of all this one, where the invented value would be
+    a claim that the box can still start a Run."""
+    box.facts("LOOP_BOX_SCRIPTS_HASH=deadbeef01\n")
+    box.run(db, [issue(645)])
+    assert one(db, "box.observed")["credential_expires_at"] is None
+
+
 def test_the_box_facts_are_read_before_the_run_holds_the_process(db, box):
     """A Run blocks for ninety minutes. Facts read after it would be a box
     card that goes stale for exactly as long as the page is most worth

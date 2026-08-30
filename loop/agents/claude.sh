@@ -4,8 +4,10 @@
 # Execution Boundary.
 #
 #   claude.sh <prompt-file> <max-turns>
-#   claude.sh --guest-template    the `sbx` template the boundary is built from
-#   claude.sh --metered-env-names the names that would supersede the subscription
+#   claude.sh --guest-template     the `sbx` template the boundary is built from
+#   claude.sh --metered-env-names  the names that would supersede the subscription
+#   claude.sh --credential-expiry  when the box's model credential stops working
+#   claude.sh --refresh-credential renew it if it is close to stopping
 #
 # Invoked by run.sh with the repository as the working directory, once per
 # Iteration, as a fresh process. Exits with the agent's exit status. Swapping
@@ -98,26 +100,12 @@ metered_env_names=(
 # to be wrong the day the create moved.
 guest_template=loop-php:1
 
-case "${1:-}" in
-    --metered-env-names)
-        printf '%s\n' "${metered_env_names[@]}"
-        exit 0
-        ;;
-    --guest-template)
-        printf '%s\n' "${guest_template}"
-        exit 0
-        ;;
-esac
-
-prompt_file="${1:?usage: claude.sh <prompt-file> <max-turns>}"
-max_turns="${2:?usage: claude.sh <prompt-file> <max-turns>}"
-
 die() {
     printf 'claude.sh: %s\n' "$*" >&2
     exit 1
 }
 
-# Spec issue #73 asks for this to fail the Run loudly rather than switch billing
+# Spec issue #73 asks for this to fail loudly rather than switch billing
 # quietly. Claude Code prefers ANTHROPIC_API_KEY over the subscription login, so
 # a stray metered key in the environment moves every Iteration onto per-token
 # billing with no error and no output difference - the failure shape that broke
@@ -130,18 +118,168 @@ die() {
 # is the one place these names are written down. Two files agreeing on a set of
 # names by both spelling them out is a seam that breaks silently, and the thing
 # that would break is the check that the collision cannot happen (#84).
-metered_found=()
-for name in "${metered_env_names[@]}"; do
-    [[ -n ${!name:-} ]] && metered_found+=("${name}")
-done
-if ((${#metered_found[@]} > 0)); then
+#
+# A function since #260, because there are now TWO things on this box that run
+# the vendor's client and both have to be behind it: an Iteration, and the
+# renewal below. A renewal that ran with a metered key set would bill per token
+# and then fail with "did not renew it", which is the wrong diagnosis for the
+# fault - and it would bill on a path nobody is watching.
+#
+# It deliberately does not guard `--metered-env-names`: that option exists to
+# be asked what the names ARE, and refusing to answer when one of them is set
+# would make `assert-credentials.sh` unable to grade the box it most needs to.
+refuse_metered_keys() {
+    local name
+    local -a metered_found=()
+    for name in "${metered_env_names[@]}"; do
+        [[ -n ${!name:-} ]] && metered_found+=("${name}")
+    done
+    ((${#metered_found[@]} > 0)) || return 0
     printf 'claude.sh: %s is set; it would supersede the subscription and move billing to a metered key. Unset it.\n' \
         "$(
             IFS=', '
             printf '%s' "${metered_found[*]}"
         )" >&2
     exit 1
-fi
+}
+
+# --- The model credential's clock -------------------------------------------
+#
+# The subscription login is an OAuth session, and its access token stops
+# working eight hours after it is minted. Nothing inside the boundary can
+# renew the host's copy: the credential is copied INTO each Iteration's
+# microVM and the copy dies with it (ADR 0011), so a refresh performed in a
+# guest is written to a filesystem that is destroyed seconds later. The host's
+# copy therefore ages from the moment a human last logged in, and a Run
+# dispatched more than eight hours after that fails at its first API call.
+# That is Run 645 on 2026-08-29, and the only place it appeared was that Run's
+# own Progress Log (#260).
+#
+# Both answers live HERE rather than in the Selector or in
+# assert-credentials.sh, for the reason `--guest-template` does: which file
+# holds the credential, what shape it is in, and what renews it are all vendor
+# facts, and ADR 0004 puts vendor facts in the adapter. Three files agreeing
+# on the layout of somebody else's JSON is a seam that breaks silently, and
+# what would break is the check that a Run can still authenticate.
+#
+#   claude.sh --credential-expiry    when the host's copy stops working
+#   claude.sh --refresh-credential   renew it if it is close to stopping
+#
+# How much life the credential must have left for a dispatch to use it as it
+# stands. The Termination Contract bounds a Run at ninety minutes
+# (loop/contract.sh, LOOP_RUN_TIMEOUT_SECONDS), so a credential with less than
+# that could expire DURING an Iteration - which fails a Run halfway through
+# and leaves a half-built branch, and is worse than not starting it. Two hours
+# is that bound with a margin on top.
+credential_renewal_margin_seconds=7200
+
+# The credential the box holds. Named here rather than at its use below,
+# because the two options above are answered before an Iteration is set up and
+# both of them need it.
+credentials_dir="${LOOP_CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+credentials_file="${credentials_dir}/.credentials.json"
+
+# The vendor incantation that renews the session, substitutable so the offline
+# suite can drive this with no network and so a box can be pointed at a
+# different one without editing a reviewed path.
+#
+# It is the vendor's own client rather than a hand-rolled call to its token
+# endpoint. Reimplementing someone else's OAuth is a copy of an undocumented
+# contract, and it breaks the day they change it by minting nothing while
+# reporting success. Running the client makes an API request, and an API
+# request is what obliges it to present a live access token - so the renewal
+# is a side effect of the vendor's own resolution order, which is the part
+# that will still be true next quarter. One turn and a prompt that asks for
+# nothing: the request is the point, not the answer.
+# Split on whitespace, so an argument that needs to contain a space cannot be
+# expressed here. That is a real limit and it is the right one: the override
+# exists to point at a different COMMAND - the offline suite's scripted fake,
+# or a wrapper - and a command line that needs quoting belongs in a wrapper
+# script rather than in an environment variable.
+read -r -a refresh_command <<<"${LOOP_CLAUDE_REFRESH_COMMAND:-claude -p ok --max-turns 1}"
+
+# The access token's expiry, as epoch seconds. Prints nothing and fails when
+# there is no credential or no expiry inside it, which every caller reads as
+# "this could not be answered" rather than as "it has expired". An
+# unanswerable question and a bad answer are different, and reporting the
+# second for the first would page for a box that is fine.
+#
+# Read with `grep` rather than a JSON parser on purpose: this is asked of the
+# box over an SSH read that a Selector cycle is holding open, and a dependency
+# the box might not have would make the fact quietly absent from the card. The
+# field is a bare integer in a flat object, and `"expiresAt"` cannot match
+# `"refreshTokenExpiresAt"` - the leading quote is what separates them.
+credential_expiry_epoch() {
+    local milliseconds
+    [[ -f ${credentials_file} ]] || return 1
+    milliseconds="$(grep -o '"expiresAt"[[:space:]]*:[[:space:]]*[0-9]\+' \
+        -- "${credentials_file}" 2>/dev/null | head -n1 | grep -o '[0-9]\+$')"
+    [[ -n ${milliseconds} ]] || return 1
+    printf '%s\n' "$((milliseconds / 1000))"
+}
+
+as_instant() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+
+# Renew the host's copy if it is close to expiring, and print when it now
+# expires. Cheap and idempotent on the common path: a credential with more
+# than the margin left is left alone, so this costs nothing on most dispatches
+# and runs the vendor's client only in the hours before a Run would have
+# failed anyway.
+#
+# What is NOT trusted is that the renewal worked. The expiry is re-read
+# afterwards and has to have moved past the margin; a renewal command that
+# silently did nothing fails here, before a Run is dispatched, rather than at
+# that Run's first Iteration where only its Progress Log would say so.
+refresh_credential() {
+    local before after now
+    # Before anything is read and long before the vendor's client is run: a
+    # renewal on a metered key bills per token, on a path nobody watches.
+    refuse_metered_keys
+    before="$(credential_expiry_epoch)" ||
+        die "no model credential at ${credentials_file} - run wizards/loop-claude-login.sh"
+    now="$(date +%s)"
+    if ((before - now > credential_renewal_margin_seconds)); then
+        as_instant "${before}"
+        return 0
+    fi
+    # A renewal that exits non-zero is not itself the failure and is not
+    # reported as one: what decides this is whether the expiry moved, which is
+    # read below. A client that printed a warning and renewed anyway must not
+    # stop a dispatch that can now go out.
+    "${refresh_command[@]}" >/dev/null 2>&1 || true
+    after="$(credential_expiry_epoch)" ||
+        die "the credential at ${credentials_file} could not be read after a renewal attempt"
+    now="$(date +%s)"
+    if ((after - now <= credential_renewal_margin_seconds)); then
+        die "the model credential expires $(as_instant "${after}") and '${refresh_command[*]}' did not renew it past the ${credential_renewal_margin_seconds}s a Run needs - run wizards/loop-claude-login.sh"
+    fi
+    as_instant "${after}"
+}
+
+case "${1:-}" in
+    --metered-env-names)
+        printf '%s\n' "${metered_env_names[@]}"
+        exit 0
+        ;;
+    --guest-template)
+        printf '%s\n' "${guest_template}"
+        exit 0
+        ;;
+    --credential-expiry)
+        expiry="$(credential_expiry_epoch)" || exit 1
+        as_instant "${expiry}"
+        exit 0
+        ;;
+    --refresh-credential)
+        refresh_credential
+        exit 0
+        ;;
+esac
+
+prompt_file="${1:?usage: claude.sh <prompt-file> <max-turns>}"
+max_turns="${2:?usage: claude.sh <prompt-file> <max-turns>}"
+
+refuse_metered_keys
 
 sbx="${LOOP_SBX_COMMAND:-sbx}"
 command -v "${sbx}" >/dev/null 2>&1 ||
@@ -150,11 +288,29 @@ command -v "${sbx}" >/dev/null 2>&1 ||
 workspace="$(pwd)"
 
 # The model credential. The box holds the operator's subscription login; each
-# Iteration gets a copy inside its own microVM, which dies with it. This is the
-# path assert-credentials.sh gates on, so a Run cannot start without it.
-credentials_dir="${LOOP_CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
-[[ -f "${credentials_dir}/.credentials.json" ]] ||
-    die "no model credential at ${credentials_dir}/.credentials.json - run wizards/loop-claude-login.sh"
+# Iteration gets a copy inside its own microVM, which dies with it.
+#
+# What stops a Run starting without one is the line below, not
+# `assert-credentials.sh` - that script grades a box for an operator and
+# nothing in a Run calls it.
+#
+# Renewed before the copy goes in, and renewed at EVERY Iteration rather than
+# once when the Run was dispatched (#260). Run 645 is why: it authenticated
+# for Iteration 1 and died on Iteration 2, so a credential checked once at
+# dispatch would have passed and the Run would have failed exactly as it did.
+# A Run is bounded at ninety minutes and the session at eight hours, so the
+# window a Run can cross is real.
+#
+# This is the host side of the boundary - `sbx create` has not run yet - which
+# is the only place the renewal can happen at all: the copy that goes in dies
+# with the microVM (ADR 0011), so a refresh performed inside is written to a
+# filesystem destroyed seconds later. It is also why the renewal is here and
+# not in the Selector, which reaches this box over SSH and would need a second
+# hop to do it.
+#
+# On the common path this costs nothing: a credential with more than the
+# margin left is returned unchanged without the vendor's client being run.
+refresh_credential >/dev/null
 
 signing_key="${LOOP_SIGNING_KEY:-${HOME}/.ssh/loop_signing_ed25519}"
 gitconfig="${LOOP_GITCONFIG:-${HOME}/.gitconfig}"

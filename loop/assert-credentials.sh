@@ -524,16 +524,66 @@ else
 fi
 
 # model-credential
+#
 # `.credentials.json` and nothing else. `~/.claude.json` is Claude Code's
 # configuration and exists the moment the binary is installed, so accepting it
 # would report a credential on a box where the login was never completed - and
 # the Run would find out at its first Iteration.
-if [[ -f "${home}/.claude/.credentials.json" ]]; then
-    state[model-credential]="held"
-    detail[model-credential]="${home}/.claude"
-else
+#
+# Graded on validity as well as presence (#260). Until then this row was
+# `[[ -f ... ]]` and read no field inside the file, so a subscription login
+# that lapsed sixteen hours ago was a held credential by that test - and the
+# only place the consequence appeared was the Progress Log of the Run that
+# died on it. This is the one row where presence and usefulness come apart on
+# a clock rather than on somebody doing something: the login expires eight
+# hours after it is minted, and nothing on the box renews it on its own.
+#
+# The expiry is asked of the AGENT ADAPTER rather than parsed here, for the
+# reason the metered-key names are read off the adapters a few dozen lines
+# above: which file holds the credential and what shape it is in are vendor
+# facts, ADR 0004 puts vendor facts in the adapter, and two files agreeing on
+# the layout of somebody else's JSON is a seam that breaks silently. What
+# would break is this check.
+#
+# `claude.sh` by name, and NOT the configured agent - which is a narrowness
+# worth stating rather than hiding, because `box-sources/facts.sh` does ask
+# the configured one. This whole row is Claude-specific already: the path it
+# checks is `~/.claude/.credentials.json`, hardcoded above, and the `allowed`
+# entry describes it as "the operator's Claude Code subscription login". #84
+# put a second vendor's agent on this box but not a second subscription, so
+# there is one model credential here and it is this one. Making the row
+# agent-variable means moving the path too, and that is a change to what the
+# inventory CLAIMS rather than to how it checks it.
+model_adapter="${adapters_dir}/claude.sh"
+credential_expiry=""
+if [[ -x ${model_adapter} ]]; then
+    credential_expiry="$(LOOP_CLAUDE_CONFIG_DIR="${home}/.claude" \
+        "${model_adapter}" --credential-expiry 2>/dev/null || true)"
+fi
+if [[ ! -f "${home}/.claude/.credentials.json" ]]; then
     state[model-credential]="absent"
     detail[model-credential]="no agent login on the box - see wizards/loop-claude-login.sh"
+elif [[ -z ${credential_expiry} ]]; then
+    # A file that is there and cannot be read is not a pass. Unknown is never
+    # green - the standard the guardrail chip already holds to - and a file
+    # nobody can say anything about is the one case where saying "held" is the
+    # reassurance rather than the check.
+    state[model-credential]="unreadable"
+    detail[model-credential]="${home}/.claude/.credentials.json holds no readable expiry"
+elif [[ "$(date -u -d "${credential_expiry}" +%s 2>/dev/null || printf 0)" -le \
+    "$(date +%s)" ]]; then
+    # Named as its own state rather than folded into absent, because they are
+    # different things to do about it: absent wants the login wizard, expired
+    # wants a renewal. A report that conflated them would send an operator to
+    # re-do a login the box already has.
+    state[model-credential]="expired"
+    detail[model-credential]="the login lapsed at ${credential_expiry} - a Run dispatched now fails at its first API call"
+else
+    # Graded on whether it works NOW, not on whether it will last. A short one
+    # is the adapter's renewal to deal with at dispatch, and a report that
+    # called it a violation would be red on a box that is fine.
+    state[model-credential]="held"
+    detail[model-credential]="${home}/.claude - expires ${credential_expiry}"
 fi
 
 held=0

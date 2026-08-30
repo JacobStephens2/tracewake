@@ -5,11 +5,20 @@
 # and read by the boundary role too, so the box cannot be configured to install
 # one vendor and allow the other's hosts through the egress proxy.
 #
-# What this role puts on the HOST is deliberately small: the binary, and nothing
-# that runs unattended. A Run never executes it here - `loop/agents/<agent>.sh`
-# always goes through `sbx`, and the boundary suites are what hold that - because
-# ADR 0003 makes the Execution Boundary the one control still standing when
-# nobody is watching, and an agent that ran beside it would have none.
+# What this role puts on the HOST is deliberately small: the binary, and almost
+# nothing that runs unattended. A Run's WORK never executes here -
+# `loop/agents/<agent>.sh` always puts the agent's Iteration through `sbx`, and
+# the boundary suites are what hold that - because ADR 0003 makes the Execution
+# Boundary the one control still standing when nobody is watching, and an agent
+# that worked beside it would have none.
+#
+# "Almost" since #260, and the exception is narrow enough to name exactly. The
+# adapter runs the client on the host, for one turn with a prompt that asks for
+# nothing, to renew the box's OAuth session - and only when that session is
+# within two hours of expiring, so on the ordinary Iteration nothing runs here
+# at all. It has to be the host: the credential copied into a microVM dies with
+# it, so a renewal inside the boundary is written to a filesystem destroyed
+# seconds later. ADR 0017 is the decision and what it costs.
 #
 # It is on the host for one reason: the login. Both agents authenticate through
 # a browser, and a sandbox is destroyed after every Iteration, so the credential

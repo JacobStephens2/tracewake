@@ -26,7 +26,13 @@ setup() {
     # in the places ansible puts them.
     BOX_HOME="${BATS_TEST_TMPDIR}/home/loop"
     mkdir -p "${BOX_HOME}/.claude" "${BOX_HOME}/.ssh" "${BOX_HOME}/.config/loop"
-    printf '{"access_token": "not-a-real-token"}\n' >"${BOX_HOME}/.claude/.credentials.json"
+    # The real shape, since #260: an Iteration renews this before copying it
+    # in, so a placeholder with no expiry in it would now fail every test here
+    # for a reason none of them is about. Eight hours is a freshly-minted
+    # session, which is the state the renewal leaves alone. Written by the same
+    # helper the credential tests use, so the shape this suite argues a reader
+    # can get wrong is spelled out once.
+    credential_expiring_in 28800
     printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\n' >"${BOX_HOME}/.ssh/loop_signing_ed25519"
     printf 'ssh-ed25519 AAAA loop@loop\n' >"${BOX_HOME}/.ssh/loop_signing_ed25519.pub"
     printf 'jstephens@etadventures.com ssh-ed25519 AAAA\n' >"${BOX_HOME}/.config/loop/allowed_signers"
@@ -38,6 +44,13 @@ setup() {
     export LOOP_SIGNING_KEY="${BOX_HOME}/.ssh/loop_signing_ed25519"
     export LOOP_GITCONFIG="${BOX_HOME}/.gitconfig"
     export LOOP_ALLOWED_SIGNERS="${BOX_HOME}/.config/loop/allowed_signers"
+
+    # An inert renewal, so that nothing in this suite can reach a network even
+    # if a test constructs a credential the adapter decides to renew. Every
+    # test that is ABOUT the renewal overrides this with one that mints.
+    printf '#!/usr/bin/env bash\nexit 66\n' >"${BATS_TEST_TMPDIR}/inert-renewal"
+    chmod +x "${BATS_TEST_TMPDIR}/inert-renewal"
+    export LOOP_CLAUDE_REFRESH_COMMAND="${BATS_TEST_TMPDIR}/inert-renewal"
 
     WORKSPACE="${BATS_TEST_TMPDIR}/tourbot"
     mkdir -p "${WORKSPACE}"
@@ -255,4 +268,227 @@ calls() {
 @test "the boundary is destroyed when the turn bound fires" {
     FAKE_SBX_BEHAVIOUR=turn-bound run_an_iteration
     [[ "$(calls)" == *"rm --force loop-"* ]]
+}
+
+# --- The model credential's clock (#260) -------------------------------------
+#
+# The subscription login expires eight hours after it is minted and nothing
+# inside the boundary can renew the host's copy - the copy dies with the
+# microVM (ADR 0011). So the adapter answers two questions about it, and both
+# live here for the reason `--guest-template` does: the file, its shape and
+# what renews it are vendor facts, and ADR 0004 puts vendor facts in the
+# adapter.
+
+# Write a credential whose access token expires SECONDS from now. The shape is
+# the real one - the field is nested, sits beside a longer name ending in the
+# same word, and is in milliseconds - because every one of those three is
+# something a reader of this file could get wrong.
+credential_expiring_in() {
+    printf '{"claudeAiOauth":{"accessToken":"not-a-real-token","refreshTokenExpiresAt":%s000,"expiresAt":%s000,"subscriptionType":"max"}}\n' \
+        "$(($(date +%s) + 1814400))" "$(($(date +%s) + $1))" \
+        >"${BOX_HOME}/.claude/.credentials.json"
+}
+
+# The instant SECONDS from now, in the shape the adapter prints.
+instant_in() { date -u -d "@$(($(date +%s) + $1))" +%Y-%m-%dT%H:%M:%SZ; }
+
+@test "the adapter says when the box's model credential stops working" {
+    credential_expiring_in 28800
+    run "${AGENT}" --credential-expiry
+    [ "$status" -eq 0 ]
+    # An absolute instant, not a duration. The Selector reads this once a
+    # cycle and the page is viewed whenever: a "7h left" read at 02:00 and
+    # shown at 09:00 would be a card asserting something nobody observed.
+    [[ "$output" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+    [ "$output" = "$(instant_in 28800)" ]
+}
+
+@test "the expiry is read from expiresAt and not from the refresh token beside it" {
+    # `refreshTokenExpiresAt` ends in the same word and is three weeks out. A
+    # reader that matched it would report a box as good for twenty-one days
+    # when its access token dies tonight - the exact failure this fact exists
+    # to catch, reported as its own opposite.
+    credential_expiring_in 60
+    run "${AGENT}" --credential-expiry
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(instant_in 60)" ]
+}
+
+@test "a box with no model credential answers nothing rather than a bad expiry" {
+    # "Could not be answered" and "expired" are different, and the card says
+    # so differently. A missing credential that reported an expiry in the past
+    # would page for a clock rather than for a login.
+    rm -f "${BOX_HOME}/.claude/.credentials.json"
+    run "${AGENT}" --credential-expiry
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "a credential with no expiry in it answers nothing rather than guessing" {
+    printf '{"claudeAiOauth":{"accessToken":"not-a-real-token"}}\n' \
+        >"${BOX_HOME}/.claude/.credentials.json"
+    run "${AGENT}" --credential-expiry
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+# --- Renewing it -------------------------------------------------------------
+
+# A scripted renewal that rewrites the credential the way the vendor's client
+# would. The adapter's own re-read is what decides whether it worked, and that
+# is the property under test - not the incantation, which is substitutable.
+renewal_that_mints() {
+    cat >"${BATS_TEST_TMPDIR}/renew" <<RENEW
+#!/usr/bin/env bash
+printf '{"claudeAiOauth":{"accessToken":"renewed","refreshTokenExpiresAt":%s000,"expiresAt":%s000}}\n' \\
+    "\$(( \$(date +%s) + 1814400 ))" "\$(( \$(date +%s) + $1 ))" \\
+    >"${BOX_HOME}/.claude/.credentials.json"
+RENEW
+    chmod +x "${BATS_TEST_TMPDIR}/renew"
+    export LOOP_CLAUDE_REFRESH_COMMAND="${BATS_TEST_TMPDIR}/renew"
+}
+
+@test "a credential with plenty of life left is not renewed at all" {
+    # The common path, and it must cost nothing: a dispatch every thirty
+    # minutes that ran the vendor's client every time would put an agent
+    # process on the host forty-eight times a day to no purpose.
+    printf '#!/usr/bin/env bash\nexit 66\n' >"${BATS_TEST_TMPDIR}/must-not-run"
+    chmod +x "${BATS_TEST_TMPDIR}/must-not-run"
+    credential_expiring_in 28800
+    export LOOP_CLAUDE_REFRESH_COMMAND="${BATS_TEST_TMPDIR}/must-not-run"
+    run "${AGENT}" --refresh-credential
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(instant_in 28800)" ]
+}
+
+@test "a credential inside the margin is renewed and the new expiry reported" {
+    credential_expiring_in 600
+    renewal_that_mints 28800
+    run "${AGENT}" --refresh-credential
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(instant_in 28800)" ]
+}
+
+@test "an already-expired credential is renewed rather than refused outright" {
+    # The overnight case this was built for: sixteen hours a day the box would
+    # otherwise be holding a dead credential, and a Selector that only paged
+    # would drain no queue in any of them.
+    credential_expiring_in -3600
+    renewal_that_mints 28800
+    run "${AGENT}" --refresh-credential
+    [ "$status" -eq 0 ]
+}
+
+@test "a renewal that quietly did nothing fails here rather than inside a Run" {
+    # The failure shape the whole ticket is about. Run 645 authenticated for
+    # one Iteration and died on the second, and the only place it said so was
+    # its own Progress Log. A renewal that reports success and mints nothing
+    # must not get that far.
+    credential_expiring_in 600
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${BATS_TEST_TMPDIR}/renew"
+    chmod +x "${BATS_TEST_TMPDIR}/renew"
+    export LOOP_CLAUDE_REFRESH_COMMAND="${BATS_TEST_TMPDIR}/renew"
+    run "${AGENT}" --refresh-credential
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"did not renew it"* ]]
+    [[ "$output" == *"loop-claude-login.sh"* ]]
+}
+
+@test "a renewal that exits non-zero but did mint is not treated as a failure" {
+    # What decides this is whether the expiry moved, not the client's exit
+    # status. A warning on stderr and a renewed token is a dispatch that can
+    # go out.
+    credential_expiring_in 600
+    renewal_that_mints 28800
+    printf 'exit 1\n' >>"${BATS_TEST_TMPDIR}/renew"
+    run "${AGENT}" --refresh-credential
+    [ "$status" -eq 0 ]
+}
+
+@test "a renewal that mints a token expiring inside the margin still fails" {
+    # A Run is bounded at ninety minutes. A credential with less than that
+    # left would expire DURING an Iteration, which fails a Run halfway and
+    # leaves a half-built branch - worse than not starting it.
+    credential_expiring_in 600
+    renewal_that_mints 900
+    run "${AGENT}" --refresh-credential
+    [ "$status" -ne 0 ]
+}
+
+@test "renewing with no credential at all names the wizard that mints one" {
+    rm -f "${BOX_HOME}/.claude/.credentials.json"
+    run "${AGENT}" --refresh-credential
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"loop-claude-login.sh"* ]]
+}
+
+@test "a metered API key stops the renewal before the vendor's client runs" {
+    # The renewal is the second thing on this box that runs the vendor client,
+    # so it needs the same guard an Iteration has. Without it a renewal on a
+    # stray metered key bills per token and then fails with "did not renew
+    # it" - the wrong diagnosis for the fault, on a path nobody is watching.
+    credential_expiring_in 600
+    renewal_that_mints 28800
+    run env ANTHROPIC_API_KEY=sk-not-a-real-key "${AGENT}" --refresh-credential
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"metered"* ]]
+    [[ "$(cat "${BOX_HOME}/.claude/.credentials.json")" != *renewed* ]]
+}
+
+@test "asking which names are metered still answers when one of them is set" {
+    # The guard must not cover this option. `assert-credentials.sh` reads the
+    # names off every adapter to grade the box, and a box that HAS a metered
+    # key set is exactly the box it most needs to grade - an adapter that
+    # refused to answer would shorten the family it was checking.
+    run env ANTHROPIC_API_KEY=sk-not-a-real-key "${AGENT}" --metered-env-names
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ANTHROPIC_API_KEY"* ]]
+}
+
+# --- Every Iteration renews, not every Run -----------------------------------
+#
+# Run 645 authenticated for Iteration 1 and died on Iteration 2. A credential
+# checked once when the Run was dispatched would have passed that check and
+# the Run would have failed exactly as it did, so the renewal is per
+# Iteration. A Run is bounded at ninety minutes and the session at eight
+# hours: the window a Run can cross is real.
+
+@test "an Iteration renews a credential that is close to expiring" {
+    credential_expiring_in 600
+    renewal_that_mints 28800
+    run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$(cat "${BOX_HOME}/.claude/.credentials.json")" == *renewed* ]]
+}
+
+@test "the renewed credential is the one that goes into the boundary" {
+    # Renewing the host's copy and then copying the stale one in would fix
+    # nothing while looking fixed. The order is what makes this work, so it is
+    # asserted rather than assumed.
+    credential_expiring_in 600
+    renewal_that_mints 28800
+    run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$(cat "${FAKE_SBX_STATE}.copied..credentials.json" 2>/dev/null)" == *renewed* ]]
+}
+
+@test "an Iteration whose credential cannot be renewed does not build a boundary" {
+    # Loud and early, at the cost of the Iteration. The alternative is what
+    # Run 645 did: build the boundary, start the agent, and fail inside it
+    # where only the Progress Log says so.
+    credential_expiring_in -3600
+    run_an_iteration
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"did not renew it"* ]]
+    [ -z "$(calls)" ]
+}
+
+@test "an Iteration with a freshly minted credential renews nothing" {
+    # The common path. The inert renewal in setup exits 66 and mints nothing,
+    # so an Iteration that ran it would fail the assertion below rather than
+    # pass quietly.
+    credential_expiring_in 28800
+    run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$(cat "${BOX_HOME}/.claude/.credentials.json")" != *renewed* ]]
 }
