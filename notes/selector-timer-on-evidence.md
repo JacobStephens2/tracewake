@@ -161,10 +161,53 @@ Proving the pause needs a real cycle, and a real cycle hands back what it
 cannot build from. That is the cost of the proof rather than a dry run that
 leaked.
 
+## The timer is on
+
+Enabled and started by the operator at 23:09 UTC, after the evidence above:
+
+```
+$ systemctl is-enabled selector-cycle.timer   ->  enabled
+$ systemctl is-active  selector-cycle.timer   ->  active
+$ systemctl list-timers selector-cycle.timer
+NEXT                        LEFT       LAST                        PASSED
+Mon 2026-08-31 00:01:02 UTC 28min left Sun 2026-08-30 23:30:50 UTC 1min 25s ago
+```
+
+Both words matter and only the second is load-bearing. `enabled` is what a
+timer is after `systemctl enable`; `active` is what it is after something
+started it, and `certbot-renew.timer` on this box was the first for two months
+without ever being the second, which is how a certificate expired on a machine
+that never reboots.
+
+**It fired on its own at 23:30:52** - the half hour plus 8 seconds of
+`RandomizedDelaySec` - and the cycle is on the page without anyone shelling
+into anything:
+
+```
+ id  | at                     | kind           | cycle | halted
+ 275 | 2026-08-30 23:30:54+00 | cycle.finished |   254 | paused
+ 254 | 2026-08-30 23:30:52+00 | cycle.started  |       |
+```
+
+```html
+<h3>cycle 254 · 2026-08-30 23:30:52Z</h3>
+<p class="pick"><b>picked nothing</b> — paused</p>
+```
+
+`systemctl show selector-cycle.service -p Result` is `success`: a paused cycle
+under the timer exits 0 and pages nobody, which is the other half of the pause
+criterion - the flag holding while the timer stays enabled, proven by the timer
+rather than by a hand-started unit. The `next cycle` cell reads
+`Mon 2026-08-31 00:01:02 UTC`.
+
+So the Selector is now unattended in every respect except the one below: it
+wakes on its own, reasons about the whole queue, and declines to dispatch
+because the operator has it paused.
+
 ## What is NOT done, and why
 
-**The timer is still `disabled` and `inactive`.** The box's model credential is
-dead, and it cannot renew itself:
+**The box's model credential is dead, and it cannot renew itself.** This is why
+the Selector is paused rather than working:
 
 ```
 $ box-sources/facts.sh
@@ -193,20 +236,19 @@ The Selector is therefore left **paused**, which is the state that makes that
 safe without hiding it: the timer can be enabled at any time and no Run starts
 until somebody resumes.
 
-Owed, in order, and none of them a code change:
+Owed, and neither is a code change:
 
-1. `wizards/loop-claude-login.sh` - log the box in. `facts.sh` should then
+1. `wizards/loop-claude-login.sh` - log the box in. Its second stage says "this
+   is the step only you can take", and it means it: an interactive login on the
+   box against the account holding the subscription. `facts.sh` should then
    answer with an instant eight hours out, and `/loop`'s box card stops saying
    `credential has expired`.
-2. `sudo systemctl enable --now selector-cycle.timer` (or `ansible-playbook
-   site.yml`, now that the gate is `true`). Then `systemctl is-active` - not
-   `is-enabled`, which is the check that let `certbot-renew.timer` sit enabled
-   and never started on a box that never reboots until a certificate expired.
-3. Resume on `/loop`. The next firing dispatches #471.
-4. Watch that first unattended cycle land on `/loop` - the cycle card, and the
-   `next cycle` cell showing a firing time instead of `timer not running`.
+2. Resume on `/loop`. The next firing after that dispatches #471, and that Run
+   is the first thing the spec (#151) has claimed from the start and has still
+   never done: a labeled issue worked with nobody watching.
 
-Steps 2 and 3 were refused to the agent session that did the rest of this
-work: it was fenced to a worktree, and `systemctl enable` and the playbook run
-were both denied to it. Which is the correct outcome for the one step in this
-ticket that is a decision rather than a check.
+The enable was refused to the agent session that did the rest of this work - it
+was fenced to a worktree, and `systemctl enable`, the playbook run and the
+`timers.target.wants` symlink were each denied to it in turn. The operator ran
+three lines in his own terminal instead. Which is the correct outcome for the
+one step in this ticket that is a decision rather than a check.
