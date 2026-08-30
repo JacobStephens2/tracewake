@@ -64,6 +64,44 @@
         {% endif %}
       </div>
 {% include "_budget.html" %}
+      {#- The guardrail chip (#165). The cell beside it says what the box is
+          RUNNING; this one says whether it could have got there without a
+          review - the rules on the ref the executed paths are deployed from,
+          and whether the deployed tree still matches it. Green only when the
+          last cycle read both and found both good: unknown is not protected,
+          because a chip that asserted it before anything had checked would be
+          the reassurance rather than the check. -#}
+      <div class="cell cell-guardrail"
+           data-guardrail="{% if guardrail is none %}unknown{% elif guardrail.stale %}stale{% elif not guardrail.readable %}unreadable{% elif guardrail.protected %}green{% else %}red{% endif %}">
+        <span class="cell-label">write protection</span>
+        {% if guardrail is none %}
+        <span class="cell-value">not checked yet</span>
+        <span class="detail">a cycle reads it; a dry run does not.</span>
+        {% elif guardrail.stale %}
+        {#- Whatever the last reading said, it is no longer a claim about now:
+            the cycle that took it is more than two firings ago, so the chip
+            reports its own silence rather than the answer it is holding. -#}
+        <span class="cell-value alarm">not checked recently</span>
+        <span class="detail">no cycle has read it since {{ guardrail.at }} -
+          the last one said
+          {% if not guardrail.readable %}it could not be read
+          {%- elif guardrail.protected %}the paths were protected
+          {%- else %}they were not{% endif %}.</span>
+        {% elif not guardrail.readable %}
+        <span class="cell-value alarm">could not be checked</span>
+        <span class="detail">{{ guardrail.error }} &middot; {{ guardrail.at }}</span>
+        {% elif guardrail.protected %}
+        <span class="cell-value guarded">the executed paths are review-gated</span>
+        <span class="detail"><code>{{ guardrail.ref }}</code>
+          at <code>{{ guardrail.ref_head or "unknown" }}</code>
+          &middot; {{ guardrail.rules | join(", ") }}
+          &middot; {{ guardrail.paths | length }} declared path(s) unchanged
+          &middot; read {{ guardrail.at }}</span>
+        {% else %}
+        <span class="cell-value alarm">unprotected</span>
+        <span class="detail">{{ guardrail.detail }} &middot; read {{ guardrail.at }}</span>
+        {% endif %}
+      </div>
       <div class="cell cell-box">
         <span class="cell-label">the box</span>
         {% if box is none %}

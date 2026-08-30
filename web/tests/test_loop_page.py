@@ -1,5 +1,7 @@
 """The /loop window at HTTP level: FastAPI test client over a seeded Journal."""
+import psycopg
 from fastapi.testclient import TestClient
+from psycopg.types.json import Json
 
 import journal
 from app import app
@@ -766,6 +768,137 @@ def test_a_box_that_could_not_be_read_says_so_on_the_card(db):
 
 def test_a_box_never_observed_is_absent_rather_than_invented(db):
     assert "not read yet" in strip(client.get("/loop").text).lower()
+
+
+# --- The guardrail chip (#165) ----------------------------------------------
+#
+# The box card says what is RUNNING; this says whether it could have got there
+# without a review. Both halves of the answer are journaled by the cycle, so
+# the chip is a replay like everything else on this page - and, like the timer
+# cell, its whole worth is that it goes red rather than quiet.
+
+
+def chip(body):
+    """The guardrail cell alone, cut out of the strip."""
+    cell = strip(body)
+    start = cell.index('data-guardrail=')
+    return cell[cell.rindex("<div", 0, start):]
+
+
+PROTECTED = {
+    "ref": "master",
+    "ref_head": "44a596d0cbb3",
+    "rules": ["deletion", "non_fast_forward", "pull_request"],
+    "paths": ["lab/single-user-factory/loop", "lab/single-user-factory/selector"],
+    "unreviewed": [],
+    "protected": True,
+    "detail": None,
+}
+
+
+def _guardrail(conn, **over):
+    payload = {**PROTECTED, **over}
+    return journal.append(conn, "guardrail.observed", payload)
+
+
+def test_the_chip_is_green_when_the_executed_paths_are_review_gated(db):
+    with journal.connect(db) as conn:
+        _guardrail(conn)
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="green"' in cell
+    assert "master" in cell
+    assert "alarm" not in cell
+
+
+def test_the_chip_names_the_rule_that_went_missing(db):
+    """Red rather than absent, and specific rather than red. A chip that only
+    said "not protected" would leave the operator to go and find out which of
+    the three rules stopped applying."""
+    with journal.connect(db) as conn:
+        _guardrail(
+            conn, rules=["deletion"], protected=False,
+            detail="master is missing pull_request, non_fast_forward",
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="red"' in cell
+    assert "alarm" in cell
+    assert "pull_request" in cell
+
+
+def test_the_chip_names_an_executed_path_that_is_ahead_of_the_protected_ref(db):
+    with journal.connect(db) as conn:
+        _guardrail(
+            conn,
+            unreviewed=["lab/single-user-factory/selector/cycle.py"],
+            protected=False,
+            detail=(
+                "1 executed path(s) differ from master: "
+                "lab/single-user-factory/selector/cycle.py"
+            ),
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="red"' in cell
+    assert "cycle.py" in cell
+
+
+def test_the_chip_shows_the_newest_reading(db):
+    """The same rule as the box card, for the sharper reason: a chip that kept
+    showing this morning's green after the protection came off would be worse
+    than no chip at all."""
+    with journal.connect(db) as conn:
+        _guardrail(conn)
+        _guardrail(conn, protected=False, detail="master is missing pull_request")
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="red"' in cell
+
+
+def test_a_guardrail_that_could_not_be_read_is_not_green(db):
+    with journal.connect(db) as conn:
+        journal.append(
+            conn, "guardrail.unreadable", {"error": "gh: API rate limit exceeded"}
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="green"' not in cell
+    assert "rate limit" in cell
+
+
+def test_a_reading_too_old_to_stand_for_now_is_not_green(db):
+    """The failure the timer cell already guards against, one panel along. A
+    guardrail is a claim about the present, and the newest reading is only as
+    good as the cycle that took it: if the timer dies, the last green reading
+    would otherwise sit there asserting protection for as long as the page is
+    up."""
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO journal.events (at, kind, payload)"
+            " VALUES (now() - interval '5 hours', %s, %s)",
+            ("guardrail.observed", Json(PROTECTED)),
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="green"' not in cell
+    assert "5 hours ago" in cell or "no cycle has read it" in cell
+
+
+def test_a_reading_from_the_last_cycle_is_still_green(db):
+    """The other side of the bound: the timer fires every thirty minutes, so a
+    reading one cycle old is the ordinary case and must not read as a
+    failure."""
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO journal.events (at, kind, payload)"
+            " VALUES (now() - interval '31 minutes', %s, %s)",
+            ("guardrail.observed", Json(PROTECTED)),
+        )
+    assert 'data-guardrail="green"' in chip(client.get("/loop").text)
+
+
+def test_a_guardrail_never_read_is_not_green_either(db):
+    """Unknown is not protected. The chip asserts something, and a page that
+    asserted it before anything had checked would be the reassurance the
+    ticket was written to avoid."""
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="green"' not in cell
+    assert "not checked yet" in cell.lower()
 
 
 # --- The Contract the Run is under (#162) -----------------------------------

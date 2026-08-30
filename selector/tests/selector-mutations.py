@@ -31,6 +31,13 @@ UNATTENDED_SUITE = "tests/test_unattended.py"
 WATCHER_SUITE = "tests/test_watcher.py"
 BOARD_SUITE = "../../webapp/tests/test_queue_board.py"
 
+# The write protection over the executed paths (#165). Two targets, because
+# the guardrail is two things: the command that reads the forge and the tree,
+# and the verdict `cycle.py` makes of what it read.
+PROTECTION = "guardrail-sources/protection.sh"
+GUARDRAIL_SUITE = "tests/test_guardrail.py"
+PROTECTION_SUITE = "tests/test_protection_source.py"
+
 # The window (#156). Its path is relative to the Selector, and its suite is
 # the dashboard's - run from the webapp directory, which mutation-check.sh
 # handles by naming both.
@@ -331,9 +338,14 @@ MUTATIONS = {
     # A box that answered non-zero is read as a box that answered nothing, so
     # the card renders a blank-fact success and an outage looks like a box
     # holding no Loop scripts, no template and no agent.
+    # A status command that answered non-zero is read as one that answered
+    # nothing, so an outage renders as a successful read with every fact
+    # blank. One break in `read_facts`, checked TWICE - once in each suite
+    # that watches a caller - because the two cells fail differently: the box
+    # card would show a box holding no Loop scripts, and the guardrail chip
+    # would grade a silence instead of journaling it.
     "an-unreadable-box-reads-as-an-empty-one": (CYCLE, UNATTENDED_SUITE,
-        "    if done.returncode != 0:",
-        "    if False:",
+        "    if done.returncode != 0:", "    if False:",
     ),
     # --- The Iteration watcher (#157) ---------------------------------------
     #
@@ -451,9 +463,12 @@ MUTATIONS = {
     # The box card shows the last SUCCESSFUL read instead of the last read, so
     # a box that has been unreachable for a week still renders last week's
     # hash, template and version as though they were current.
-    "the-box-card-hides-an-outage": (WINDOW, WINDOW_SUITE,
-        '        if event["kind"] in ("box.observed", "box.unreachable"):',
-        '        if event["kind"] == "box.observed":',
+    # Both cards show the last SUCCESSFUL read instead of the last read, so a
+    # box unreachable for a week still renders last week's hash and a
+    # guardrail that has stopped answering still renders green.
+    "the-cards-hide-an-outage": (WINDOW, WINDOW_SUITE,
+        '        if event["kind"] in (good, bad):',
+        '        if event["kind"] == good:',
     ),
 
     # --- The queue board (#158) ---------------------------------------------
@@ -596,6 +611,80 @@ MUTATIONS = {
     # Dropping `stop_after=1` alone no longer deadlocks; it only delays each
     # event by up to a keepalive, which the suite catches on its wait rather
     # than on the fault. Recorded here so the absence is visible.
+
+    # --- The write protection over the executed paths (#165) ----------------
+    #
+    # The guardrail's whole worth is that it goes red. Every mutation here is
+    # a way for the chip to stay green over an executor anybody could change:
+    # a half nobody read, a rule nobody required, a tree nobody compared.
+
+    # A dry run reads the guardrail - a `gh` call and a walk of the deployed
+    # tree, on the mode whose property is that it reaches the tracker and
+    # nothing else.
+    "a-dry-run-reads-the-guardrail": (CYCLE, GUARDRAIL_SUITE,
+        "        guardrail, guardrail_error = observe_guardrail(config)",
+        "        guardrail, guardrail_error = observe_guardrail(config)\n"
+        "    if dry_run:\n"
+        "        guardrail, guardrail_error = observe_guardrail(config)",
+    ),
+    # The second half of the pair above: the same break, checked by the suite
+    # that watches the guardrail rather than the one that watches the box.
+    "an-unreadable-guardrail-reads-as-an-answer": (CYCLE, GUARDRAIL_SUITE,
+        "    if done.returncode != 0:", "    if False:",
+    ),
+    # A required rule can go missing and the chip stays green - the branch the
+    # executed paths are deployed from stops needing a review and nothing on
+    # the page says so.
+    "a-missing-rule-is-still-protected": (CYCLE, GUARDRAIL_SUITE,
+        "        if missing:",
+        "        if False:",
+    ),
+    # An executed path ahead of the protected ref is green: the deployed tree
+    # holds code nobody reviewed and the chip asserts that it cannot.
+    "an-unreviewed-path-is-still-protected": (CYCLE, GUARDRAIL_SUITE,
+        "    elif unreviewed:",
+        "    elif False:",
+    ),
+    # A comparison that never ran reads as one that found nothing, which is
+    # the difference between `UNREVIEWED=` and no line at all.
+    "an-unrun-comparison-reads-as-a-clean-one": (CYCLE, GUARDRAIL_SUITE,
+        "    if unreviewed is None:",
+        "    if False:",
+    ),
+    # The command stops looking for files that are in the tree but in no
+    # commit, so a script dropped in by hand runs with the chip green.
+    "untracked-files-are-not-compared": (PROTECTION, PROTECTION_SUITE,
+        '            git -C "${tree}" ls-files --others --exclude-standard'
+        ' -- "${paths[@]}"\n',
+        "",
+    ),
+    # Commits the checkout is carrying stop being compared at all, so a branch
+    # left checked out in the shared tree runs with the chip green.
+    "unmerged-commits-are-not-compared": (PROTECTION, PROTECTION_SUITE,
+        '            git -C "${tree}" diff --name-only "${base}...HEAD"'
+        ' -- "${paths[@]}"\n',
+        "",
+    ),
+    # Two-dot instead of three-dot: every path where the protected ref has
+    # moved on and this checkout has not pulled is reported unreviewed, so the
+    # chip is red for being stale and nobody reads it.
+    "stale-reads-as-unreviewed": (PROTECTION, PROTECTION_SUITE,
+        '"${base}...HEAD" -- "${paths[@]}"',
+        '"${base}" -- "${paths[@]}"',
+    ),
+    # A reading old enough that the cycle behind it may never have run again
+    # still stands for now, so a dead Selector keeps asserting protection it
+    # has not checked - the failure the timer cell guards against, one panel
+    # along.
+    "an-old-reading-still-stands-for-now": (WINDOW, WINDOW_SUITE,
+        '        reading["stale"] = reading["age"] > GUARDRAIL_MAX_AGE',
+        '        reading["stale"] = False',
+    ),
+    # The chip renders the protected branch whatever the verdict was.
+    "the-chip-is-green-regardless": (LIVE_REGION, WINDOW_SUITE,
+        "        {% elif guardrail.protected %}",
+        "        {% elif True %}",
+    ),
 }
 
 

@@ -1,0 +1,39 @@
+# The paths that run unattended (#165, spec #151 story 34).
+#
+# One path per line, repository-relative; comments and blank lines ignored.
+# `guardrail-sources/protection.sh` compares each of these in the DEPLOYED TREE
+# against the protected ref, and the guardrail chip on /loop is red while any
+# of them differs. This file is the declaration that chip is built on, and it
+# lives inside one of the paths it declares - so widening or narrowing it is
+# itself a reviewed change.
+#
+# The test for inclusion is narrow on purpose: does a timer with nobody
+# watching, or model output, execute this? The rest of the repository is a
+# working area, and a guardrail that went red for a report page is one nobody
+# could keep green.
+
+# The Loop's scripts. Executed on the box, and placed there by
+# `ansible/roles/loop_scripts`, which copies them out of THIS tree rather than
+# out of a merge - so what is sitting here is what the next apply deploys.
+lab/single-user-factory/loop
+
+# The Selector itself: the cycle systemd starts every thirty minutes, the
+# dispatch that seeds a branch and starts a Run on the box, the watcher, the
+# Journal, and this declaration.
+lab/single-user-factory/selector
+
+# How that cycle is invoked: the unit, its timer, and the wrapper named in its
+# ExecStart that resolves the credentials it runs with.
+scripts/selector-cycle.service
+scripts/selector-cycle.timer
+scripts/with-orchestration-env.sh
+
+# Deliberately NOT here:
+#
+#   lab/webapp            the window. It renders the Journal and owns one
+#                         control (the pause flag); it dispatches nothing, and
+#                         no Run reads it.
+#   ansible/roles/loop_*  the apply that puts the Loop on the box. An apply is
+#                         a human at a keyboard - Attendedness holds - and what
+#                         it deploys is `lab/single-user-factory/loop`, which is
+#                         declared above.

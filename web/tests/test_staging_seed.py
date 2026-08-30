@@ -44,6 +44,9 @@ STATES = [
     # like everything else here, and without a row it renders `not read yet`.
     "loop scripts",
     "not reported",
+    # The guardrail chip (#165), journaled by the same part of the cycle as
+    # the box card and invisible in a preview without a row of its own.
+    "the executed paths are review-gated",
 ]
 
 

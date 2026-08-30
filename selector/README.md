@@ -85,6 +85,8 @@ decision downstream, but it does not become a work source (ADR 0015).
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
 | `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
+| `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
+| `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
 | `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |
 | `SELECTOR_SSE_KEEPALIVE_SECONDS` | `20` | how long an open `/loop` stream may say nothing before a keepalive |
 
@@ -98,6 +100,14 @@ Run's budget would let one wedged call hold a cycle open for two hours.
 (`/home/loop/loop`). `box-sources/facts.sh` shares the first, second and
 fourth of those, and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it
 asks for the guest template.
+
+`guardrail-sources/protection.sh` shares none of those - it reaches GitHub and
+this checkout rather than the box - and reads five of its own:
+`SELECTOR_PROTECTED_REPO` (`Educational-Travel-Adventures/orchestration`),
+`SELECTOR_PROTECTED_REF` (`master`, the ref the executed paths are deployed
+from), `SELECTOR_PROTECTED_REMOTE` (`origin`), `SELECTOR_PROTECTED_TREE` (the
+repository the script itself is deployed in) and `SELECTOR_PROTECTED_PATHS`
+(`guardrail-sources/paths.txt`).
 
 Widening the allowlist is one entry here plus a note in ADR 0014, which is
 what story 35 asks for.
@@ -448,6 +458,88 @@ itself, which reads `stopped - nothing will start a cycle` rather than `idle`:
 a Selector with nothing to do and a Selector whose timer was never enabled
 look identical from the Journal, and that is the failure the strip exists for.
 
+## Write protection (#165)
+
+The Selector spends Runs against somebody else's tracker every thirty minutes
+with nobody watching, and the Loop's scripts it dispatches are copied to the
+box out of this working tree. So the standard is story 34's: **the unattended
+executor must be no easier to change than the repository a Run makes Proposals
+against.** tourbot is PR-gated; this had to be too.
+
+**What is protected.** `guardrail-sources/paths.txt`, one path per line: the
+Loop's scripts, the Selector, and the unit, timer and env wrapper that invoke
+it. The test for inclusion is narrow - does a timer with nobody watching, or
+model output, execute this? The rest of the repository is a working area, and
+a guardrail that went red for a report page is one nobody could keep green.
+The declaration lives inside one of the paths it declares, so widening it is
+itself a reviewed change.
+
+**Two halves, because either alone can be green over unreviewed code.**
+
+| half | what it reads | the failure it catches |
+| --- | --- | --- |
+| the rules | `gh api repos/<repo>/rules/branches/master` | the ruleset comes off, or loses `pull_request`, and a push straight to master is accepted again |
+| the tree | `git diff` and `git ls-files --others` against `refs/remotes/origin/master` | this checkout is shared and group-writable, and systemd execs what is sitting in it - a rule on a branch says nothing about the bytes about to run |
+
+The rules required are `pull_request`, `non_fast_forward` and `deletion`: a
+review a force-push can replace is not a review, and neither is one on a
+branch that can be deleted and re-created. They are named rather than counted
+so the chip can say which one went missing.
+
+The tree half compares against `refs/remotes/origin/master` **as the checkout
+already holds it** - no fetch, because a status read should not write to
+somebody else's working tree. Staleness can only make it stricter: a reviewed
+change the local remote-ref has not seen is not in the tree either.
+
+**Where the verdict is made.** `guardrail-sources/protection.sh` reports and
+grades nothing; `cycle.py`'s `guardrail_verdict` decides, because which rules
+are required is a policy and belongs in reviewed Python. Unknown is not green:
+a half the command did not answer counts against, so a command that quietly
+stopped reporting shows red rather than reassuring. An absent `UNREVIEWED`
+line and an empty one are different answers - "the comparison did not run" and
+"nothing differs" - and reading the first as the second would report green for
+the one state this exists to catch.
+
+Read once per cycle and journaled as `guardrail.observed` (or
+`guardrail.unreadable`), beside the box card and for the same reasons: the
+page is a window, and not in a dry run. A guardrail that cannot be read does
+**not** fail the cycle - it is a status read, and a Selector that stopped
+working because GitHub would not answer a question about its own rules would
+be a queue stopped by a dashboard.
+
+**It does not gate dispatch, deliberately.** A red chip is a thing to fix, not
+a reason to stop draining the queue: the protection is about who can change
+the Selector, and refusing to work would hand an unprotected repository a way
+to switch itself off. The gate is the chip and the operator reading it.
+
+**A reading goes stale.** The chip is a claim about the present and is only as
+good as the cycle that took it, so a reading older than `GUARDRAIL_MAX_AGE`
+(90 minutes - two firings of a thirty-minute timer) reports its own silence
+instead of the answer it is holding. Without the bound a Selector whose timer
+died would keep asserting protection it had not checked since, which is the
+failure the next-cycle cell already guards against, one panel along.
+
+**What it does not defend against.** `protection.sh`, `paths.txt` and
+`cycle.py` are themselves inside the declared paths, and it is the *deployed*
+copies that run - so anybody who can write to the shared tree can edit the
+checker to report green, exactly as they could edit the thing it checks. This
+is a detector of drift and accident, not a defence against an operator with
+write access; that boundary is ADR 0014's, and the accounts with write access
+here are the operator's own. Nor does it recreate the ruleset: `Protect
+master` lives in GitHub's settings and is declared in no file here, so the
+guardrail can report its removal and cannot undo it.
+
+**The chip** is the strip's fifth cell, and the one cell coloured when nothing
+is wrong - it asserts something ("this cannot change without a review") rather
+than reporting a number, and an assertion in the same grey as a timestamp
+reads as another fact. Green names the ref, the commit it compared against,
+the rules in force and how many declared paths it checked; red carries the
+verdict's own sentence, which names the missing rule or the differing path.
+
+The push that proves it is in
+`notes/selector-write-protection-evidence.md`: a direct push to `master`
+touching a protected path, rejected by GitHub, run rather than assumed.
+
 ## The issue contract
 
 `ready-for-agent` promises **one** section, and everything else a Run needs
@@ -613,6 +705,14 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   template its adapter would build, the installed agent version - and prints
   them as `LOOP_BOX_*=value` lines. Read-only, holds no credential, starts
   nothing.
+- `guardrail-sources/protection.sh` - the default
+  `SELECTOR_GUARDRAIL_COMMAND`: one `gh api` read of the rules on the ref the
+  executed paths are deployed from, and one `git` comparison of the deployed
+  tree against that ref, printed as `SELECTOR_GUARDRAIL_*=value` lines. It
+  grades nothing - the verdict is `cycle.py`'s - and it reports an
+  unprotected ref as a fact rather than as a failure.
+- `guardrail-sources/paths.txt` - the declaration of what runs unattended,
+  one path per line. Inside a path it declares, so widening it is reviewed.
 - `watcher.py` - the Iteration watcher: the Progress Log parser, and the
   thread that polls the box for the length of a Run. It journals
   `run.iteration`, `run.contract` and `run.watch-failed` and nothing else, and
@@ -660,6 +760,12 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   collapsed from a minute to a fraction of a second. Each snapshot is held
   still for several polls, so "exactly the new records, never a duplicate" is
   an assertion rather than a coincidence of timing.
+  `test_guardrail.py` and `test_protection_source.py` are #165's two levels:
+  what the cycle journals about the write protection, against a scripted
+  guardrail command, and what that command itself reports - `gh` faked on
+  PATH and a throwaway repository with a real `origin/master` in it, so
+  neither the network nor the state of the checkout the suite runs in can
+  change the answer.
 
 The window is `lab/webapp`'s `/loop` page, which imports `journal.py` from
 here and renders at request time.
@@ -797,8 +903,16 @@ Tests skip (not fail) when the local Postgres is unreachable.
 Then the mutation check, which is the suite's own grade:
 
 ```bash
-tests/mutation-check.sh          # ~6 minutes: one suite run per mutation
+tests/mutation-check.sh          # one suite run per mutation
 ```
+
+**Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
+mutations and the suites ran in seconds. There are now 88, and the suite each
+one re-runs takes one to two minutes, so a whole run is measured in hours -
+long enough that a build usually runs the entries it added and their
+neighbours by hand, and the whole set is a thing to start and walk away from.
+Doing that by hand means copying the loop out of this script, which is a gap
+worth closing (a `--only <name>...` argument) and one nobody has closed yet.
 
 It breaks one guard at a time - the allowlist, each Eligibility clause, each
 cap, the fence-aware section reader, the tracker's failure path, and now each

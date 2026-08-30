@@ -151,6 +151,21 @@ LOOP_BOX_AGENT=claude
 LOOP_BOX_AGENT_VERSION=2.1.221 (Claude Code)
 """
 
+# What the guardrail command answers with: the write protection standing over
+# the paths the Loop and the Selector execute (#165). Same key=value shape as
+# the box facts, for the same reason - the Selector already parses one, and a
+# second parser would earn nothing.
+#
+# The default is the protected state, because every dispatching cycle reads
+# this: a fixture that answered "unprotected" would put the whole suite's
+# cycles into a state only one file is about.
+GUARDRAIL = """SELECTOR_GUARDRAIL_REF=master
+SELECTOR_GUARDRAIL_REF_HEAD=44a596d0a1b2
+SELECTOR_GUARDRAIL_RULES=deletion,non_fast_forward,pull_request
+SELECTOR_GUARDRAIL_PATHS=lab/single-user-factory/loop,lab/single-user-factory/selector
+SELECTOR_GUARDRAIL_UNREVIEWED=
+"""
+
 # What the issue command's `checks` action answers with. The shape is the
 # Selector's, not GitHub's: the real github.sh translates `gh pr checks` into
 # it, which is what keeps the translation in the substitutable script rather
@@ -206,6 +221,8 @@ def box(tmp_path):
     checks_file.write_text(GREEN_CHECKS)
     facts_file = tmp_path / "box-facts.txt"
     facts_file.write_text(BOX_FACTS)
+    guardrail_file = tmp_path / "guardrail.txt"
+    guardrail_file.write_text(GUARDRAIL)
     progress_file = tmp_path / "PROGRESS.md"
     progress_file.write_text(
         "# Progress Log\n\nSeeded by seed-run.sh. No Iteration has run yet.\n"
@@ -239,6 +256,7 @@ def box(tmp_path):
             .replace("@SUMMARY@", str(summary))
             .replace("@CHECKS@", str(checks_file))
             .replace("@FACTS@", str(facts_file))
+            .replace("@GUARDRAIL@", str(guardrail_file))
             .replace("@PROGRESS@", str(progress_file))
         )
 
@@ -320,6 +338,14 @@ def box(tmp_path):
         exec cat "@FACTS@"
     '''))
 
+    # Scripted here for the reason the facts command is: every dispatching
+    # cycle reads the guardrail, so a fixture that left it unset would send the
+    # whole suite at the real `gh` and at this repository's own checkout.
+    guardrail_command = _script(tmp_path / "guardrail.sh", fill('''
+        printf 'guardrail %s\n' "$*" >> "@LOG@"
+        exec cat "@GUARDRAIL@"
+    '''))
+
     # The Progress Log the Iteration watcher reads while a Run is in flight
     # (#157). Scripted here for the same reason as the facts command: every
     # dispatch starts a watcher, so a fixture that left this unset would point
@@ -352,6 +378,7 @@ def box(tmp_path):
                     "SELECTOR_ISSUE_COMMAND": str(issue_command),
                     "SELECTOR_BOX_FACTS_COMMAND": str(facts_command),
                     "SELECTOR_BOX_PROGRESS_COMMAND": str(progress_command),
+                    "SELECTOR_GUARDRAIL_COMMAND": str(guardrail_command),
                 }
             )
             environ.update({k: str(v) for k, v in env.items()})
@@ -372,6 +399,9 @@ def box(tmp_path):
         def facts(self, text):
             facts_file.write_text(text)
 
+        def guardrail(self, text):
+            guardrail_file.write_text(text)
+
         def progress(self, text):
             progress_file.write_text(text)
 
@@ -379,6 +409,12 @@ def box(tmp_path):
             """Replace the whole facts script - for the box that cannot be
             read at all, which is a failing command rather than odd output."""
             return _script(tmp_path / "facts.sh", body)
+
+        def guardrail_command(self, body):
+            """Replace the whole guardrail script - for the protection that
+            cannot be read at all, which is a failing command rather than odd
+            output."""
+            return _script(tmp_path / "guardrail.sh", body)
 
         def git(self, *args, cwd=None):
             return git(*args, cwd=cwd)
