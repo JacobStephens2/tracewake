@@ -225,6 +225,23 @@ Attendedness re-earns after the single-operator collapses have deleted the rest 
 the isolation apparatus.
 _Avoid_: sandbox, container, isolation stack
 
+**Executed Path**:
+A path in this repository that a timer, or model output, runs with nobody
+watching: the Loop's scripts, the Selector, and the unit and wrapper that invoke
+it. Declared in `selector/guardrail-sources/paths.txt` and named as a set because
+the standard applies to the set - the unattended executor must be no easier to
+change than the repository a Run makes Proposals against. Distinguished from the
+rest of the repository, which is a working area.
+_Avoid_: protected file, the code, the scripts
+
+**Guardrail**:
+The check that the Executed Paths cannot change without a review, and the chip on
+`/loop` that reports it. Two halves, because either alone can be green over
+unreviewed code: the rules GitHub holds over the ref those paths are deployed
+from, and whether the deployed tree still matches that ref. Read once per Cycle
+and journaled; unknown is never green. It reports, and does not gate Dispatch.
+_Avoid_: branch protection, the ruleset (one half of it), lock
+
 **Proposal-Only Output**:
 The invariant that a Run's sole external effect is a draft pull request a human
 merges. No push to a protected branch, no merge, no deploy, no `apply`, no write to

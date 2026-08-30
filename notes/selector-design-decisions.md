@@ -115,15 +115,23 @@ GraphQL predicate with no text parsing.
 
 Alongside the Selector itself:
 
-- **Write protection for the unattended-executed paths.** A direct push to
-  this repo's master can change `loop/` and the Selector's code today, while
-  tourbot - the repo a Run makes Proposals against - is PR-gated: the code
-  that runs unattended has less protection than the code it changes. Fix
-  without moving repos: a GitHub ruleset protecting
-  `lab/single-user-factory/loop/**` and the Selector's paths, or ansible
-  deploying only reviewed refs to the box. (From the from-zero repo-home
-  exercise, 2026-08-26; the repo-home answer itself was: stay in
-  orchestration.)
+- ~~**Write protection for the unattended-executed paths.**~~ Done in #165.
+  A direct push to this repo's master could change `loop/` and the Selector's
+  code, while tourbot - the repo a Run makes Proposals against - was PR-gated:
+  the code that runs unattended had less protection than the code it changes.
+  (From the from-zero repo-home exercise, 2026-08-26; the repo-home answer
+  itself was: stay in orchestration.)
+
+  Both halves of the option named here turned out to be needed, and neither
+  is a ruleset over paths. The `Protect master` ruleset gates the whole
+  branch - `pull_request`, `non_fast_forward`, `deletion` - and a *path*-scoped
+  push rule would have been the wrong instrument anyway: it blocks pushes to
+  every branch, which is how the Selector's own Run branches reach GitHub. And
+  a ruleset alone proves nothing about what runs, because this checkout is
+  shared and group-writable and systemd execs what is sitting in it. So the
+  guardrail reads both: the rules on the deployment ref, and whether the
+  deployed tree still matches it. See `selector/README.md` (Write protection)
+  and `notes/selector-write-protection-evidence.md`.
 - Add `awaiting-review` to tourbot's `docs/agents/triage-labels.md`.
 
 ## Deferred, explicitly

@@ -79,6 +79,12 @@
 }
 .strip .cell-value { color: var(--font-color); }
 .strip .alarm { color: var(--error-color); }
+/* The guardrail chip (#165) is the one cell on the strip that is coloured
+   when nothing is wrong. It is an assertion - "this cannot change without a
+   review" - and an assertion rendered in the same grey as a timestamp reads
+   as another fact rather than as the claim it is. Same green as the
+   awaiting-review badge, and the same meaning: nothing to do here. */
+.strip .guarded { color: var(--primary-color); }
 .strip .detail {
   color: var(--secondary-color);
   font-size: 0.85em;

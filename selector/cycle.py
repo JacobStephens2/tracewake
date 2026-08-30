@@ -161,6 +161,33 @@ BOX_FACT_KEYS = {
     "LOOP_BOX_AGENT_VERSION": "agent_version",
 }
 
+# What the guardrail chip on /loop is built from (#165): the write protection
+# standing over the paths that run unattended. Keys are the guardrail
+# command's, mapped here to the Journal's, and the values are lists in every
+# case but the two that name one thing.
+GUARDRAIL_FACT_KEYS = {
+    "SELECTOR_GUARDRAIL_REF": "ref",
+    "SELECTOR_GUARDRAIL_REF_HEAD": "ref_head",
+    "SELECTOR_GUARDRAIL_RULES": "rules",
+    "SELECTOR_GUARDRAIL_PATHS": "paths",
+    "SELECTOR_GUARDRAIL_UNREVIEWED": "unreviewed",
+}
+GUARDRAIL_LIST_FACTS = ("rules", "paths", "unreviewed")
+
+# What has to be in force on the ref the executed paths are deployed from
+# before the Selector is no easier to change than the repository it makes
+# Proposals against (story 34).
+#
+#   pull_request       nothing lands without a review. The rule the whole
+#                      guardrail is about.
+#   non_fast_forward   the reviewed history cannot be replaced afterwards. A
+#                      review a force-push can overwrite is not a review.
+#   deletion           the branch cannot be deleted and re-created, which is
+#                      the other way round the first two.
+#
+# Named rather than counted, so the chip can say which one went missing.
+REQUIRED_RULES = ("pull_request", "non_fast_forward", "deletion")
+
 
 @dataclass(frozen=True)
 class Config:
@@ -174,6 +201,8 @@ class Config:
     tracker_command: str
     box_facts_command: str
     box_facts_timeout_seconds: int
+    guardrail_command: str
+    guardrail_timeout_seconds: int
     board_timeout_seconds: int
 
     @classmethod
@@ -204,6 +233,15 @@ class Config:
             # dispatch behind it is what the cycle is for.
             box_facts_timeout_seconds=int(
                 env("SELECTOR_BOX_FACTS_TIMEOUT_SECONDS", "60")
+            ),
+            guardrail_command=env(
+                "SELECTOR_GUARDRAIL_COMMAND",
+                str(HERE / "guardrail-sources" / "protection.sh"),
+            ),
+            # One `gh api` call and one walk of the deployed tree, on a cycle
+            # that has work to do: the same reasoning as the box read above.
+            guardrail_timeout_seconds=int(
+                env("SELECTOR_GUARDRAIL_TIMEOUT_SECONDS", "30")
             ),
             # Shorter still, and for a sharper version of the same reason: the
             # queue board's tracker reads happen inside a page request. Three
@@ -486,6 +524,96 @@ def observe_box(config: Config) -> tuple[dict | None, str | None]:
         if sep and key.strip() in BOX_FACT_KEYS:
             facts[BOX_FACT_KEYS[key.strip()]] = value.strip() or None
     return facts, None
+
+
+# --- The write protection over what runs unattended -------------------------
+
+
+def observe_guardrail(config: Config) -> tuple[dict | None, str | None]:
+    """Read the protection standing over the executed paths, and grade it.
+
+    Two halves, because either one alone can be satisfied while the executed
+    code is unreviewed: the rules GitHub holds over the ref those paths are
+    deployed from, and whether the deployed tree's copy of them still matches
+    that ref. A ruleset says nothing about the bytes systemd is about to exec
+    from a shared working tree; a clean tree says nothing about what may be
+    pushed to it tomorrow.
+
+    Returns `(facts, None)` or `(None, error)`, and never raises. Like the box
+    read, a guardrail that cannot be read does not end the cycle: it is a
+    status read, and a Selector that stopped working because GitHub would not
+    answer a question about its own rules would be a queue stopped by a
+    dashboard. What it must not do is report green - see `guardrail_verdict`.
+    """
+    try:
+        done = subprocess.run(
+            [config.guardrail_command],
+            capture_output=True,
+            text=True,
+            timeout=config.guardrail_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return None, (
+            "the guardrail did not answer within"
+            f" {config.guardrail_timeout_seconds}s"
+        )
+    except OSError as exc:
+        return None, f"{config.guardrail_command}: {exc}"
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip().splitlines()
+        return None, (detail[-1] if detail else f"exit {done.returncode}")
+    facts: dict = {name: None for name in GUARDRAIL_FACT_KEYS.values()}
+    for line in done.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep or key.strip() not in GUARDRAIL_FACT_KEYS:
+            continue
+        name = GUARDRAIL_FACT_KEYS[key.strip()]
+        if name in GUARDRAIL_LIST_FACTS:
+            # An absent key stays None and an empty one becomes the empty
+            # list, and the difference is the whole point: `UNREVIEWED=` is
+            # "nothing differs", no line at all is "the comparison did not
+            # happen", and reading the second as the first would report green
+            # for the one state this exists to catch.
+            facts[name] = [
+                item.strip() for item in value.split(",") if item.strip()
+            ]
+        else:
+            facts[name] = value.strip() or None
+    protected, detail = guardrail_verdict(facts)
+    return {**facts, "protected": protected, "detail": detail}, None
+
+
+def guardrail_verdict(facts: dict) -> tuple[bool, str | None]:
+    """Green or not, and - when not - the sentence the chip carries.
+
+    Unknown is not green. Every half the command did not answer counts
+    against, because the failure this is for is a protection that quietly
+    stopped applying, and a chip that stayed green through a command that had
+    stopped reporting would be the reassurance rather than the check.
+    """
+    faults = []
+    rules = facts.get("rules")
+    if rules is None:
+        faults.append(f"the rules on {facts.get('ref') or 'the ref'} could not be read")
+    else:
+        missing = [rule for rule in REQUIRED_RULES if rule not in rules]
+        if missing:
+            faults.append(
+                f"{facts.get('ref') or 'the ref'} is missing "
+                + ", ".join(missing)
+            )
+    unreviewed = facts.get("unreviewed")
+    if unreviewed is None:
+        faults.append("the unreviewed-path comparison did not run")
+    elif unreviewed:
+        faults.append(
+            f"{len(unreviewed)} executed path(s) differ from "
+            f"{facts.get('ref') or 'the protected ref'}: "
+            + ", ".join(unreviewed)
+        )
+    if not facts.get("paths"):
+        faults.append("no executed paths were declared")
+    return (not faults), ("; ".join(faults) or None)
 
 
 # --- Returning an underspecified issue to the operator ----------------------
@@ -996,6 +1124,17 @@ def run_cycle(
             conn,
             "box.observed" if facts else "box.unreachable",
             {"cycle": cycle_id, **(facts or {"error": box_error})},
+        )
+        # The other half of the same claim (#165): the box card says what is
+        # RUNNING, and this says whether it could have got there without a
+        # review. Read here for the same reasons - once per cycle rather than
+        # per page view, and not in a dry run, which reaches the tracker and
+        # nothing else.
+        guardrail, guardrail_error = observe_guardrail(config)
+        journal.append(
+            conn,
+            "guardrail.observed" if guardrail else "guardrail.unreadable",
+            {"cycle": cycle_id, **(guardrail or {"error": guardrail_error})},
         )
 
     try:

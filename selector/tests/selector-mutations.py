@@ -31,6 +31,13 @@ UNATTENDED_SUITE = "tests/test_unattended.py"
 WATCHER_SUITE = "tests/test_watcher.py"
 BOARD_SUITE = "../../webapp/tests/test_queue_board.py"
 
+# The write protection over the executed paths (#165). Two targets, because
+# the guardrail is two things: the command that reads the forge and the tree,
+# and the verdict `cycle.py` makes of what it read.
+PROTECTION = "guardrail-sources/protection.sh"
+GUARDRAIL_SUITE = "tests/test_guardrail.py"
+PROTECTION_SUITE = "tests/test_protection_source.py"
+
 # The window (#156). Its path is relative to the Selector, and its suite is
 # the dashboard's - run from the webapp directory, which mutation-check.sh
 # handles by naming both.
@@ -332,8 +339,15 @@ MUTATIONS = {
     # the card renders a blank-fact success and an outage looks like a box
     # holding no Loop scripts, no template and no agent.
     "an-unreadable-box-reads-as-an-empty-one": (CYCLE, UNATTENDED_SUITE,
-        "    if done.returncode != 0:",
-        "    if False:",
+        # Anchored on the line that follows, because `observe_guardrail` opens
+        # with the same three lines and a mutation matching twice is refused.
+        "    if done.returncode != 0:\n"
+        "        detail = (done.stderr or done.stdout).strip().splitlines()\n"
+        "        return None, (detail[-1] if detail else f\"exit {done.returncode}\")\n"
+        "    # Every fact is optional.",
+        "    if False:\n"
+        "        pass\n"
+        "    # Every fact is optional.",
     ),
     # --- The Iteration watcher (#157) ---------------------------------------
     #
@@ -596,6 +610,76 @@ MUTATIONS = {
     # Dropping `stop_after=1` alone no longer deadlocks; it only delays each
     # event by up to a keepalive, which the suite catches on its wait rather
     # than on the fault. Recorded here so the absence is visible.
+
+    # --- The write protection over the executed paths (#165) ----------------
+    #
+    # The guardrail's whole worth is that it goes red. Every mutation here is
+    # a way for the chip to stay green over an executor anybody could change:
+    # a half nobody read, a rule nobody required, a tree nobody compared.
+
+    # A dry run reads the guardrail - a `gh` call and a walk of the deployed
+    # tree, on the mode whose property is that it reaches the tracker and
+    # nothing else.
+    "a-dry-run-reads-the-guardrail": (CYCLE, GUARDRAIL_SUITE,
+        "        guardrail, guardrail_error = observe_guardrail(config)",
+        "        guardrail, guardrail_error = observe_guardrail(config)\n"
+        "    if dry_run:\n"
+        "        guardrail, guardrail_error = observe_guardrail(config)",
+    ),
+    # A guardrail command that failed is read as one that answered nothing, so
+    # a forge outage is journaled as an observation instead of as a silence.
+    "an-unreadable-guardrail-reads-as-an-answer": (CYCLE, GUARDRAIL_SUITE,
+        "    if done.returncode != 0:\n"
+        "        detail = (done.stderr or done.stdout).strip().splitlines()\n"
+        "        return None, (detail[-1] if detail else f\"exit {done.returncode}\")\n"
+        "    facts: dict = {",
+        "    if False:\n"
+        "        pass\n"
+        "    facts: dict = {",
+    ),
+    # A required rule can go missing and the chip stays green - the branch the
+    # executed paths are deployed from stops needing a review and nothing on
+    # the page says so.
+    "a-missing-rule-is-still-protected": (CYCLE, GUARDRAIL_SUITE,
+        "        if missing:",
+        "        if False:",
+    ),
+    # An executed path ahead of the protected ref is green: the deployed tree
+    # holds code nobody reviewed and the chip asserts that it cannot.
+    "an-unreviewed-path-is-still-protected": (CYCLE, GUARDRAIL_SUITE,
+        "    elif unreviewed:",
+        "    elif False:",
+    ),
+    # A comparison that never ran reads as one that found nothing, which is
+    # the difference between `UNREVIEWED=` and no line at all.
+    "an-unrun-comparison-reads-as-a-clean-one": (CYCLE, GUARDRAIL_SUITE,
+        "    if unreviewed is None:",
+        "    if False:",
+    ),
+    # The command stops looking for files that are in the tree but in no
+    # commit, so a script dropped in by hand runs with the chip green.
+    "untracked-files-are-not-compared": (PROTECTION, PROTECTION_SUITE,
+        '            git -C "${tree}" ls-files --others --exclude-standard'
+        ' -- "${paths[@]}"\n',
+        "",
+    ),
+    # It compares the tree against ITSELF rather than against the protected
+    # ref, so every state of the checkout is clean.
+    "the-tree-is-compared-against-itself": (PROTECTION, PROTECTION_SUITE,
+        '            git -C "${tree}" diff --name-only "${base}" -- "${paths[@]}"',
+        '            git -C "${tree}" diff --name-only HEAD -- "${paths[@]}"',
+    ),
+    # The chip shows the last SUCCESSFUL reading rather than the last one, so
+    # a guardrail that has been unreadable for a week still renders green.
+    "the-chip-hides-a-failed-reading": (WINDOW, WINDOW_SUITE,
+        '        if event["kind"] in ("guardrail.observed", "guardrail.unreadable"):',
+        '        if event["kind"] == "guardrail.observed":',
+    ),
+    # The chip renders the protected branch whatever the verdict was.
+    "the-chip-is-green-regardless": (LIVE_REGION, WINDOW_SUITE,
+        "        {% elif guardrail.protected %}",
+        "        {% elif True %}",
+    ),
 }
 
 

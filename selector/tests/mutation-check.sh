@@ -4,8 +4,8 @@
 #
 #   tests/mutation-check.sh [python]
 #
-# Breaks one guard at a time - in cycle.py, dispatch.py, watcher.py, board.py
-# or the window's app.py - runs the suite
+# Breaks one guard at a time - in cycle.py, dispatch.py, watcher.py, board.py,
+# guardrail-sources/protection.sh or the window's app.py - runs the suite
 # that is supposed to notice against the broken copy, and reports how many
 # tests went red. Anything whose removal leaves the suite green is something
 # the suite does not actually verify. Same contract as the Loop's
@@ -63,6 +63,7 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
 targets=(cycle.py control.py dispatch.py watcher.py board.py journal.py ../../webapp/app.py
+         guardrail-sources/protection.sh
          ../../webapp/templates/_loop_live.html
          ../../webapp/templates/_history_live.html)
 backup_dir="$(mktemp -d)"

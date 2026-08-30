@@ -309,4 +309,27 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'scripts_hash', '78014f98ea8a', 'guest_template', null,
         'agent', 'claude', 'agent_version', '2.1.221 (Claude Code)'));
 
+-- 6. The write protection over the executed paths, as the guardrail chip
+--    renders it (#165). Journaled by the same part of the cycle as the box
+--    card above, so without a row here a preview shows `not checked yet`.
+--
+--    Green, because green is the state a preview is nearly always reviewing:
+--    the red states are one payload away (drop a rule from `rules`, or put a
+--    path in `unreviewed` with a `detail` to match, and set `protected`
+--    false), and both are covered by the dashboard suite rather than by this
+--    fixture.
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '15 minutes', 'guardrail.observed',
+     jsonb_build_object('cycle', cycle_id,
+        'ref', 'master', 'ref_head', '44a596d0cbb3',
+        'rules', jsonb_build_array('deletion', 'non_fast_forward',
+                                   'pull_request'),
+        'paths', jsonb_build_array('lab/single-user-factory/loop',
+                                   'lab/single-user-factory/selector',
+                                   'scripts/selector-cycle.service',
+                                   'scripts/selector-cycle.timer',
+                                   'scripts/with-orchestration-env.sh'),
+        'unreviewed', jsonb_build_array(),
+        'protected', true, 'detail', null));
+
 END $$;

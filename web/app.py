@@ -464,6 +464,30 @@ def _box(events: list[dict]) -> dict | None:
     return None
 
 
+def _guardrail(events: list[dict]) -> dict | None:
+    """The newest reading of the write protection over the executed paths.
+
+    Newest of either kind, for the box card's reason turned up one notch: a
+    chip still showing this morning's green after the protection came off
+    would be worse than no chip. `readable` is computed here rather than taken
+    from the payload for the same reason the box card computes its own - the
+    Journal is append-only and outlives this code.
+
+    The verdict itself is NOT computed here. `cycle.py` decided it when it
+    read the guardrail, and a page that graded the facts a second time would
+    be a second opinion about whether the Selector is protected, with no way
+    to tell which of the two was the one that had been reviewed.
+    """
+    for event in events:  # newest first
+        if event["kind"] in ("guardrail.observed", "guardrail.unreadable"):
+            return {
+                **(event["payload"] or {}),
+                "at": _utc(event["at"]),
+                "readable": event["kind"] == "guardrail.observed",
+            }
+    return None
+
+
 def _selector_state(
     runs: list[dict], budget: dict, timer: dict, paused: bool
 ) -> str:
@@ -602,6 +626,7 @@ def _loop_context(request: Request) -> dict:
         "budget": budget,
         "timer": timer,
         "box": _box(events),
+        "guardrail": _guardrail(events),
         "board": board_view,
         "paused": paused if error is None else None,
         "state": (
