@@ -420,11 +420,42 @@ if sbx_secrets="$(timeout 30 "${sbx_cmd}" secret ls 2>/dev/null | sed 's/\x1b\[[
         # The table's header row is not a stored secret; listing it as one
         # makes the observation read as one more secret than there is.
         observe "the Execution Boundary stores: $(grep -viE '^(SCOPE|NAME)[[:space:]]' <<<"${sbx_secrets}" | tr '\n' ' ' | tr -s ' ')"
-        for service in "${metered_secret_services[@]}"; do
-            if grep -qiE "(^|[[:space:]])${service}([[:space:]]|$)" <<<"${sbx_secrets}"; then
-                violation "metered-model-key: the Execution Boundary stores a '${service}' secret, which the proxy would inject"
-            fi
-        done
+        # Row by row rather than against the whole listing, because what
+        # decides this is a COLUMN. A `service` secret comes in two forms and
+        # only one of them is a billing collision: an API key, which the proxy
+        # injects and which bills per token, and a captured OAuth session,
+        # which authenticates as the subscription the box already holds. `sbx`
+        # prints the second as `(oauth configured)` in the SECRET column and
+        # the name alone does not separate them, so a check keyed on the name
+        # calls both by the name of the worse one.
+        #
+        # It has to separate them because the second arrives on its own, every
+        # Run (#259). `sbx`'s proxy MITMs the vendor's OAuth endpoint: when the
+        # agent inside the boundary refreshes its session, the proxy intercepts
+        # the token response, takes custody of the tokens on the host and hands
+        # the guest sentinels in their place - which is the mechanism ADR 0011
+        # now records as an accepted residual rather than one the Loop avoids.
+        # Reported here as an observation for that reason: it is a real fact
+        # about the box and an operator should see it, and it is not the
+        # operator's to fix.
+        #
+        # Calling it a violation is what this check did until #259, and the
+        # cost was the whole inventory: a Run left one behind, so the script
+        # was red on every box that had ever completed one, and a check that is
+        # always red is a check nobody reads.
+        while IFS= read -r secret_row; do
+            [[ -n ${secret_row} ]] || continue
+            # The table's header, which names services without storing any.
+            [[ ${secret_row} =~ ^(SCOPE|NAME|SERVICE)[[:space:]] ]] && continue
+            for service in "${metered_secret_services[@]}"; do
+                grep -qiE "(^|[[:space:]])${service}([[:space:]]|$)" <<<"${secret_row}" || continue
+                if grep -qiF '(oauth configured)' <<<"${secret_row}"; then
+                    observe "the Execution Boundary holds a captured '${service}' OAuth session - the proxy took custody of it when an Iteration refreshed the subscription (#259, ADR 0011). It bills as the subscription, not per token"
+                else
+                    violation "metered-model-key: the Execution Boundary stores a '${service}' secret, which the proxy would inject"
+                fi
+            done
+        done <<<"${sbx_secrets}"
     fi
 else
     # Not a violation of a credential family: it is the boundary being

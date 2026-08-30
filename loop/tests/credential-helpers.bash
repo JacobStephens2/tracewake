@@ -100,8 +100,24 @@ case "$1 ${2:-}" in
         ;;
     "secret ls")
         if [[ -n ${FAKE_SBX_SECRETS:-} ]]; then
-            printf 'SERVICE     SCOPE\n'
-            for service in ${FAKE_SBX_SECRETS}; do printf '%s     global\n' "${service}"; done
+            # The real table's four columns, in the real order. This used to
+            # print two of its own invention, and the shape is now load-bearing
+            # rather than decorative: the SECRET column is what tells an
+            # injectable API key apart from a captured OAuth session (#259), so
+            # a fake that omitted it could not express the difference the
+            # script now reads.
+            #
+            # A bare name is the key form, because that is what every test
+            # written before #259 meant by one. `<name>:oauth` is the captured
+            # session.
+            printf 'SCOPE      TYPE      NAME        SECRET\n'
+            for service in ${FAKE_SBX_SECRETS}; do
+                if [[ ${service} == *:oauth ]]; then
+                    printf '(global)   service   %s   (oauth configured)\n' "${service%:oauth}"
+                else
+                    printf '(global)   service   %s   ****\n' "${service}"
+                fi
+            done
         else
             printf "No secrets found. Run 'sbx secret set --help' to see available services.\n"
         fi
