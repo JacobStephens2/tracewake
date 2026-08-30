@@ -401,7 +401,7 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and ninety-two tests, no model and no network. Fifty-eight drive `run.sh`
+Two hundred and ninety-three tests, no model and no network. Fifty-eight drive `run.sh`
 unmodified and assert only what a Run externally produces - exit code, reported
 bound, Progress Log contents, git history, and what it told the operator.
 Thirty-two drive `check-inventory.sh` against small fixture checkouts. Forty-eight
@@ -421,7 +421,7 @@ split the list. Thirteen drive
 something the suite asserts rather than something the file says, and nine drive
 `notify-sources/github-pr-comment.sh` through the same fake, which is how the
 comment landing on the proposal rather than on an issue is asserted rather than
-stated. Twenty-five
+stated. Twenty-six
 drive `agents/claude.sh` through a scripted fake `sbx` and assert what an
 Iteration does to the boundary, and thirty-seven do the same for
 `agents/grok.sh` - a sibling suite rather than a parameterisation, ADR 0012.
@@ -504,6 +504,38 @@ survives an Iteration has to be on disk in the repository, where a reviewer sees
 it. The repository is bind-mounted at its own path, so a commit made inside the
 guest is a commit in the checkout on the host.
 
+**The guest is not the vendor's stock image.** It is `loop-php:1`: the vendor's
+`claude` image with PHP and Composer added, built and snapshotted on the box by
+`ansible/roles/loop_guest_template` and never pushed anywhere. Spec #151's story
+33 is why - a tourbot Iteration on the stock image has no test runner, so `/tdd`
+degrades from red-green-refactor to an Iteration asserting that a test would
+have failed. The story pre-agreed a fallback to the stock image if the work ran
+long; it was not taken.
+
+Three things follow from that, and none of them is obvious from the one-line
+change in the adapter:
+
+- **The image and the agent are separate arguments.** `sbx create -t loop-php:1
+  claude ...`. A custom image does not replace the vendor's kit, and the kit is
+  what attaches the six Anthropic egress hosts at `sandbox:` scope - the ones
+  `loop_execution_boundary` deliberately does not duplicate globally.
+- **The adapter does not fall back.** A box that is not holding the image fails
+  at `sbx create` with a message naming the play, rather than running an
+  Iteration whose Progress Log quietly says the suite could not be found.
+- **`composer install` needs two more hosts than a Run used to.**
+  `repo.packagist.org` and `codeload.github.com` are on the global allowlist for
+  that reason, with the measurement in the role's defaults: 13 seconds with them
+  allowed, and a failed run after four minutes without.
+
+**A green suite in a Run is not a green suite in CI.** Ubuntu 26.04 ships PHP
+8.5 and tourbot's CI grades the Proposal on 8.4, so an Iteration can go green on
+a runtime the checks never use - and it sees 57 deprecations CI does not. The
+direction is the safe one, and it is not free: read a Run's suite result as
+evidence the work is testable, not as the check. The Proposal's checks remain
+the grade. Moving the guest to 8.4 means an external PHP repository on the
+build's allowlist, which is a wider boundary for a smaller difference; the
+evidence note carries the reasoning.
+
 What goes inside is the model credential, the signing key, and the git identity
 that uses it. What does not is the GitHub token. The signing key being inside is
 a stated cost - an agent in the guest can read it - bounded by an egress
@@ -521,7 +553,7 @@ adapter and quote it of the Loop** - ADR 0012 is the rule, and this is the table
 
 | | Claude Code | Grok Build |
 | --- | --- | --- |
-| `sbx` template | `claude`, the vendor's | none - a `shell` boundary with the agent installed inside |
+| `sbx` template | `loop-php:1`, the vendor's `claude` image plus PHP and Composer, built on the box (#164) | none - a `shell` boundary with the agent installed inside |
 | Where the guest's agent comes from | the boundary vendor's image | the vendor's installer, per Iteration, at the adapter's pin |
 | Inference hosts | six, attached by the kit at `sandbox:` scope | three, declared globally: `cli-chat-proxy.grok.com`, `auth.x.ai`, `x.ai` |
 | Credential | OAuth session in `.credentials.json` | OAuth session in `auth.json`, expiring in six hours and refreshing mid-Run |
@@ -548,7 +580,12 @@ That is why the adapter's contract has one query alongside its two arguments:
 ```
 <adapter> <prompt-file> <max-turns>     one Iteration
 <adapter> --metered-env-names           one name per line
+<adapter> --guest-template              the image the boundary is built from
 ```
+
+The third is read by the Selector's box card (#156) rather than by the Loop, so
+that /loop can say which boundary the box would build without any second file
+knowing the answer.
 
 Swapping is two lines, in two places, for two different jobs:
 

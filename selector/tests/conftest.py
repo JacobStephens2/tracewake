@@ -140,8 +140,13 @@ LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/13
 # What the box-facts command answers with: the three things the box card on
 # /loop is built from (#156). key=value lines, because that is the shape the
 # box already answers a Run in (LOOP_RUN_*) and a second parser earns nothing.
+#
+# The template and the agent are deliberately DIFFERENT strings. They were both
+# `claude` until #164 made the guest an image, and that made the fixture unable
+# to fail: a cycle that journalled the agent into the template's field - or the
+# other way round - passed every assertion here. Keep them distinguishable.
 BOX_FACTS = """LOOP_BOX_SCRIPTS_HASH=8c1f3a90d2
-LOOP_BOX_GUEST_TEMPLATE=claude
+LOOP_BOX_GUEST_TEMPLATE=loop-php:1
 LOOP_BOX_AGENT=claude
 LOOP_BOX_AGENT_VERSION=2.1.221 (Claude Code)
 """

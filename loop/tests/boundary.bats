@@ -73,6 +73,21 @@ calls() {
     [[ "$(calls)" == *"create "*" claude ${WORKSPACE}"* ]]
 }
 
+@test "the boundary is built from the guest template the adapter declares" {
+    # Read off the adapter rather than restated, for the reason every other
+    # cross-file value in this suite is: the box card on /loop reports what
+    # `--guest-template` answers (#156), and a test that spelled the tag out
+    # would keep passing on the day the create started using a different one.
+    #
+    # `-t <image>` and the `claude` after it are two different arguments and
+    # both are asserted. The image is the PHP-capable guest (#164); `claude` is
+    # still the agent whose kit `sbx` attaches, and dropping it would take the
+    # boundary's six Anthropic egress rules with it.
+    run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"-t $("${AGENT}" --guest-template) claude ${WORKSPACE}"* ]]
+}
+
 @test "the boundary is destroyed when the Iteration ends" {
     run_an_iteration
     [[ "$(calls)" == *"rm --force loop-"* ]]

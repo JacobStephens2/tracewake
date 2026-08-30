@@ -15,7 +15,7 @@
 #
 # Vendor-specific concerns belong HERE rather than in the loop, and two of them
 # earn that distinction: the credential guard below defends against a collision
-# that is a property of this agent, and `sbx create claude` names a template
+# that is a property of this agent, and `sbx create ... claude` names the kit
 # that exists for this agent and not for the next one.
 #
 # ## One microVM per Iteration
@@ -70,15 +70,33 @@ metered_env_names=(
 # The `sbx` template every Iteration's microVM is built from. Declared here,
 # once, and used by the create below rather than the create naming it a second
 # time: the template IS the Execution Boundary the Run was bounded by (ADR
-# 0003), and it is a thing that may change - spec #151's story 33 wants a
-# PHP-capable guest so `/tdd` is real red-green-refactor, falling back to this
-# stock image if that work runs long.
+# 0003), and it is a thing that may change.
+#
+# It has now changed. This was `claude`, the vendor's stock image, and story 33
+# of spec #151 asked for a PHP-capable guest so `/tdd` is real
+# red-green-refactor rather than an Iteration asserting that a test would have
+# failed. `loop-php:1` is that image: the vendor's, plus PHP and Composer, built
+# and snapshotted ON the box by `ansible/roles/loop_guest_template`. The
+# fallback the story pre-agreed - stay on the stock image - was not taken; the
+# evidence note records what it cost instead.
+#
+# It is now an IMAGE rather than an agent name, and the create below reflects
+# that: `sbx create -t <image> claude`, where `claude` is still the agent whose
+# kit is attached. Those are two different arguments and it matters that they
+# are: the kit is what carries the six Anthropic egress rules at `sandbox:`
+# scope, and a custom image does not replace it.
+#
+# The box has to be holding it. Nothing here falls back to the stock image if it
+# is missing, deliberately - a Run that quietly ran without a test runner would
+# produce Iterations whose Progress Log says the suite could not be found, and
+# the first place anyone would read that is the Proposal. `sbx create` fails
+# instead, and the die below names the play that puts the image there.
 #
 # Readable from outside for the same reason `--metered-env-names` is: the
-# Selector's box card reports which boundary the box would build (#156), and
-# a status card that read it out of this file by pattern would be a second
-# place to be wrong the day the create moved.
-guest_template=claude
+# Selector's box card reports which boundary the box would build (#156), and a
+# status card that read it out of this file by pattern would be a second place
+# to be wrong the day the create moved.
+guest_template=loop-php:1
 
 case "${1:-}" in
     --metered-env-names)
@@ -168,8 +186,8 @@ trap cleanup EXIT INT TERM
 # grade must not be able to do.
 loop_dir="$(cd -- "${agent_dir}/.." && pwd)"
 
-"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro" >&2 ||
-    die "could not create the Execution Boundary for this Iteration"
+"${sbx}" create --quiet --name "${sandbox}" -t "${guest_template}" claude "${workspace}" "${loop_dir}:ro" >&2 ||
+    die "could not create the Execution Boundary for this Iteration from ${guest_template}. If the box is not holding that image, apply ansible/loop.yml - role loop_guest_template builds it."
 
 # Everything the guest needs, placed after creation rather than mounted. A mount
 # would leave the host's copy writable from inside the boundary; a copy dies

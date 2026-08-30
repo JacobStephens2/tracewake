@@ -148,7 +148,7 @@ def test_the_box_facts_are_read_and_journaled(db, box):
     box.run(db, [issue(645)])
     observed = one(db, "box.observed")
     assert observed["scripts_hash"] == "8c1f3a90d2"
-    assert observed["guest_template"] == "claude"
+    assert observed["guest_template"] == "loop-php:1"
     assert observed["agent_version"] == "2.1.221 (Claude Code)"
 
 
