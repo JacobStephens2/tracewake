@@ -338,16 +338,14 @@ MUTATIONS = {
     # A box that answered non-zero is read as a box that answered nothing, so
     # the card renders a blank-fact success and an outage looks like a box
     # holding no Loop scripts, no template and no agent.
+    # A status command that answered non-zero is read as one that answered
+    # nothing, so an outage renders as a successful read with every fact
+    # blank. One break in `read_facts`, checked TWICE - once in each suite
+    # that watches a caller - because the two cells fail differently: the box
+    # card would show a box holding no Loop scripts, and the guardrail chip
+    # would grade a silence instead of journaling it.
     "an-unreadable-box-reads-as-an-empty-one": (CYCLE, UNATTENDED_SUITE,
-        # Anchored on the line that follows, because `observe_guardrail` opens
-        # with the same three lines and a mutation matching twice is refused.
-        "    if done.returncode != 0:\n"
-        "        detail = (done.stderr or done.stdout).strip().splitlines()\n"
-        "        return None, (detail[-1] if detail else f\"exit {done.returncode}\")\n"
-        "    # Every fact is optional.",
-        "    if False:\n"
-        "        pass\n"
-        "    # Every fact is optional.",
+        "    if done.returncode != 0:", "    if False:",
     ),
     # --- The Iteration watcher (#157) ---------------------------------------
     #
@@ -465,9 +463,12 @@ MUTATIONS = {
     # The box card shows the last SUCCESSFUL read instead of the last read, so
     # a box that has been unreachable for a week still renders last week's
     # hash, template and version as though they were current.
-    "the-box-card-hides-an-outage": (WINDOW, WINDOW_SUITE,
-        '        if event["kind"] in ("box.observed", "box.unreachable"):',
-        '        if event["kind"] == "box.observed":',
+    # Both cards show the last SUCCESSFUL read instead of the last read, so a
+    # box unreachable for a week still renders last week's hash and a
+    # guardrail that has stopped answering still renders green.
+    "the-cards-hide-an-outage": (WINDOW, WINDOW_SUITE,
+        '        if event["kind"] in (good, bad):',
+        '        if event["kind"] == good:',
     ),
 
     # --- The queue board (#158) ---------------------------------------------
@@ -626,16 +627,10 @@ MUTATIONS = {
         "    if dry_run:\n"
         "        guardrail, guardrail_error = observe_guardrail(config)",
     ),
-    # A guardrail command that failed is read as one that answered nothing, so
-    # a forge outage is journaled as an observation instead of as a silence.
+    # The second half of the pair above: the same break, checked by the suite
+    # that watches the guardrail rather than the one that watches the box.
     "an-unreadable-guardrail-reads-as-an-answer": (CYCLE, GUARDRAIL_SUITE,
-        "    if done.returncode != 0:\n"
-        "        detail = (done.stderr or done.stdout).strip().splitlines()\n"
-        "        return None, (detail[-1] if detail else f\"exit {done.returncode}\")\n"
-        "    facts: dict = {",
-        "    if False:\n"
-        "        pass\n"
-        "    facts: dict = {",
+        "    if done.returncode != 0:", "    if False:",
     ),
     # A required rule can go missing and the chip stays green - the branch the
     # executed paths are deployed from stops needing a review and nothing on
@@ -677,11 +672,13 @@ MUTATIONS = {
         '"${base}...HEAD" -- "${paths[@]}"',
         '"${base}" -- "${paths[@]}"',
     ),
-    # The chip shows the last SUCCESSFUL reading rather than the last one, so
-    # a guardrail that has been unreadable for a week still renders green.
-    "the-chip-hides-a-failed-reading": (WINDOW, WINDOW_SUITE,
-        '        if event["kind"] in ("guardrail.observed", "guardrail.unreadable"):',
-        '        if event["kind"] == "guardrail.observed":',
+    # A reading old enough that the cycle behind it may never have run again
+    # still stands for now, so a dead Selector keeps asserting protection it
+    # has not checked - the failure the timer cell guards against, one panel
+    # along.
+    "an-old-reading-still-stands-for-now": (WINDOW, WINDOW_SUITE,
+        '        reading["stale"] = reading["age"] > GUARDRAIL_MAX_AGE',
+        '        reading["stale"] = False',
     ),
     # The chip renders the protected branch whatever the verdict was.
     "the-chip-is-green-regardless": (LIVE_REGION, WINDOW_SUITE,

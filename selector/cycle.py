@@ -497,32 +497,61 @@ def observe_box(config: Config) -> tuple[dict | None, str | None]:
     opened an SSH session per view would make an unreachable box look like a
     broken dashboard.
     """
-    try:
-        done = subprocess.run(
-            [config.box_facts_command],
-            capture_output=True,
-            text=True,
-            timeout=config.box_facts_timeout_seconds,
-        )
-    except subprocess.TimeoutExpired:
-        return None, (
-            f"the box did not answer within {config.box_facts_timeout_seconds}s"
-        )
-    except OSError as exc:
-        return None, f"{config.box_facts_command}: {exc}"
-    if done.returncode != 0:
-        detail = (done.stderr or done.stdout).strip().splitlines()
-        return None, (detail[-1] if detail else f"exit {done.returncode}")
     # Every fact is optional. The box's copy of the Loop is updated by an
     # ansible apply rather than by a merge, so it can be older than this
     # repository - a key it does not report is the ordinary case, and the card
     # says so rather than filling it in from the controller's copy, which
     # would be the page asserting something it did not observe.
-    facts = {name: None for name in BOX_FACT_KEYS.values()}
+    return read_facts(
+        config.box_facts_command,
+        config.box_facts_timeout_seconds,
+        BOX_FACT_KEYS,
+        subject="the box",
+    )
+
+
+def read_facts(
+    command: str,
+    timeout_seconds: int,
+    keys: dict[str, str],
+    *,
+    subject: str,
+    list_keys: tuple[str, ...] = (),
+) -> tuple[dict | None, str | None]:
+    """Run one status command and read its `KEY=value` lines back.
+
+    The shape both status reads share (#156, #165): a substitutable command,
+    a bound on how long it may hold the cycle open, and lines in the shape the
+    box already answers a Run in. `keys` maps the command's names to the
+    Journal's; `list_keys` names the ones whose value is a comma-separated
+    list.
+
+    Returns `(facts, None)` or `(None, error)` and never raises. Every key in
+    `keys` is present in `facts`, as `None` when the command did not answer
+    it - an absent key and an empty value are different answers, and the
+    caller decides what each means.
+    """
+    try:
+        done = subprocess.run(
+            [command], capture_output=True, text=True, timeout=timeout_seconds
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"{subject} did not answer within {timeout_seconds}s"
+    except OSError as exc:
+        return None, f"{command}: {exc}"
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip().splitlines()
+        return None, (detail[-1] if detail else f"exit {done.returncode}")
+    facts: dict = {name: None for name in keys.values()}
     for line in done.stdout.splitlines():
         key, sep, value = line.partition("=")
-        if sep and key.strip() in BOX_FACT_KEYS:
-            facts[BOX_FACT_KEYS[key.strip()]] = value.strip() or None
+        if not sep or key.strip() not in keys:
+            continue
+        name = keys[key.strip()]
+        if name in list_keys:
+            facts[name] = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            facts[name] = value.strip() or None
     return facts, None
 
 
@@ -545,40 +574,21 @@ def observe_guardrail(config: Config) -> tuple[dict | None, str | None]:
     answer a question about its own rules would be a queue stopped by a
     dashboard. What it must not do is report green - see `guardrail_verdict`.
     """
-    try:
-        done = subprocess.run(
-            [config.guardrail_command],
-            capture_output=True,
-            text=True,
-            timeout=config.guardrail_timeout_seconds,
-        )
-    except subprocess.TimeoutExpired:
-        return None, (
-            "the guardrail did not answer within"
-            f" {config.guardrail_timeout_seconds}s"
-        )
-    except OSError as exc:
-        return None, f"{config.guardrail_command}: {exc}"
-    if done.returncode != 0:
-        detail = (done.stderr or done.stdout).strip().splitlines()
-        return None, (detail[-1] if detail else f"exit {done.returncode}")
-    facts: dict = {name: None for name in GUARDRAIL_FACT_KEYS.values()}
-    for line in done.stdout.splitlines():
-        key, sep, value = line.partition("=")
-        if not sep or key.strip() not in GUARDRAIL_FACT_KEYS:
-            continue
-        name = GUARDRAIL_FACT_KEYS[key.strip()]
-        if name in GUARDRAIL_LIST_FACTS:
-            # An absent key stays None and an empty one becomes the empty
-            # list, and the difference is the whole point: `UNREVIEWED=` is
-            # "nothing differs", no line at all is "the comparison did not
-            # happen", and reading the second as the first would report green
-            # for the one state this exists to catch.
-            facts[name] = [
-                item.strip() for item in value.split(",") if item.strip()
-            ]
-        else:
-            facts[name] = value.strip() or None
+    # The list keys are where an absent key and an empty one part company, and
+    # the difference is the whole point: `UNREVIEWED=` is "nothing differs",
+    # no line at all is "the comparison did not happen", and reading the
+    # second as the first would report green for the one state this exists to
+    # catch. `read_facts` keeps them apart; `guardrail_verdict` decides what
+    # each of them means.
+    facts, error = read_facts(
+        config.guardrail_command,
+        config.guardrail_timeout_seconds,
+        GUARDRAIL_FACT_KEYS,
+        subject="the guardrail",
+        list_keys=GUARDRAIL_LIST_FACTS,
+    )
+    if facts is None:
+        return None, error
     protected, detail = guardrail_verdict(facts)
     return {**facts, "protected": protected, "detail": detail}, None
 

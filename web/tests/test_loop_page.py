@@ -1,5 +1,7 @@
 """The /loop window at HTTP level: FastAPI test client over a seeded Journal."""
+import psycopg
 from fastapi.testclient import TestClient
+from psycopg.types.json import Json
 
 import journal
 from app import app
@@ -858,6 +860,36 @@ def test_a_guardrail_that_could_not_be_read_is_not_green(db):
     cell = chip(client.get("/loop").text)
     assert 'data-guardrail="green"' not in cell
     assert "rate limit" in cell
+
+
+def test_a_reading_too_old_to_stand_for_now_is_not_green(db):
+    """The failure the timer cell already guards against, one panel along. A
+    guardrail is a claim about the present, and the newest reading is only as
+    good as the cycle that took it: if the timer dies, the last green reading
+    would otherwise sit there asserting protection for as long as the page is
+    up."""
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO journal.events (at, kind, payload)"
+            " VALUES (now() - interval '5 hours', %s, %s)",
+            ("guardrail.observed", Json(PROTECTED)),
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="green"' not in cell
+    assert "5 hours ago" in cell or "no cycle has read it" in cell
+
+
+def test_a_reading_from_the_last_cycle_is_still_green(db):
+    """The other side of the bound: the timer fires every thirty minutes, so a
+    reading one cycle old is the ordinary case and must not read as a
+    failure."""
+    with psycopg.connect(db, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO journal.events (at, kind, payload)"
+            " VALUES (now() - interval '31 minutes', %s, %s)",
+            ("guardrail.observed", Json(PROTECTED)),
+        )
+    assert 'data-guardrail="green"' in chip(client.get("/loop").text)
 
 
 def test_a_guardrail_never_read_is_not_green_either(db):

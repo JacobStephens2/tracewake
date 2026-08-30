@@ -72,11 +72,21 @@
           because a chip that asserted it before anything had checked would be
           the reassurance rather than the check. -#}
       <div class="cell cell-guardrail"
-           data-guardrail="{% if guardrail is none %}unknown{% elif not guardrail.readable %}unreadable{% elif guardrail.protected %}green{% else %}red{% endif %}">
+           data-guardrail="{% if guardrail is none %}unknown{% elif guardrail.stale %}stale{% elif not guardrail.readable %}unreadable{% elif guardrail.protected %}green{% else %}red{% endif %}">
         <span class="cell-label">write protection</span>
         {% if guardrail is none %}
         <span class="cell-value">not checked yet</span>
         <span class="detail">a cycle reads it; a dry run does not.</span>
+        {% elif guardrail.stale %}
+        {#- Whatever the last reading said, it is no longer a claim about now:
+            the cycle that took it is more than two firings ago, so the chip
+            reports its own silence rather than the answer it is holding. -#}
+        <span class="cell-value alarm">not checked recently</span>
+        <span class="detail">no cycle has read it since {{ guardrail.at }} -
+          the last one said
+          {% if not guardrail.readable %}it could not be read
+          {%- elif guardrail.protected %}the paths were protected
+          {%- else %}they were not{% endif %}.</span>
         {% elif not guardrail.readable %}
         <span class="cell-value alarm">could not be checked</span>
         <span class="detail">{{ guardrail.error }} &middot; {{ guardrail.at }}</span>

@@ -15,7 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -443,49 +443,65 @@ def _timer() -> dict:
     }
 
 
-def _box(events: list[dict]) -> dict | None:
-    """The newest thing known about the box, observed or failed.
+def _newest_reading(
+    events: list[dict], good: str, bad: str, flag: str
+) -> dict | None:
+    """The newest of a status read's two rows, whichever kind it is.
 
-    Newest of EITHER kind rather than the newest success: a box card that kept
-    showing last week's good read while every cycle since had failed to reach
-    the box would be the page hiding the one fact worth showing.
+    Both cells the cycle fills in - the box card and the guardrail chip - are
+    one reading replayed, and both need the same rule: newest of EITHER kind
+    rather than newest success. A card that kept showing last week's good read
+    while every cycle since had failed would be the page hiding the one fact
+    worth showing.
+
+    `flag` is what the caller calls "the good kind happened"; it and `at` are
+    written AFTER the payload, because the Journal is append-only and its rows
+    outlive this code - a future payload that happened to carry either name
+    must not overwrite what the page worked out for itself.
     """
     for event in events:  # newest first
-        if event["kind"] in ("box.observed", "box.unreachable"):
-            # The payload first, the two computed keys after it: the Journal
-            # is append-only and its rows outlive this code, so a future
-            # payload that happened to carry `at` or `reachable` must not be
-            # able to overwrite what the page worked out for itself.
+        if event["kind"] in (good, bad):
             return {
                 **(event["payload"] or {}),
                 "at": _utc(event["at"]),
-                "reachable": event["kind"] == "box.observed",
+                "age": datetime.now(timezone.utc) - event["at"],
+                flag: event["kind"] == good,
             }
     return None
+
+
+def _box(events: list[dict]) -> dict | None:
+    """The newest thing known about the box, observed or failed."""
+    return _newest_reading(events, "box.observed", "box.unreachable", "reachable")
+
+
+# How old a guardrail reading may be and still stand for now. The timer fires
+# every thirty minutes, so this is two missed cycles: recent enough that an
+# ordinary reading is never called stale, short enough that a dead Selector
+# stops asserting protection it has not checked since. The failure is the one
+# the timer cell already guards against, one panel along - a page whose newest
+# row is from a cycle that never ran again would otherwise show green for as
+# long as it was left open.
+GUARDRAIL_MAX_AGE = timedelta(minutes=90)
 
 
 def _guardrail(events: list[dict]) -> dict | None:
     """The newest reading of the write protection over the executed paths.
 
-    Newest of either kind, for the box card's reason turned up one notch: a
-    chip still showing this morning's green after the protection came off
-    would be worse than no chip. `readable` is computed here rather than taken
-    from the payload for the same reason the box card computes its own - the
-    Journal is append-only and outlives this code.
+    The box card's rule, turned up one notch by `stale`: a chip is a claim
+    about the present, and this one is only as good as the cycle that took it.
 
     The verdict itself is NOT computed here. `cycle.py` decided it when it
     read the guardrail, and a page that graded the facts a second time would
     be a second opinion about whether the Selector is protected, with no way
-    to tell which of the two was the one that had been reviewed.
+    to tell which of the two had been reviewed.
     """
-    for event in events:  # newest first
-        if event["kind"] in ("guardrail.observed", "guardrail.unreadable"):
-            return {
-                **(event["payload"] or {}),
-                "at": _utc(event["at"]),
-                "readable": event["kind"] == "guardrail.observed",
-            }
-    return None
+    reading = _newest_reading(
+        events, "guardrail.observed", "guardrail.unreadable", "readable"
+    )
+    if reading is not None:
+        reading["stale"] = reading["age"] > GUARDRAIL_MAX_AGE
+    return reading
 
 
 def _selector_state(

@@ -85,6 +85,8 @@ decision downstream, but it does not become a work source (ADR 0015).
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
 | `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
+| `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
+| `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
 | `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |
 | `SELECTOR_SSE_KEEPALIVE_SECONDS` | `20` | how long an open `/loop` stream may say nothing before a keepalive |
 
@@ -98,6 +100,14 @@ Run's budget would let one wedged call hold a cycle open for two hours.
 (`/home/loop/loop`). `box-sources/facts.sh` shares the first, second and
 fourth of those, and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it
 asks for the guest template.
+
+`guardrail-sources/protection.sh` shares none of those - it reaches GitHub and
+this checkout rather than the box - and reads five of its own:
+`SELECTOR_PROTECTED_REPO` (`Educational-Travel-Adventures/orchestration`),
+`SELECTOR_PROTECTED_REF` (`master`, the ref the executed paths are deployed
+from), `SELECTOR_PROTECTED_REMOTE` (`origin`), `SELECTOR_PROTECTED_TREE` (the
+repository the script itself is deployed in) and `SELECTOR_PROTECTED_PATHS`
+(`guardrail-sources/paths.txt`).
 
 Widening the allowlist is one entry here plus a note in ADR 0014, which is
 what story 35 asks for.
@@ -502,6 +512,23 @@ a reason to stop draining the queue: the protection is about who can change
 the Selector, and refusing to work would hand an unprotected repository a way
 to switch itself off. The gate is the chip and the operator reading it.
 
+**A reading goes stale.** The chip is a claim about the present and is only as
+good as the cycle that took it, so a reading older than `GUARDRAIL_MAX_AGE`
+(90 minutes - two firings of a thirty-minute timer) reports its own silence
+instead of the answer it is holding. Without the bound a Selector whose timer
+died would keep asserting protection it had not checked since, which is the
+failure the next-cycle cell already guards against, one panel along.
+
+**What it does not defend against.** `protection.sh`, `paths.txt` and
+`cycle.py` are themselves inside the declared paths, and it is the *deployed*
+copies that run - so anybody who can write to the shared tree can edit the
+checker to report green, exactly as they could edit the thing it checks. This
+is a detector of drift and accident, not a defence against an operator with
+write access; that boundary is ADR 0014's, and the accounts with write access
+here are the operator's own. Nor does it recreate the ruleset: `Protect
+master` lives in GitHub's settings and is declared in no file here, so the
+guardrail can report its removal and cannot undo it.
+
 **The chip** is the strip's fifth cell, and the one cell coloured when nothing
 is wrong - it asserts something ("this cannot change without a review") rather
 than reporting a number, and an assertion in the same grey as a timestamp
@@ -876,8 +903,16 @@ Tests skip (not fail) when the local Postgres is unreachable.
 Then the mutation check, which is the suite's own grade:
 
 ```bash
-tests/mutation-check.sh          # ~6 minutes: one suite run per mutation
+tests/mutation-check.sh          # one suite run per mutation
 ```
+
+**Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
+mutations and the suites ran in seconds. There are now 88, and the suite each
+one re-runs takes one to two minutes, so a whole run is measured in hours -
+long enough that a build usually runs the entries it added and their
+neighbours by hand, and the whole set is a thing to start and walk away from.
+Doing that by hand means copying the loop out of this script, which is a gap
+worth closing (a `--only <name>...` argument) and one nobody has closed yet.
 
 It breaks one guard at a time - the allowlist, each Eligibility clause, each
 cap, the fence-aware section reader, the tracker's failure path, and now each

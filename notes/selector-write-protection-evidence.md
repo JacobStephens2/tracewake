@@ -3,7 +3,7 @@
 *2026-08-30, issue #165. The behaviour is carried by the offline suites -
 `selector/tests/test_guardrail.py` (what the cycle journals), 
 `selector/tests/test_protection_source.py` (what the command reports, `gh`
-faked and the tree throwaway) and the chip's six HTTP-level tests in
+faked and the tree throwaway) and the chip's eight HTTP-level tests in
 `lab/webapp/tests/test_loop_page.py`. What is written down here is what only
 GitHub and this VM could say: that a direct push at a protected path is really
 refused, and what the guardrail really reports about the tree that is really
@@ -107,17 +107,37 @@ protected ref's history has not seen, never what the ref has that the tree has
 not caught up with. `test_a_tree_behind_the_protected_ref_has_nothing_unreviewed`
 holds the distinction; it was written against the live reading above.
 
-## The chip, rendered
+## The chip, rendered - green, from a real reading
 
-Rendered from `seed.sql` (the staging fixture, ADR 0016) with the app served
-on a loopback port and screenshotted headless, because the live `/loop` runs
-from `master` and cannot show a branch's page:
+The live `/loop` runs from `master` and cannot show a branch's page, so the
+page was served on a loopback port and screenshotted headless. What it
+rendered is **not** the fixture: `cycle.observe_guardrail` ran the real
+`protection.sh` against a throwaway worktree checked out at `origin/master`,
+against the real ruleset, and the row journaled is the one a cycle would have
+written:
 
-- **green** - `the executed paths are review-gated`, then `master` at
-  `44a596d0cbb3`, the three rules, `5 declared path(s) unchanged`, and when it
-  was read.
-- **red** - `unprotected`, and the verdict's own sentence:
-  `1 executed path(s) differ from master: scripts/selector-cycle.service`.
+```json
+{"ref": "master", "ref_head": "ddb8d522559d",
+ "rules": ["deletion", "non_fast_forward", "pull_request"],
+ "paths": ["lab/single-user-factory/loop", "lab/single-user-factory/selector",
+           "scripts/selector-cycle.service", "scripts/selector-cycle.timer",
+           "scripts/with-orchestration-env.sh"],
+ "unreviewed": [], "protected": true, "detail": null}
+```
+
+On the page that is `the executed paths are review-gated`, then `master` at
+`ddb8d522559d`, the three rules, `5 declared path(s) unchanged`, and when it
+was read - in the palette's affirmative colour.
+
+That matters more than a fixture render, because it answers the question the
+fixture cannot: **is green reachable against reality?** It is, for a tree at
+the protected ref. The live shared tree is not at the protected ref today (see
+above), which is the honest state of that tree rather than a limitation of the
+chip.
+
+The red state was rendered the same way, from the live tree's own reading:
+`unprotected`, and the verdict's own sentence,
+`1 executed path(s) differ from master: scripts/selector-cycle.service`.
 
 The colour is `--primary-color`, the vendored palette's affirmative one - the
 same colour the `awaiting-review` badge carries and with the same meaning.
@@ -126,37 +146,64 @@ for one chip would be this page leaving the factory's visual identity.
 
 ## The mutation check, partially run
 
-The eleven mutations this ticket adds were all caught - the four halves of the
+The mutations this ticket adds were all caught - the four halves of the
 verdict, the three reads the comparison makes, the chip's two guards, and the
 two-dot/three-dot distinction above:
 
 ```
   a-dry-run-reads-the-guardrail              caught,  8 red
   an-unreadable-guardrail-reads-as-an-answer caught,  1 red
+  an-unreadable-box-reads-as-an-empty-one    caught,  1 red
   a-missing-rule-is-still-protected          caught,  2 red
   an-unreviewed-path-is-still-protected      caught,  1 red
   an-unrun-comparison-reads-as-a-clean-one   caught,  1 red
   untracked-files-are-not-compared           caught,  1 red
   unmerged-commits-are-not-compared          caught,  1 red
   stale-reads-as-unreviewed                  caught,  1 red
-  the-chip-hides-a-failed-reading            caught,  1 red
+  the-cards-hide-an-outage                   caught,  2 red
+  an-old-reading-still-stands-for-now        caught,  1 red
   the-chip-is-green-regardless               caught,  2 red
-  an-unreadable-box-reads-as-an-empty-one    caught,  1 red   (re-anchored here)
 ```
 
-The last one is not new: `observe_guardrail` opens with the same three lines as
-`observe_box`, so the box's mutation began matching twice and was refused. It
-is re-anchored on the line that follows and re-checked above.
+Three of those are re-anchored rather than new. The code review found the two
+status reads duplicating twenty lines of each other, and the page's two cards
+duplicating their "newest of either kind" loop; both were extracted
+(`cycle.read_facts`, `app._newest_reading`), which is also what had made the
+box's existing mutation match twice and be refused. One break in the shared
+reader now stands for both, and the pair above runs it against each suite in
+turn - `the-cards-hide-an-outage` goes red in two tests, one per card.
 
-**The whole set was not run.** `tests/mutation-check.sh` is 87 mutations and
-each runs a suite; the Selector's suites have grown to 164 tests and about two
-minutes, so a full run is now measured in hours rather than in the six minutes
-the README claims. That number wants correcting, and a way to run a subset
-wants adding - noted rather than done here, because both are changes to a
-runner this ticket is not otherwise touching.
+**The whole set was not run.** `tests/mutation-check.sh` is 88 mutations and
+each re-runs a suite; the Selector's suites have grown to 166 tests and about
+two minutes, so a full run is measured in hours rather than in the six minutes
+the README claimed. The claim is corrected there. A `--only <name>...`
+argument would make running a subset something other than copying the runner's
+loop by hand, and is named in the README as a gap rather than built here.
+
+## A reading goes stale
+
+The chip is a claim about the present, so the newest reading is only as good
+as the cycle that took it. A reading older than ninety minutes - two firings
+of the thirty-minute timer - reports its own silence
+(`not checked recently`, and what the last one said) rather than the answer it
+is holding. Without that, a Selector whose timer had died would keep asserting
+protection it had not checked since, which is the exact failure the
+next-cycle cell was built to make visible.
 
 ## What this does not cover
 
+- **The ruleset is not declared in code.** `Protect master` lives in GitHub's
+  settings; nothing in this repository would recreate it. The guardrail turns
+  its removal into a red chip within one cycle, and cannot undo it. Codifying
+  it would mean a GitHub provider and a token in `tofu/`, which is a decision
+  about how this org's settings are managed rather than part of this build.
+- **The guardrail attests to itself.** `protection.sh`, `paths.txt` and
+  `cycle.py` are inside the declared paths, and it is the deployed copies that
+  run - so anyone who can write to the shared tree can edit the checker to
+  print `UNREVIEWED=` as easily as they can edit what it checks. This is a
+  detector of drift and accident, not a defence against an operator with write
+  access; who has that access is ADR 0014's question, and the answer here is
+  the operator's own accounts.
 - **The box's copy of the Loop.** `ansible/roles/loop_scripts` copies
   `lab/single-user-factory/loop/` to `loop.etadventures.com` at apply time, so
   the guardrail covers what the next apply would deploy, not what the box is
