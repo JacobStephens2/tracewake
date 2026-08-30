@@ -8,7 +8,7 @@
 # same key=value shape run.sh ends a Run with, so nothing here needs a second
 # parser - and exits 0 when the box answered.
 #
-# Three facts, and each is on the card for a reason (#156):
+# Four facts, and each is on the card for a reason (#156, #260):
 #
 #   LOOP_BOX_SCRIPTS_HASH    the Loop scripts the box is holding, hashed. The
 #                            box's copy is placed by an ansible apply, not by a
@@ -30,6 +30,27 @@
 #                            Contract's five numbers are calibrated against a
 #                            Run, and a Run by a different agent version is a
 #                            Run against a different calibration.
+#   LOOP_BOX_CREDENTIAL_EXPIRES_AT
+#                            when the box's model credential stops working, as
+#                            an absolute instant. The other three say what the
+#                            box IS; this one says whether it can currently do
+#                            anything (#260). The subscription login lapses
+#                            eight hours after a human mints it and nothing in
+#                            a guest can renew the host's copy, so a box that
+#                            passes every other check can still be sixteen
+#                            hours a day unable to start a Run - which is what
+#                            happened to Run 645, visible only in that Run's
+#                            own Progress Log.
+#
+#                            An instant rather than a remaining time, because
+#                            this is read once a cycle and the page is viewed
+#                            whenever: "7h left" read at 02:00 and rendered at
+#                            09:00 would be the card asserting something
+#                            nobody observed. What is left is arithmetic the
+#                            viewer does, on a number the box actually said.
+#                            Asked of the adapter, like the guest template,
+#                            because the file and its shape are vendor facts
+#                            (ADR 0004).
 #
 # A fact the box cannot answer is simply not printed. The box's copy of the
 # Loop can be older than this repository's - `--guest-template` is new here -
@@ -85,6 +106,8 @@ adapter="${loop}/agents/${agent}.sh"
 if [ -x "${adapter}" ]; then
     template="$("${adapter}" --guest-template 2>/dev/null || true)"
     [ -n "${template}" ] && printf "LOOP_BOX_GUEST_TEMPLATE=%%s\\n" "${template}"
+    expiry="$("${adapter}" --credential-expiry 2>/dev/null || true)"
+    [ -n "${expiry}" ] && printf "LOOP_BOX_CREDENTIAL_EXPIRES_AT=%%s\\n" "${expiry}"
 fi
 PATH="${HOME}/.local/bin:${HOME}/.grok/bin:${PATH}"
 version="$("${agent}" --version 2>/dev/null | head -n 1 || true)"

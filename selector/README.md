@@ -418,7 +418,7 @@ of it and journaled the lot - so its record is the cycle summary, with
 and has no summary to carry the reason, so it needs a row of its own.
 
 **The box card.** Once per cycle - not in a dry run, which still reaches the
-tracker and nothing else - `box-sources/facts.sh` reads three facts off the
+tracker and nothing else - `box-sources/facts.sh` reads four facts off the
 box over SSH and they are journaled as `box.observed`:
 
 | fact | why it is on the card |
@@ -426,13 +426,22 @@ box over SSH and they are journaled as `box.observed`:
 | loop scripts hash | the box's copy of the Loop is placed by an ansible apply, not by a merge, so it drifts from the reviewed copy in this repository silently and nothing else would say so (story 34) |
 | guest template | the `sbx` template every Iteration's microVM is built from - the Execution Boundary's identity (ADR 0003). Story 33 did change it: it reads `loop-php:1` since #164, the vendor's image plus PHP and Composer, and the version in the tag is what makes a rebuild visible here rather than only in an apply's output |
 | agent version | the Termination Contract's five numbers are calibrated against a Run, and a Run by another agent version is a Run against another calibration |
+| credential expiry | the first three say what the box *is*; this says whether it can currently do anything (#260). The subscription login lapses eight hours after a human mints it, so a box that passes every other check can still be sixteen hours a day unable to start a Run - which is what Run 645 hit, visible only in that Run's own Progress Log |
 
-The template is *asked of* the agent adapter (`agents/claude.sh
---guest-template`) rather than read out of it, so the answer comes from the
-file that makes the choice. A fact the box does not report is left blank on
-the card rather than filled in from the controller's copy: the box's Loop can
-be older than this repository's, and a page that guessed would be asserting
-something nothing observed.
+The template and the expiry are *asked of* the agent adapter (`agents/claude.sh
+--guest-template`, `--credential-expiry`) rather than read out of it, so the
+answer comes from the file that makes the choice - and for the expiry, from
+the one file that knows the vendor's credential layout (ADR 0004). A fact the
+box does not report is left blank on the card rather than filled in from the
+controller's copy: the box's Loop can be older than this repository's, and a
+page that guessed would be asserting something nothing observed.
+
+The expiry is journaled as an **absolute instant**, never as a remaining time.
+The read happens once a cycle and the page is viewed whenever, so a duration
+recorded here would be wrong by however long the page sat open - and wrong in
+the reassuring direction. `/loop` does that arithmetic against its own clock,
+and an expired credential takes the headline off the scripts hash. Renewing it
+is ADR 0017 and happens on the box, in the adapter, at every Iteration.
 
 A box that cannot be read is journaled `box.unreachable` and **does not fail
 the cycle**. The dispatch behind it fails on its own and pages on its own, and

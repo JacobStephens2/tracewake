@@ -91,6 +91,22 @@ case "${1:-}" in
             exit 1
         fi
         ;;
+    cp)
+        # What actually crossed the boundary, not just that a copy happened.
+        # `.calls` records the paths, and paths are the same whether the file
+        # behind them was renewed or stale - so a test that the renewed
+        # credential is the one that goes in (#260) has nothing to assert
+        # against without this.
+        #
+        # Keyed by destination, because more than one file crosses in an
+        # Iteration - the credential, the signing key, the git identity - and a
+        # flat append would let a test asserting something about the credential
+        # be satisfied by the contents of the signing key. `$3` is
+        # `<sandbox>:<path>`; the path after the colon is what names it.
+        if [[ -f ${2:-} ]]; then
+            printf '%s\n' "$(cat -- "$2")" >>"${state}.copied.$(basename -- "${3##*:}")"
+        fi
+        ;;
     exec)
         if is_the_install "$@"; then
             if [[ ${FAKE_SBX_BEHAVIOUR:-ok} == install-fails ]]; then

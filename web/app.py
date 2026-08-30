@@ -471,8 +471,42 @@ def _newest_reading(
 
 
 def _box(events: list[dict]) -> dict | None:
-    """The newest thing known about the box, observed or failed."""
-    return _newest_reading(events, "box.observed", "box.unreachable", "reachable")
+    """The newest thing known about the box, observed or failed.
+
+    The credential's remaining life is worked out HERE rather than journaled,
+    and that is the one place this page does arithmetic on a fact instead of
+    replaying it. The distinction that makes it legitimate: the Journal holds
+    the absolute instant the box gave, which is an observation, and what is
+    left of it is a pure function of that instant and the clock on the wall
+    when somebody looks. A duration recorded at read time would be wrong by
+    however long the page sat open - and wrong in the reassuring direction,
+    which is the failure #260 is about.
+
+    That is not the guardrail chip's rule being broken. `cycle.py` grades the
+    guardrail because whether the paths are protected is a judgement with
+    rejected alternatives in it; whether an instant has passed is not.
+    """
+    reading = _newest_reading(events, "box.observed", "box.unreachable", "reachable")
+    if reading is None:
+        return None
+    expires_at = reading.get("credential_expires_at")
+    reading["credential_expired"] = None
+    reading["credential_remaining"] = None
+    if expires_at:
+        try:
+            expiry = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            # An instant this cannot parse is left as unknown rather than
+            # guessed at. The box is the only thing that knows the shape, and
+            # a card that rendered an unparsed string as "expired" would page
+            # for a format change.
+            return reading
+        now = datetime.now(timezone.utc)
+        reading["credential_expired"] = expiry <= now
+        reading["credential_remaining"] = _duration(now, expiry)
+    return reading
 
 
 # How old a guardrail reading may be and still stand for now. The timer fires

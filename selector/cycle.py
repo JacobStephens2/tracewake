@@ -151,14 +151,22 @@ IN_FLIGHT_STALE_HOURS = 4
 # before it has read anything at all.
 CYCLE_LOCK_KEY = 0x5E1EC7
 
-# What the box card on /loop is built from (#156): three facts read off the
-# box, over the box surface, once per cycle. Keys are the box's own
+# What the box card on /loop is built from (#156, #260): four facts read off
+# the box, over the box surface, once per cycle. Keys are the box's own
 # `LOOP_BOX_*` names, mapped here to the Journal's.
+#
+# `credential_expires_at` is the odd one and is meant to be: the other three
+# say what the box IS, and this one says whether it can currently do anything.
+# It is journaled as the absolute instant the box gave, and NOT as a remaining
+# time - the read happens once a cycle and the page is viewed whenever, so a
+# duration recorded here would be stale by however long the page sat open. The
+# page does that arithmetic against its own clock.
 BOX_FACT_KEYS = {
     "LOOP_BOX_SCRIPTS_HASH": "scripts_hash",
     "LOOP_BOX_GUEST_TEMPLATE": "guest_template",
     "LOOP_BOX_AGENT": "agent",
     "LOOP_BOX_AGENT_VERSION": "agent_version",
+    "LOOP_BOX_CREDENTIAL_EXPIRES_AT": "credential_expires_at",
 }
 
 # What the guardrail chip on /loop is built from (#165): the write protection
@@ -484,8 +492,9 @@ def spend(conn: psycopg.Connection) -> Spend:
 
 def observe_box(config: Config) -> tuple[dict | None, str | None]:
     """Read the box's own facts through the box surface: the hash of the Loop
-    scripts it is holding, the guest template an Iteration is built from, and
-    the agent version installed on it.
+    scripts it is holding, the guest template an Iteration is built from, the
+    agent version installed on it, and when its model credential stops
+    working.
 
     Returns `(facts, None)` or `(None, error)`. It never raises, and a failure
     never ends the cycle: an unreachable box is not the Selector failing, and

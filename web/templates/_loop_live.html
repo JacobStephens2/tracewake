@@ -110,6 +110,24 @@
         {% elif not box.reachable %}
         <span class="cell-value alarm">could not be read</span>
         <span class="detail">{{ box.error }} &middot; {{ box.at }}</span>
+        {% elif box.credential_expired %}
+        {#- The credential outranks the other three facts on this card, and
+            takes the headline when it has lapsed (#260). What the box IS
+            matters only if it can currently do anything, and a card whose
+            first line was the scripts hash would report a box that cannot
+            start a Run at all as business as usual - which is how Run 645
+            failed with the news reaching nobody. -#}
+        <span class="cell-value alarm">the model credential has expired</span>
+        <span class="detail">it lapsed at
+          <code>{{ box.credential_expires_at }}</code> - a Run dispatched now
+          would fail at its first API call. The next Iteration renews it
+          before it starts (ADR 0017); if this reading persists, the renewal
+          is not working - run <code>wizards/loop-claude-login.sh</code>.
+          &middot; loop scripts <code>{{ box.scripts_hash or "not reported" }}</code>
+          &middot; guest template <code>{{ box.guest_template or "not reported" }}</code>
+          &middot; agent {{ box.agent or "" }}
+          <code>{{ box.agent_version or "not reported" }}</code>
+          &middot; read {{ box.at }}</span>
         {% else %}
         <span class="cell-value">
           loop scripts <code>{{ box.scripts_hash or "not reported" }}</code>
@@ -118,6 +136,16 @@
           <code>{{ box.guest_template or "not reported" }}</code>
           &middot; agent {{ box.agent or "" }}
           <code>{{ box.agent_version or "not reported" }}</code>
+          {#- Both halves, because neither answers on its own: the instant is
+              what the box actually said and is what a second reader can check,
+              and the remaining time is the thing an operator is reading the
+              card to find out. The remaining time is computed against this
+              request's clock, not the cycle's - see `_box`. -#}
+          &middot; credential
+          {% if box.credential_expires_at %}
+          <code>{{ box.credential_expires_at }}</code>
+          {%- if box.credential_remaining %} ({{ box.credential_remaining }} left){% endif %}
+          {%- else %}<code>not reported</code>{% endif %}
           &middot; read {{ box.at }}</span>
         {% endif %}
       </div>

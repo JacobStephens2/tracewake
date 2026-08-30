@@ -42,6 +42,78 @@ setup() { setup_credential_fixture; }
     [[ "$output" == *"model-credential"* ]]
 }
 
+# --- The model credential is graded on validity, not presence (#260) ---------
+#
+# `[held]` came from `[[ -f .credentials.json ]]` and read no field inside it,
+# so a login that lapsed sixteen hours ago was a held credential by that test.
+# It is the one row where presence and usefulness come apart on a clock rather
+# than on an operator doing something: the subscription login expires eight
+# hours after it is minted, and nothing on the box renews it on its own.
+
+@test "a credential that has expired is not held" {
+    write_credential -3600
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"model-credential"* ]]
+    # The word matters as much as the exit code: an operator scanning this
+    # report has to be able to tell "no login" from "a login that lapsed",
+    # because they are different things to do about it.
+    [[ "$output" == *"expired"* ]]
+    [[ "$output" != *"[held]     model-credential"* ]]
+}
+
+@test "a credential expiring within the hour is still held" {
+    # Graded on whether it works NOW, not on whether it will last. What a
+    # dispatch does about a short one is the adapter's renewal, and a report
+    # that called this a violation would be red on a box that is fine.
+    write_credential 1800
+    run_assert
+    [ "$status" -eq 0 ]
+    [ "$(field CREDENTIALS_RESULT)" = "clean" ]
+}
+
+@test "the expiry is read from expiresAt and not the refresh token beside it" {
+    # The two fields are inverted here rather than both pointing the same way,
+    # which is what makes this test say something the two either side of it do
+    # not: a live access token beside a refresh token that died last week. A
+    # reader matching the wrong name calls this box EXPIRED, and one matching
+    # the right name calls it held - so the assertion can only pass one way
+    # round.
+    printf '{"claudeAiOauth":{"accessToken":"not-a-real-token","refreshTokenExpiresAt":%s000,"expiresAt":%s000}}\n' \
+        "$(($(date +%s) - 604800))" "$(($(date +%s) + 28800))" \
+        >"${BOX_HOME}/.claude/.credentials.json"
+    run_assert
+    [ "$status" -eq 0 ]
+    [ "$(field CREDENTIALS_RESULT)" = "clean" ]
+}
+
+@test "a credential whose expiry cannot be read is not held either" {
+    # Unknown is not green - the standard the guardrail chip already holds to.
+    # A file whose shape this cannot read is one nobody can say anything about,
+    # and saying "held" about it is the reassurance rather than the check.
+    printf '{"claudeAiOauth":{"accessToken":"not-a-real-token"}}\n' \
+        >"${BOX_HOME}/.claude/.credentials.json"
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"model-credential"* ]]
+    # And it is not reported as EXPIRED, which is the state it collapses into
+    # the moment the unreadable branch stops existing: an unparsable expiry
+    # compares as epoch zero. The two want different things done about them -
+    # a lapsed login wants a renewal, a file nobody can parse wants a human -
+    # so the report has to keep them apart.
+    [[ "$output" == *"unreadable"* ]]
+    [[ "$output" != *"the login lapsed"* ]]
+}
+
+@test "an expired credential is reported as expired rather than as absent" {
+    # Two different things to do about them: absent names the login wizard,
+    # expired names the renewal. A report that conflated them would send an
+    # operator to re-do a login the box already has.
+    write_credential -3600
+    run_assert
+    [[ "$output" != *"no agent login on the box"* ]]
+}
+
 # Claude Code writes ~/.claude.json the moment it is installed. Accepting it as
 # a credential would report a login on a box where nobody logged in, and the Run
 # would find out at its first Iteration - after the boundary was built.

@@ -52,10 +52,12 @@ MUTATIONS = {
         "    [[ -f ${src} ]] || return 0",
     ),
     # A Run starts with no model credential on the box and finds out one
-    # Iteration at a time.
+    # Iteration at a time. Since #260 the guard is the renewal rather than a
+    # `[[ -f ]]`, and dropping it drops both halves at once: an Iteration now
+    # neither checks that a credential is there nor that it still works.
     "model-credential-unchecked": (
-        '[[ -f "${credentials_dir}/.credentials.json" ]] ||',
-        "[[ true ]] ||",
+        "refresh_credential >/dev/null",
+        ":",
     ),
     # The turn bound firing stops being told apart from a broken invocation,
     # which is what it looked like before the first Run.
@@ -101,6 +103,34 @@ MUTATIONS = {
     "check-mounted-writable": (
         '"${loop_dir}:ro" >&2',
         '"${loop_dir}" >&2',
+    ),
+    # An Iteration stops renewing the credential and only checks that a file is
+    # there - the state the Loop was in for Run 645, where Iteration 1
+    # authenticated and Iteration 2 died inside the boundary (#260).
+    "iteration-does-not-renew": (
+        "refresh_credential >/dev/null",
+        '[[ -f ${credentials_file} ]] || die "no model credential"',
+    ),
+    # The renewal's result is taken on trust. A vendor client that exits zero
+    # and mints nothing now passes, and the Iteration fails inside the boundary
+    # where only its Progress Log says so - which is the whole failure shape.
+    "renewal-unverified": (
+        '    if ((after - now <= credential_renewal_margin_seconds)); then',
+        "    if false; then",
+    ),
+    # The margin collapses to "expired or not", so a credential with an hour
+    # left is used as it stands and can lapse during the Iteration - failing a
+    # Run halfway and leaving a half-built branch.
+    "renewal-margin-ignored": (
+        "credential_renewal_margin_seconds=7200",
+        "credential_renewal_margin_seconds=0",
+    ),
+    # The expiry is read from the refresh token beside it, which is three weeks
+    # out. Every lapsed box reports as good until the refresh token dies - the
+    # failure reported as its own opposite.
+    "expiry-reads-refresh-token": (
+        "'\"expiresAt\"[[:space:]]*:[[:space:]]*[0-9]\\+'",
+        "'\"refreshTokenExpiresAt\"[[:space:]]*:[[:space:]]*[0-9]\\+'",
     ),
 }
 
