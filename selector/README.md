@@ -363,13 +363,28 @@ declared variable:
 
 ```yaml
 # ansible/roles/timers/defaults/main.yml
-selector_dispatch_enabled: false
+selector_dispatch_enabled: true
 ```
 
 Flipping it is a one-line reviewable change - the shape ADR 0014 already asks
 for when widening the labeler allowlist - and the play prints which way it left
 the timer. Out of band it is `sudo systemctl enable --now selector-cycle.timer`.
 Setting it back to `false` stops a running timer, not merely a future one.
+
+**The gate is flipped** (#261, 2026-08-30), so the next apply enables and
+starts the timer. What it waited on, what was read to check it, and what is
+still owed - the box has to be logged in, and the Selector is left paused until
+it is - are in
+[`../notes/selector-timer-on-evidence.md`](../notes/selector-timer-on-evidence.md),
+which is the one place any of it is written down.
+
+`systemctl is-active` is what answers "is it on", not `is-enabled`. A timer
+enabled and never started is inert and reads as healthy, which this box has
+already had once: `certbot-renew.timer` was enabled and not active on a machine
+that never reboots, and an expired certificate is how anyone found out. The
+`/loop` strip is the same question without a shell - its timer cell shows the
+next firing while the timer is active, and says `timer not running` with the
+state in brackets when it is not.
 
 `OnFailure=notify-unit-failure@%n.service` is in the unit's **`[Unit]`**
 section, which is the only section systemd reads it in - in `[Service]` it is
