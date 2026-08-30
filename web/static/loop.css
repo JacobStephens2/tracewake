@@ -82,8 +82,11 @@
 /* The guardrail chip (#165) is the one cell on the strip that is coloured
    when nothing is wrong. It is an assertion - "this cannot change without a
    review" - and an assertion rendered in the same grey as a timestamp reads
-   as another fact rather than as the claim it is. Same green as the
-   awaiting-review badge, and the same meaning: nothing to do here. */
+   as another fact rather than as the claim it is. The colour is the vendored
+   palette's affirmative one - the same one the awaiting-review badge carries,
+   and with the same meaning: nothing to do here. terminal.css has three
+   colours and no green among them, and a fourth introduced for one chip would
+   be this page leaving the factory's visual identity. */
 .strip .guarded { color: var(--primary-color); }
 .strip .detail {
   color: var(--secondary-color);

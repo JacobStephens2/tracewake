@@ -663,11 +663,19 @@ MUTATIONS = {
         ' -- "${paths[@]}"\n',
         "",
     ),
-    # It compares the tree against ITSELF rather than against the protected
-    # ref, so every state of the checkout is clean.
-    "the-tree-is-compared-against-itself": (PROTECTION, PROTECTION_SUITE,
-        '            git -C "${tree}" diff --name-only "${base}" -- "${paths[@]}"',
-        '            git -C "${tree}" diff --name-only HEAD -- "${paths[@]}"',
+    # Commits the checkout is carrying stop being compared at all, so a branch
+    # left checked out in the shared tree runs with the chip green.
+    "unmerged-commits-are-not-compared": (PROTECTION, PROTECTION_SUITE,
+        '            git -C "${tree}" diff --name-only "${base}...HEAD"'
+        ' -- "${paths[@]}"\n',
+        "",
+    ),
+    # Two-dot instead of three-dot: every path where the protected ref has
+    # moved on and this checkout has not pulled is reported unreviewed, so the
+    # chip is red for being stale and nobody reads it.
+    "stale-reads-as-unreviewed": (PROTECTION, PROTECTION_SUITE,
+        '"${base}...HEAD" -- "${paths[@]}"',
+        '"${base}" -- "${paths[@]}"',
     ),
     # The chip shows the last SUCCESSFUL reading rather than the last one, so
     # a guardrail that has been unreadable for a week still renders green.
