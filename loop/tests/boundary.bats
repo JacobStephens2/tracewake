@@ -37,7 +37,15 @@ setup() {
     printf 'ssh-ed25519 AAAA loop@loop\n' >"${BOX_HOME}/.ssh/loop_signing_ed25519.pub"
     printf 'jstephens@etadventures.com ssh-ed25519 AAAA\n' >"${BOX_HOME}/.config/loop/allowed_signers"
     printf 'github_pat_11EXAMPLE\n' >"${BOX_HOME}/.config/loop/github-token"
-    printf '[user]\n\temail = jstephens@etadventures.com\n' >"${BOX_HOME}/.gitconfig"
+    # The identity as `ansible/roles/loop_credentials` writes it, rather than an
+    # email on its own: the two settings that name a FILE are the ones #268 is
+    # about, and a fixture without them cannot tell whether the copy that goes
+    # into the guest still points at paths that only exist on the host.
+    printf '[user]\n\temail = jstephens@etadventures.com\n\tsigningkey = %s\n' \
+        "${BOX_HOME}/.ssh/loop_signing_ed25519.pub" >"${BOX_HOME}/.gitconfig"
+    printf '[gpg]\n\tformat = ssh\n[gpg "ssh"]\n\tallowedSignersFile = %s\n' \
+        "${BOX_HOME}/.config/loop/allowed_signers" >>"${BOX_HOME}/.gitconfig"
+    printf '[commit]\n\tgpgsign = true\n' >>"${BOX_HOME}/.gitconfig"
     export BOX_HOME
 
     export LOOP_CLAUDE_CONFIG_DIR="${BOX_HOME}/.claude"
@@ -186,7 +194,49 @@ calls() {
 @test "the signing key goes in, so an Iteration's commits are Verified" {
     run_an_iteration
     [[ "$(calls)" == *"cp ${BOX_HOME}/.ssh/loop_signing_ed25519 "* ]]
-    [[ "$(calls)" == *"cp ${BOX_HOME}/.gitconfig"* ]]
+    [[ -f "${FAKE_SBX_STATE}.copied..gitconfig" ]]
+}
+
+# --- Where in the guest the credentials land (#268) --------------------------
+#
+# The signing key used to be placed at its HOST path, and that only worked
+# because of where the workspace happened to be: `sbx` synthesises a bind
+# mount's parent directories and owns them by depth, so `/home/loop` is the
+# guest account's when the workspace is one level under it and root's when it
+# is two. `loop_scripts_workspace: /home/loop/tourbot` is one level, so every
+# real Run worked and the coupling was invisible.
+#
+# What it cost when it did fire was the worst shape available: an Iteration
+# that died before the agent started, with a message naming the signing key,
+# for a fault whose cause is the workspace argument.
+@test "the credentials go to the guest's own home, not to a host path" {
+    run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"cp ${BOX_HOME}/.ssh/loop_signing_ed25519 "*":/home/agent/.ssh/loop_signing_ed25519"* ]]
+    [[ "$(calls)" != *":${BOX_HOME}/"* ]]
+}
+
+@test "a workspace deeper than one level under \$HOME still gets its credentials" {
+    WORKSPACE="${BATS_TEST_TMPDIR}/work/tourbot"
+    mkdir -p "${WORKSPACE}"
+    run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Permission denied"* ]]
+    [[ "$(calls)" == *"--max-turns"* ]]
+}
+
+# The key is placed somewhere the host's git config does not name, so the copy
+# of that config which goes in has to name the new place instead. Without this
+# the guest signs with a key it cannot find, and the first sighting of that is
+# a pull request whose commits are not Verified.
+@test "the git identity that goes in names the key at its guest path" {
+    run_an_iteration
+    [ "$status" -eq 0 ]
+    run cat "${FAKE_SBX_STATE}.copied..gitconfig"
+    [[ "$output" == *"/home/agent/.ssh/loop_signing_ed25519.pub"* ]]
+    [[ "$output" == *"/home/agent/.config/loop/allowed_signers"* ]]
+    [[ "$output" == *"jstephens@etadventures.com"* ]]
+    [[ "$output" != *"${BOX_HOME}/.ssh"* ]]
 }
 
 # The Proposal-Only Output property, as a property of what is inside the

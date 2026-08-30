@@ -321,12 +321,17 @@ allowed_signers="${LOOP_ALLOWED_SIGNERS:-${HOME}/.config/loop/allowed_signers}"
 # periods and wants a letter or number first.
 sandbox="loop-$$-$(date +%s)"
 
+# Where this Iteration builds the copy of the git identity that goes inside.
+# Host-side scratch, removed with the sandbox.
+staging="$(mktemp -d)"
+
 # The sandbox outlives this script only if this script is killed between create
 # and remove, and run.sh kills it by design when an Iteration reaches its wall
 # clock. So the removal is a trap, not a line at the end.
 # shellcheck disable=SC2329  # invoked by the trap below, which shellcheck does not follow
 cleanup() {
     "${sbx}" rm --force "${sandbox}" >/dev/null 2>&1 || true
+    rm -rf -- "${staging}"
 }
 trap cleanup EXIT INT TERM
 
@@ -358,23 +363,66 @@ loop_dir="$(cd -- "${agent_dir}/.." && pwd)"
 # that are unsigned or attributed to nobody. That is not recoverable after the
 # fact, and the first place anyone would find out is the pull request.
 guest_home=/home/agent
+# `dest` is a path in the GUEST, and it has to be one the guest account can
+# write without privilege - which in practice means under ${guest_home}. A host
+# path is not that: `sbx` owns the synthesised parents of the workspace mount by
+# depth, so whether one happens to be writable is a property of the workspace
+# argument rather than of anything visible from here (#268).
 put() {
     local src="$1" dest="$2" mode="$3"
     [[ -f ${src} ]] ||
         die "${src} is not on this box - a Run needs it inside the boundary. Apply ansible/loop.yml."
     "${sbx}" exec "${sandbox}" mkdir -p "$(dirname -- "${dest}")" ||
-        die "could not prepare ${dest} in the boundary"
+        die "could not prepare ${dest} in the boundary: the guest account cannot create $(dirname -- "${dest}"). Everything an Iteration is given goes under ${guest_home}."
     "${sbx}" cp "${src}" "${sandbox}:${dest}" >/dev/null ||
         die "could not place ${dest} in the boundary"
     "${sbx}" exec "${sandbox}" chmod "${mode}" "${dest}" ||
         die "could not set the mode of ${dest} in the boundary"
 }
 
+# Everything lands under the guest account's own home, and that is the whole of
+# #268. The signing key and the allowed-signers file used to go in at their HOST
+# paths - `/home/loop/.ssh/...` - which is a path the guest has no reason to be
+# able to write, and could write only by accident: `sbx` synthesises the parent
+# directories of a bind mount and owns them by depth, so `/home/loop` came out
+# `agent:agent` when the workspace was one level under it and `root:root` when it
+# was two. Measured on the box against `loop-php:1` on 2026-08-30.
+#
+# `loop_scripts_workspace: /home/loop/tourbot` is one level, so every real Run
+# worked and the coupling was invisible until a repro harness used a deeper
+# workspace. What it produced then was an Iteration that died before the agent
+# started, saying it could not prepare the signing key - a message that names the
+# key for a fault whose cause is the workspace argument, in a place only that
+# Run's Progress Log would record.
+#
+# `/home/agent` is the guest account's home under every `sbx` template, at every
+# mount depth, with no privilege needed to write it. Nothing below now depends on
+# a host path being writable inside the guest.
+guest_signing_key="${guest_home}/.ssh/$(basename -- "${signing_key}")"
+guest_allowed_signers="${guest_home}/.config/loop/allowed_signers"
+
+# The git identity, rewritten to name the two files where they now are. The
+# host's copy names them at host paths - `ansible/roles/loop_credentials` writes
+# it that way and the box itself needs it that way - and a config naming a
+# signing key that is not there is worse than one naming none: the failure is a
+# commit that is not Verified, and the first place anyone reads that is the pull
+# request.
+#
+# Rewritten on the host, into a copy, rather than edited inside the guest: the
+# host's own `.gitconfig` is what every Run and every operator on the box uses,
+# and an Iteration must not be able to change it.
+guest_gitconfig="${staging}/gitconfig"
+[[ -f ${gitconfig} ]] ||
+    die "${gitconfig} is not on this box - a Run needs it inside the boundary. Apply ansible/loop.yml."
+cp -- "${gitconfig}" "${guest_gitconfig}"
+git config --file "${guest_gitconfig}" user.signingkey "${guest_signing_key}.pub"
+git config --file "${guest_gitconfig}" gpg.ssh.allowedSignersFile "${guest_allowed_signers}"
+
 put "${credentials_dir}/.credentials.json" "${guest_home}/.claude/.credentials.json" 0600
-put "${gitconfig}" "${guest_home}/.gitconfig" 0644
-put "${signing_key}" "${signing_key}" 0600
-put "${signing_key}.pub" "${signing_key}.pub" 0644
-put "${allowed_signers}" "${allowed_signers}" 0644
+put "${guest_gitconfig}" "${guest_home}/.gitconfig" 0644
+put "${signing_key}" "${guest_signing_key}" 0600
+put "${signing_key}.pub" "${guest_signing_key}.pub" 0644
+put "${allowed_signers}" "${guest_allowed_signers}" 0644
 
 # --permission-mode bypassPermissions. This was `acceptEdits`, and the first Run
 # proved that choice incoherent with the technique: `acceptEdits` auto-approves
