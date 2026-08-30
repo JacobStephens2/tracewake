@@ -363,13 +363,39 @@ declared variable:
 
 ```yaml
 # ansible/roles/timers/defaults/main.yml
-selector_dispatch_enabled: false
+selector_dispatch_enabled: true
 ```
 
 Flipping it is a one-line reviewable change - the shape ADR 0014 already asks
 for when widening the labeler allowlist - and the play prints which way it left
 the timer. Out of band it is `sudo systemctl enable --now selector-cycle.timer`.
 Setting it back to `false` stops a running timer, not merely a future one.
+
+**The gate is flipped** (#261, 2026-08-30), so the next apply enables and
+starts the timer. That is up to 4 Runs a day, each bounded at 90 minutes, on
+the operator's subscription, with nobody watching - and it waited on two things
+being true rather than on anyone feeling ready. The box's model credential had
+to renew itself (#260), because the credential's life is eight hours and this
+timer fires around the clock: enabled before that, sixteen hours in every
+twenty-four would have been Runs failing on authentication, each one spending a
+dispatch against the cap. And the executed paths had to be write-protected
+(#165), which is what makes the guardrail chip a reading rather than a claim.
+
+The conditions, and the readings that showed them - the dry run recorded before
+any cycle was allowed to dispatch, the deliberate failure that paged, the pause
+flag stopping dispatch with a cycle running - are in
+[`../notes/selector-timer-on-evidence.md`](../notes/selector-timer-on-evidence.md).
+That note also records why the Selector is currently left **paused**: the box's
+credential is expired and cannot be renewed from the box, so the login wizard
+comes before the resume. Enabling the timer is safe while paused; dispatch is
+not until the box can authenticate.
+
+`systemctl is-active` is what answers "is it on", not `is-enabled`. A timer
+enabled and never started is inert and reads as healthy, which this box has
+already had once: `certbot-renew.timer` was enabled and not active on a machine
+that never reboots, and an expired certificate is how anyone found out. The
+`/loop` strip is the same question without a shell - its timer cell shows the
+next firing when the timer is active and says so loudly when it is not.
 
 `OnFailure=notify-unit-failure@%n.service` is in the unit's **`[Unit]`**
 section, which is the only section systemd reads it in - in `[Service]` it is
