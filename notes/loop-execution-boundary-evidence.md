@@ -1098,6 +1098,36 @@ Recorded here because it is the credential with the shortest life and no alarm
 behind it, and an unattended Run will keep dying this way until something
 watches it.
 
+### Two things the Run exposed that are not about the guest
+
+Both were found while verifying #164, both are about the boundary rather than
+about PHP, and both have their own ticket rather than being fixed here.
+
+**A Run writes a credential into the host's `sbx` secret store, from inside the
+boundary (#259).** After Run 645, `sbx secret ls` held a global `anthropic`
+service secret and `assert-credentials.sh` reported a `metered-model-key`
+violation. Filesystem birth times date it to 16:51:53, twenty-three seconds
+after the Run created its first boundary; the store had been clean since the box
+was built on 2026-08-24. It is not `sbx create claude` that writes it - a fresh
+`claude` sandbox created afterwards left the entry's mtime and md5 untouched,
+and this role's own smoke assertion creates `claude` sandboxes twice more the
+same day without touching it either. The one thing a Run does that neither does
+is run `claude` inside the guest. Cleared with `sbx secret rm anthropic
+--force`, which will need doing again after the next Run until #259 is settled.
+
+Worth knowing if anything is ever scripted against `sbx`: `secret rm` prompts
+for confirmation, and with no terminal it prints `Cancelled` and **exits 0**.
+The removal that appears to have worked has not.
+
+**The box's model credential goes stale with nothing watching it (#260).** The
+adapter's only `sbx cp` runs one way, host into guest, so a refresh performed
+inside an Iteration is written to a filesystem destroyed seconds later and the
+host's copy ages from the last human login. The token's life is eight hours;
+the Selector's timer is thirty minutes, around the clock. Run 645 died at
+Iteration 2 on `OAuth session expired and could not be refreshed`, and nothing
+except that Run's own Progress Log said so - `assert-credentials.sh` reports
+`[held]` from the file's existence and reads no field inside it.
+
 ### What this does not establish
 
 - That the image is reproducible byte for byte. It is not: the build installs
