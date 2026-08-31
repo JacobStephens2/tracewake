@@ -698,12 +698,47 @@ MUTATIONS = {
         "if [[ ${action} == checks ]]; then",
         "if false; then",
     ),
-    # A Proposal URL from any repository is accepted, so `gh pr checks` - which
+    # A Proposal URL from any repository is accepted, so `gh pr view` - which
     # resolves the repository from the URL and ignores --repo - can be made to
     # answer about somebody else's pull request as though it were this Run's.
     "a-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
         '        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||\n'
         '            die "the proposal ${number} is not in ${task_repo}"\n',
+        "",
+    ),
+    # "No workflow run ran" becomes "every check passed", which is the false
+    # pass a broken workflow file or a disabled Actions produces - routed to
+    # review as though CI had vouched for it.
+    "no-runs-reads-green": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        '{state: "none", failing: []}',
+        '{state: "green", failing: []}',
+    ),
+    # Red stops being the fallthrough: a conclusion GitHub adds after this was
+    # written - or one this script simply does not know - counts as a pass.
+    "an-unknown-conclusion-reads-green": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        "select(.conclusion as $c | green | index($c) | not)",
+        "select(false)",
+    ),
+    # A run that has completed with no conclusion yet is graded rather than
+    # waited for, which makes a transient the API reports for a moment into a
+    # terminal red: `ready-for-human`, with a comment naming a check that did
+    # not actually fail.
+    "a-conclusion-not-yet-reported-is-red": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        'select(.status != "completed" or .conclusion == null)',
+        'select(.status != "completed")',
+    ),
+    # Only the first page of workflow runs is graded, so a failure on page two
+    # of a busy commit ships as green.
+    "only-the-first-page-of-runs-counts": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        "[ .[].workflow_runs[] ] as $runs",
+        "[ .[0].workflow_runs[] ] as $runs",
+    ),
+    # The head commit goes into the API path untested. `head_sha=null` is not
+    # an error to GitHub, just a query matching nothing - which arrives as
+    # "none" and reads as a Proposal whose CI never ran.
+    "a-head-commit-that-is-not-a-sha-is-trusted": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        '        [[ ${head_sha} =~ ^[0-9a-f]{40}$ ]] ||\n'
+        '            die "gh gave no head commit for the Proposal ${task_repo}: ${number}"\n',
         "",
     ),
 }

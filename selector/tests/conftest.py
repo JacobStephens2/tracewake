@@ -175,9 +175,9 @@ SELECTOR_GUARDRAIL_UNREVIEWED=
 """
 
 # What the issue command's `checks` action answers with. The shape is the
-# Selector's, not GitHub's: the real github.sh translates `gh pr checks` into
-# it, which is what keeps the translation in the substitutable script rather
-# than in cycle.py.
+# Selector's, not GitHub's: the real github.sh translates GitHub's workflow
+# runs into it, which is what keeps the translation in the substitutable
+# script rather than in cycle.py.
 GREEN_CHECKS = '{"state": "green", "failing": []}\n'
 RED_CHECKS = '{"state": "red", "failing": ["phpunit", "lint"]}\n'
 PENDING_CHECKS = '{"state": "pending", "failing": []}\n'
