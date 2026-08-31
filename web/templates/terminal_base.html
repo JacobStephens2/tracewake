@@ -25,13 +25,27 @@
    but the stream is opened at the foot of the body and there is no reason to
    race it. #}
 <script src="{{ static_base }}/htmx.min.js"></script>
+{# The stored theme choice lands on <html> before first paint, so a dark
+   visitor never sees a white flash. Everything else about the theme - the
+   button, the cycle, "system" as the absence of a choice - is loop-ui.js. #}
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("theme");
+    if (t === "light" || t === "dark") { document.documentElement.dataset.theme = t; }
+  } catch (e) { /* storage denied: follow the OS */ }
+})();
+</script>
+<script src="{{ static_base }}/loop-ui.js" defer></script>
 </head>
 <body class="terminal">
 {% include "_preview_banner.html" %}
 <div class="container">
   <header>
     <div class="logo">{% block logo %}THE LOOP{% endblock %}</div>
-    <nav aria-label="Lab">{% block nav %}<a href="/">lab</a>{% endblock %}</nav>
+    <nav aria-label="Lab">{% block nav %}<a href="/">lab</a>{% endblock %}
+      <button type="button" id="theme-toggle" class="theme-toggle"
+              aria-live="polite">theme: system</button></nav>
   </header>
   <main>
 {% block main %}{% endblock %}
