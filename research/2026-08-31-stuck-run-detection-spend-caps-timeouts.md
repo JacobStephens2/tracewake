@@ -1,0 +1,146 @@
+# Stuck-run detection, spend caps, and per-iteration timeouts
+
+Concrete, primary-sourced mechanisms exist for all three gaps the 2026-08-24 research left open, but they are unevenly distributed. **ralph-orchestrator (Rust, v2.10.1) is the only surveyed loop orchestrator that implements all three in code**: a `check_termination()` that fires on max iterations (default 100), max runtime (default 14 400 s), an optional `max_cost_usd` fed from Claude Code's own `total_cost_usd` result field, five consecutive failures, three consecutive identical event signatures ("stale loop"), and three redispatches of an abandoned task ("loop thrashing") — plus a per-iteration *inactivity* timeout (default 300 s, reset by every output line, SIGTERM then a 2 s grace before kill). Claude Code itself now ships a per-invocation dollar cap: `--max-budget-usd` (print mode only, enforcement complete from v2.1.217), alongside `--max-turns`, both confirmed on this box's CLI 2.1.251 and in the CLI reference. **Claude Code has no per-session wall-clock timeout flag at all** — `timeout(1)`/systemd-run remains the only way to bound a hung process, which is exactly what the Loop's `run.sh` already does. The other two orchestrator repos are cautionary rather than instructive: multi-agent-ralph-loop's actual loop is fifteen lines of `claude --print | grep VERIFIED_DONE` with an iteration cap and nothing else, and agent-orchestrator has rich stuck-*session* detection and cost *observability* for interactive use but no spend cap and no unattended loop. Anthropic's own "Effective harnesses for long-running agents" post describes none of the three mechanisms. eta-factory remains the most rigorous spend-cap design seen anywhere in this survey, and its A154 ruling states the principle the Loop should copy: **"the money safety boundary remains the provider-enforced bearer `spend_cap_cents`; cost is telemetry, never authorization."**
+
+The Loop is ahead of the literature on (a) and (c): `loop/run.sh` already compares `git rev-parse HEAD` before and after each Iteration, counts a No-op streak, aborts at `LOOP_MAX_CONSECUTIVE_NOOPS=2` (exit 3, `LOOP_RUN_ENDED_BY=consecutive-noops`), and wraps each Iteration in `timeout --kill-after=10s` at `LOOP_ITERATION_TIMEOUT_SECONDS=900` under a 5 400 s run clock. What it deliberately lacks is (b): `claude.sh` states "There is no per-Run spend ceiling to catch it afterwards: the Termination Contract is the whole cost control." The findings below say what a ceiling could be made of.
+
+## A. Non-progress / stuck-run detection
+
+### ralph-orchestrator: three distinct stuck-shapes, implemented
+
+`crates/ralph-core/src/event_loop/mod.rs` (`check_termination()`, ~line 627) distinguishes three ways of being stuck, each with its own `TerminationReason`, all read in the shipped code:
+
+1. **Consecutive failures.** `self.state.consecutive_failures >= cfg.max_consecutive_failures` → `ConsecutiveFailures`. The counter resets to 0 on any successful iteration and increments otherwise (mod.rs ~line 2060: `if success { ...= 0 } else { ...+= 1 }`). Default 5 (`default_max_failures()` in `config.rs:1141`).
+2. **Stale loop — same output three times.** `consecutive_same_signature >= 3` → `LoopStale`, with a warning naming the repeated topic. The signature is an `EventSignature { topic, source: Option<HatId>, payload_fingerprint: u64 }` (`event_loop/loop_state.rs:14`) — a hash fingerprint of the agent's emitted event, so "the agent keeps saying the same thing" is detected even when every iteration exits 0. This is the closest existing implementation of "repeated the same task N times".
+3. **Loop thrashing — planner redispatches abandoned work.** `abandoned_task_redispatches >= 3` → `LoopThrashing`. Detects a planner that keeps handing out a task that keeps being dropped.
+
+Also in the same function: a `ValidationFailure` stop after 3 consecutive malformed JSONL event lines, a `.ralph/stop-requested` file check (external kill switch), and a `WorkspaceGone` check (`workspace_root` no longer a directory — zombie-worktree detection). Progress is *event-based*, not git-based: agents must emit events through a `ralph emit` tool writing JSONL ("Events are ONLY read from the JSONL file written by `ralph emit`. This enforces tool use and prevents confabulation" — mod.rs comment), and there is additionally a file-modification audit (`audit_file_modifications`) that emits a `scope_violation` when a hat with disallowed Edit/Write tools modified files.
+
+Notably: ralph-orchestrator does **not** diff git heads or working trees for progress. The Loop's HEAD-before/after check and ralph-orchestrator's signature-fingerprint check are complementary, not equivalent — the first catches "nothing landed", the second catches "the same thing keeps happening".
+
+### agent-orchestrator: stuck-*session* detection for interactive agents
+
+`Untrivial-ai/agent-orchestrator` (Go, `aoagents`) manages long-lived interactive agent sessions (tmux panes), not unattended loops. Its mechanisms are about a *session* wedging, and they are implemented, layered, and worth reading:
+
+- **Hook-derived activity state.** Each adapter maps Claude Code hook events to states: `session-start`/`user-prompt-submit` → active, `stop` → idle, `permission-request` → waiting_input (`backend/internal/adapters/agent/activitystate/activitystate.go`).
+- **Stale-active reconciliation.** Hooks can die without firing ("a turn that dies without emitting its Stop hook (auth expiry, CLI crash, network loss) leaves the session stuck active forever" — `claudecode/terminal_activity.go`). An activity observer re-checks the rendered terminal surface after hook state has been quiet past a staleness limit: `DefaultTickInterval = 30s`, `DefaultStaleAfter = 2m` (`observe/activity/observer.go:14-16`). The terminal is only trusted to *prove idle* ("reports idle only when Claude's rendered surface positively shows an idle composer"), never to promote states.
+- **Liveness reaper with a mass-death circuit breaker.** A 5 s poll supplies runtime liveness probes; if one cycle concludes most of the board died at once, that is treated as an infrastructure outage misread, not N agent exits, and termination is skipped (`observe/reaper/reaper.go`, referencing their issue #3475).
+- **Bounded nudging.** PR-observation reactions (rebase, fix-CI) are sent as agent nudges capped at `reviewMaxNudge = 3` attempts per PR, keyed by a persisted signature (`lifecycle/reactions.go:18`) — a repeated-same-task cap on the *orchestrator's own* retries.
+
+### The rest: absence findings
+
+- **multi-agent-ralph-loop** (`alfredolopez80`, bash, requires Claude Code v2.1.42+): `cmd_loop()` in `scripts/ralph` (~line 6494) is verbatim `while [ $ITER -lt $MAX_ITER ]; do RESULT=$(claude --print -p "${SAFE_TASK}. Check if complete, output VERIFIED_DONE if done." 2>&1); echo "$RESULT" | grep -q "VERIFIED_DONE" && return 0; done`. `CLAUDE_MAX_ITER=25`. **No progress check of any kind, no per-call timeout, no cost accounting** — despite the repo shipping ~60 Claude Code hooks and a threat-model document. The elaborate part is pre-loop task classification (regex-scored complexity choosing an iteration budget of 3/15/25), which is budget *sizing*, not stuck *detection*.
+- **Anthropic, "Effective harnesses for long-running agents"** (anthropic.com/engineering/effective-harnesses-for-long-running-agents): describes the initializer-agent + coding-agent pattern, `feature-list.json` with `passes` flags the agent may only flip, progress notes, one feature per session, commit per session — and **nothing** on detecting a session that made no progress, no budgets, no timeouts (checked directly against the post).
+- **Claude Code**: no built-in cross-iteration progress detection (each `claude -p` is one process; the harness above it must compare state). The Stop hook is the loop-adjacent primitive: it fires when Claude finishes responding, can *block stopping* (exit code 2 "Prevents Claude from stopping, continues the conversation"), and `stop_hook_active` is the documented flag a hook must check to avoid making Claude run forever — i.e. the docs' own infinite-loop guard for the in-process variant of Ralph (code.claude.com/docs/en/hooks). `PreToolUse` can deny individual tool calls (`permissionDecision: "deny"`), usable as a policy backstop, not a progress detector.
+
+## B. Per-run spend caps
+
+### Claude Code: `--max-budget-usd` — a real harness-level cap, with conditions
+
+`--max-budget-usd <amount>` is in this box's `claude --help` (2.1.251: "Maximum dollar amount to spend on API calls (only works with --print)") and documented in the CLI reference: "Maximum dollar amount to spend on API calls before stopping (print mode only). Spend from subagents counts toward the cap. Once spend reaches the cap, spawning another subagent fails with `Budget limit reached`, and Claude Code stops background subagents that are still running; the cap-enforcement behaviors require Claude Code v2.1.217 or later" (code.claude.com/docs/en/cli-reference). The costs page adds that the compared figure is the locally computed session cost — token counts at list price, including a 1.1× data-residency adjustment since v2.1.239 (code.claude.com/docs/en/costs).
+
+Caveats that matter to the Loop:
+
+- **Print mode only.** The Loop already runs `--print`, so this is directly usable — per Iteration. A per-*Run* budget would still need the wrapper to sum across Iterations (see C below for the data source).
+- **It is an estimate-based cutoff, not a billing control.** The figure is computed locally from tokens at list price.
+- **Semantics under subscription auth: VERIFIED live, it trips.** The Loop bills to a Max subscription (claude.sh actively refuses metered keys), and the costs page says subscriber session-cost figures "aren't relevant for billing purposes" — but the cap fires on them anyway. Live test on this VM, 2026-08-31, CLI 2.1.251 under the conductor Max OAuth login: a control run reported nonzero `total_cost_usd` ($0.0905 for one turn) with `"costBasis": "list"` — notional list pricing, computed even though nothing is metered — and a run under `--max-budget-usd 0.0001` aborted with `subtype: "error_max_budget_usd"`, `terminal_reason: "budget_exhausted"`, `errors: ["Reached maximum budget ($0.0001)"]` in JSON output, and exit code 1 with `Error: Exceeded USD budget (0.0001)` in plain print mode. So it is a usable per-Iteration bound on subscription auth, in notional list dollars; the A154 framing stands (this is telemetry-derived, the Max window remains the money boundary).
+
+Adjacent, documented, verified at docs pages: `/usage` shows per-session `Total cost` plus a **Loops** breakdown (per-scheduled-task token rollups, v2.1.242+); OTEL telemetry (`CLAUDE_CODE_ENABLE_TELEMETRY=1`) exports `claude_code.cost.usage` (USD, incremented after each API request, with `model` and `query_source` attributes) and `claude_code.token.usage`, and the `claude_code.api_request` event carries `cost_usd`/`cost_usd_micros` per request (code.claude.com/docs/en/monitoring-usage) — telemetry, not enforcement. Organization-side hard caps exist only above the CLI: workspace spend limits in the Claude Console for API orgs, spend limits in claude.ai admin settings for Team/Enterprise, monthly usage-credit spend limits on Pro/Max (code.claude.com/docs/en/costs).
+
+### ralph-orchestrator: `max_cost_usd`, fed from the agent's own result event
+
+Implemented end to end in code read: `event_loop.max_cost_usd: Option<f64>` (config.rs ~1035, no default — off unless set); `check_termination()` returns `MaxCost` when `cumulative_cost >= max_cost`; `add_cost()` accumulates per-iteration cost into `state.cumulative_cost`, which also survives persistence/restore (`total_cost_usd` in the persisted loop state). The per-iteration figure comes from parsing Claude Code's `stream-json` final result line — `{"type":"result","duration_ms":...,"total_cost_usd":...,"num_turns":...,"is_error":...}` (`ralph-adapters/src/claude_stream.rs`, `ClaudeStreamEvent::Result`). So the "harness-enforced spend cap" here is: *trust the agent CLI's self-reported cost, sum it in the wrapper, stop the loop at the ceiling.* Token telemetry is tracked separately per hat (`record_iteration_tokens`, peak-context high-water marks).
+
+### eta-factory: the provider enforces; the harness only observes
+
+For comparison, and read at `/srv/orchestration/eta-factory` (read-only): `policy/provider-qualification.json` sets `phase_spend_cap_cents` per provider and phase (anthropic: 100 temporary_refusal / 5000 acceptance; openai: 1 / 10000), and the cap is *provider-side* — a workspace spend limit configured in the vendor console, qualified by literally observing a refused billable call during a `temporary_refusal` phase (the `spend_observation` block; `docs/openai-spend-capture.md` documents that OpenAI's limit "has no Administration API surface," making the flip an attestation-captured console mutation). Decision A154 (docs/decision-log.md) draws the line explicitly: pricing arithmetic moved to the control plane because "a least-trusted guest cannot be the authority on what its own call cost"; "Daily limits remain run-count controls; the money safety boundary remains the provider-enforced bearer `spend_cap_cents`; cost is telemetry, never authorization." That is a direct critique of the ralph-orchestrator pattern (and of `--max-budget-usd`): both trust the billed party's own arithmetic. eta-factory's answer is defense in depth — self-reported cost is telemetry for dashboards and drift checks (`tools/check-anthropic-spend.py` keeps an independent rate constant "because its job is to catch disagreement with the provider bill"), while the ceiling that actually stops money is the provider's.
+
+### Absence findings
+
+- multi-agent-ralph-loop: no cost accounting or cap anywhere in `cmd_loop` (the string "budget" in the repo refers to iteration budgets).
+- agent-orchestrator: a full usage-ingestion pipeline (transcript JSONL → pricing catalog → per-session cost; `observe/usage/ingestor.go`, `internal/pricing/`) with **no cap enforcement** — the only "budget" in the code is a discovery budget for how many usage sources the collector will bind.
+- Anthropic long-running-agents post: nothing.
+- Matt Pocock / Huntley (prior research file): nothing beyond iteration counts and a subscription.
+
+## C. Per-iteration timeouts
+
+### Claude Code: no session timeout exists — this is the headline absence
+
+Checked against the CLI reference and the env-vars page: the timeout knobs are `API_TIMEOUT_MS` (per API request, default 600 000 ms), `BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` (per Bash *tool call*, defaults 2 min / 10 min), `MCP_TIMEOUT` (MCP server startup, 30 s default), and `MAX_THINKING_TOKENS` (fixed-budget models only). **There is no flag or setting that bounds the wall-clock of a whole `claude -p` invocation.** `--max-turns` bounds agentic *turns* ("Exits with an error when the limit is reached. No limit by default"), which bounds cost-shaped runaway but not a hang — a single stuck tool call or network wedge is exactly what a turn cap cannot catch. The external `timeout(1)` / `systemd-run --property=RuntimeMaxSec=` baseline is therefore not a workaround but the only mechanism.
+
+One CLI-observable detail the Loop already exploits and ralph-orchestrator confirms: hitting `--max-turns` exits 1 with "Reached max turns" on the output stream (claude.sh matches that string to map it to `LOOP_AGENT_TURN_BOUND_EXIT=33`), and in `--output-format stream-json` the result event carries a structured `error_max_turns` — the robust form, at the cost of a less readable transcript.
+
+### ralph-orchestrator: inactivity timeout, not wall-clock
+
+The interesting design choice, implemented in `ralph-adapters/src/cli_executor.rs`: the per-iteration timeout (per-adapter `timeout`, default 300 s — `config.rs:352-366`, overridable per backend and per hat, precedence "an active `hat.timeout`, else the resolved adapter settings timeout") is an **inactivity** timeout — "Each emitted line resets the inactivity timeout" — enforced with `tokio::time::timeout` around the next-output wait. On expiry the child gets SIGTERM, then `TERMINATION_GRACE_TIMEOUT = 2s`, then a kill. So a chatty 40-minute iteration is allowed while a silent 5-minute wedge is killed. The run-level wall clock (`max_runtime_seconds`, default 4 h) backstops it. Contrast with the Loop's `timeout --kill-after=10s ${LOOP_ITERATION_TIMEOUT_SECONDS}s`, a hard wall clock per Iteration: the Loop's is simpler and unspoofable (an agent printing a heartbeat can hold a ralph-orchestrator iteration open forever); the inactivity form wastes less budget on iterations that are legitimately long. Both are defensible; they fail differently.
+
+ralph-orchestrator also treats timeout exit codes carefully in the same way run.sh does: the Loop's run.sh comment "124 and 137 are what `timeout` exits with, but they are also exit codes an agent may choose for itself. Reaching the wall clock is what makes it a kill" is the same disambiguation ralph-orchestrator solves by owning the timeout in-process (`ExecutionResult.timed_out` flag) instead of inferring from exit codes.
+
+### The rest
+
+- multi-agent-ralph-loop: the `claude --print` call in `cmd_loop` has no timeout (curl calls elsewhere use `--max-time`; the model call does not). A hung Claude process hangs the loop.
+- agent-orchestrator: no per-iteration concept (sessions are long-lived by design); its bound is the liveness/staleness machinery of section A.
+- eta-factory: 300 s hard kill per worker run (policy/worker-lifecycle, covered in the 2026-08-24 file) — a run ceiling, one level up from an iteration.
+- Baseline for completeness: `timeout --kill-after` (already the Loop's mechanism) and `systemd-run --scope -p RuntimeMaxSec=` (adds cgroup cleanup of the whole process tree, which `timeout` does not give when the agent forks) are both host-native and agent-unspoofable.
+
+## What the sources do not answer
+
+1. **Whether `--max-budget-usd` trips under subscription (OAuth) authentication.** ~~UNVERIFIED~~ **Closed by live test, 2026-08-31** (this VM, CLI 2.1.251, Max OAuth): it trips — see the verified bullet in section B. The remaining unknown is only whether the notional list-price figure tracks the plan's own usage-window accounting, which nothing here relies on.
+2. **No source validates self-reported cost against the bill except eta-factory.** ralph-orchestrator sums `total_cost_usd` as delivered; Claude Code computes it locally at list price. eta-factory's independent-constant drift checker is the only cross-check pattern seen, and it exists precisely because a zero was once reported for a live paid seat (A154).
+3. **Stale-signature detection needs structured output.** ralph-orchestrator can fingerprint "same event three times" only because agents must emit through `ralph emit`. Nothing read shows how to detect same-work-repeated from plain `--print` text plus a git repo — the Loop's No-op streak (head didn't move) is the reachable proxy, but it cannot see "moved the head with the same commit content/subject as last time." A `git diff HEAD~1..HEAD --stat` fingerprint compared across Iterations would be new design, not sourced.
+4. **Nobody bounds *plan advance*.** All implemented detectors bound commits, events, failures, or liveness. "The feature list did not shrink for N iterations" — the natural check for the Anthropic post's `feature-list.json` pattern and for the Loop's Plan/Progress Log — is implemented nowhere read.
+5. **ralph-orchestrator's failure definition** (`success` per iteration) was traced to its call site but not to its root definition; whether a non-zero agent exit alone marks failure, or event outcomes do, was not pinned down. Minor. UNVERIFIED at that level of detail.
+6. **agent-orchestrator's repo identity**: `github.com/Untrivial-ai/agent-orchestrator` redirected/served the `aoagents`-import Go codebase described above (module path `github.com/aoagents/agent-orchestrator`); the tarball was fetched from the Untrivial-ai URL and is what was read. Version/tag not established (HEAD tarball, no VERSION file checked).
+
+## Mechanisms the Loop could adopt
+
+Mapped to `loop/run.sh` / `contract.sh` / `claude.sh` and the Selector as they stand today (`LOOP_MAX_ITERATIONS=5`, `LOOP_ITERATION_TIMEOUT_SECONDS=900`, `LOOP_MAX_TURNS=100`, `LOOP_RUN_TIMEOUT_SECONDS=5400`, `LOOP_MAX_CONSECUTIVE_NOOPS=2`):
+
+- **Keep (a) and (c) as built.** The Loop's head-before/after No-op streak and hard per-Iteration `timeout --kill-after` are already stronger than everything surveyed except ralph-orchestrator, and simpler than it. Do not switch to inactivity timeouts: an agent inside the boundary streams output and could heartbeat past one; the wall clock is the honest bound for unattended runs.
+- **Close (b) with two layers, per the A154 principle.** *Telemetry layer:* run `claude` with `--output-format stream-json` inside claude.sh (or keep text and additionally parse the `result` line), extract `total_cost_usd` per Iteration the way ralph-orchestrator's `claude_stream.rs` does, sum it in run.sh next to `committed_count`, report it in the Termination Report, and add `LOOP_MAX_COST_USD` to the Contract as a fourth Run bound. On subscription auth this may read $0 or an estimate — that is fine for a telemetry bound, and the parse cost is one field. *Authority layer:* the provider-enforced cap. On a Max subscription the plan's usage window IS the provider cap (the box cannot spend past it), which is exactly why claude.sh's metered-key refusal is load-bearing — a stray `ANTHROPIC_API_KEY` removes the only hard ceiling. If the Loop ever moves to metered billing, copy eta-factory: a dedicated workspace with a console spend limit, qualified by observing one refused call, before the first unattended Run.
+- **Optionally try `--max-budget-usd` per Iteration** (the Loop is already `--print`), gated on gap 1's live test. If it trips under subscription auth, it is a free second bound; wire its failure text into the same transcript-grep pattern claude.sh uses for "Reached max turns".
+- **A cheap same-work detector, if repeat-implementation ever shows up:** record each Iteration's `git log -1 --format=%s` + `git diff HEAD~1 --stat | sha256sum` in the Progress Log and let run.sh abort when N consecutive Iterations produce identical fingerprints — the Loop-shaped equivalent of ralph-orchestrator's `consecutive_same_signature >= 3`, catching the "commits, but the same commit" failure the No-op streak cannot. Not sourced from any implementation (gap 3); design it as its own story if wanted.
+- **A plan-advance bound** (gap 4): the Progress Log heading count already advances per Iteration by contract; the Plan's remaining-work section does not. If Plans gain checkbox structure, "unchecked count unchanged for N Iterations" is the missing detector nobody has built.
+- **For the Selector's board** (which watches Runs from outside, over SSH): agent-orchestrator's two ideas transfer directly — trust positive evidence only (its terminal surface may *prove idle*, never prove active), and rate-limit the orchestrator's own retries (its 3-nudge cap per PR signature) if the Selector ever re-dispatches a failed Run automatically. Its mass-death circuit breaker is the pattern to remember the day the Selector supervises more than one box: N Runs dying in one sweep is one outage, not N verdicts.
+
+## Sources
+
+**Local CLI and repo paths (read 2026-08-31):**
+
+- `claude --help` / `claude --version` on this box (Claude Code 2.1.251) — `--max-budget-usd` present with "(only works with --print)"; `--max-turns 1` accepted by the argument parser.
+- `/srv/orchestration/.claude/worktrees/issue-164-php-guest/lab/single-user-factory/loop/run.sh`, `loop/contract.sh`, `loop/agents/claude.sh` — the Loop's shipped Termination Contract values, No-op streak mechanism, `timeout --kill-after` usage, "Reached max turns" transcript match, metered-key refusal, and the "no per-Run spend ceiling" statement.
+- `/srv/orchestration/eta-factory/policy/provider-qualification.json` — `phase_spend_cap_cents` per provider/phase and the `spend_observation` qualification blocks.
+- `/srv/orchestration/eta-factory/docs/openai-spend-capture.md` — provider caps as console mutations without an API surface; attestation-captured before/after.
+- `/srv/orchestration/eta-factory/docs/decision-log.md` (A154) — "cost is telemetry, never authorization"; control-plane pricing; the independent spend-drift checker rationale.
+
+**`mikeyobrien/ralph-orchestrator` (HEAD tarball, Cargo workspace v2.10.1, CHANGELOG to 2026-06-22), code read:**
+
+- `crates/ralph-core/src/event_loop/mod.rs` — `check_termination()`: MaxIterations / MaxRuntime / MaxCost / ConsecutiveFailures / LoopThrashing (≥3) / ValidationFailure (≥3 malformed) / LoopStale (≥3 same signature) / stop-file / WorkspaceGone; `add_cost()`; failure counter reset/increment; `ralph emit` JSONL-only event ingestion; file-modification audit.
+- `crates/ralph-core/src/event_loop/loop_state.rs` — `EventSignature { topic, source, payload_fingerprint }`, `consecutive_same_signature` bookkeeping, `cumulative_cost`, `record_iteration_tokens`.
+- `crates/ralph-core/src/config.rs` — defaults: `max_iterations` 100, `max_runtime_seconds` 14 400, `max_consecutive_failures` 5, adapter `timeout` 300 s, `max_cost_usd: Option<f64>`, per-hat timeout precedence (R13 comment), `completion_promise`, `persistent` mode ("only terminate on hard limits").
+- `crates/ralph-adapters/src/cli_executor.rs` — inactivity timeout ("Each emitted line resets the inactivity timeout"), SIGTERM, `TERMINATION_GRACE_TIMEOUT = 2s`, `timed_out` flag.
+- `crates/ralph-adapters/src/claude_stream.rs` — `ClaudeStreamEvent::Result { duration_ms, total_cost_usd, num_turns, is_error }` parsed from Claude Code stream-json.
+- `crates/ralph-adapters/src/stream_handler.rs`, `crates/ralph-cli/src/loop_runner.rs` — `SessionResult` cost/token fields; per-iteration cost accumulation and the `--no-tui` per-iteration budget/cost footer "so tailing agents can catch runaway loops".
+
+**`alfredolopez80/multi-agent-ralph-loop` (HEAD tarball; README requires Claude Code v2.1.42+), code read:**
+
+- `scripts/ralph` — `cmd_loop()` (~line 6494): iteration cap + `VERIFIED_DONE` grep, no progress/cost/timeout mechanisms; `CLAUDE_MAX_ITER=25`, `LIGHTNING_MAX_ITER=100`; `cmd_classify` iteration-budget sizing (3/15/25 by route).
+- `.claude/hooks/` (~60 hooks incl. `ralph-subagent-stop.sh`) — none implement loop-level progress detection, caps, or timeouts (searched; absence finding).
+
+**`Untrivial-ai/agent-orchestrator` (HEAD tarball; Go module `github.com/aoagents/agent-orchestrator`), code read:**
+
+- `backend/internal/adapters/agent/activitystate/activitystate.go`, `.../claudecode/terminal_activity.go` — hook-derived activity states; stuck-active-forever failure mode; screen-proves-idle-only rule.
+- `backend/internal/observe/activity/observer.go` — stale-active reconciliation, `DefaultTickInterval` 30 s / `DefaultStaleAfter` 2 m.
+- `backend/internal/observe/reaper/reaper.go` — 5 s liveness probes; mass-termination circuit breaker (their issue #3475).
+- `backend/internal/lifecycle/reactions.go` — `reviewMaxNudge = 3`, signature-keyed nudge dedupe.
+- `backend/internal/observe/usage/ingestor.go`, `backend/internal/pricing/` — transcript-based cost observability; no spend-cap enforcement found (absence finding; "budget" in code = collector discovery budget).
+- `backend/internal/sessionguard/guard.go` — pane-write guard (context: why nudges are gated, not a loop mechanism).
+
+**Web (fetched 2026-08-31):**
+
+- https://code.claude.com/docs/en/cli-reference — `--max-turns` (print mode; "Exits with an error when the limit is reached. No limit by default"), `--max-budget-usd` full semantics (subagent spend counts; stops background subagents; v2.1.217+ for full enforcement), `MCP_TIMEOUT`.
+- https://code.claude.com/docs/en/costs — `/usage` session cost (locally computed at list price; 1.1× residency since v2.1.239; compared with `--max-budget-usd`), Loops rows (v2.1.242+), subscriber cost "isn't relevant for billing", org-level caps (Console workspace spend limits, Teams/Enterprise spend limits, Pro/Max usage-credit monthly limits), gateway spend limits.
+- https://code.claude.com/docs/en/monitoring-usage — `CLAUDE_CODE_ENABLE_TELEMETRY=1`; `claude_code.cost.usage` (USD) and `claude_code.token.usage` metrics with attributes; `claude_code.api_request` event with `cost_usd`/`cost_usd_micros`.
+- https://code.claude.com/docs/en/hooks — Stop hook fires when Claude finishes responding; exit code 2 on Stop "Prevents Claude from stopping"; `stop_hook_active`; PreToolUse `permissionDecision: "deny"`.
+- https://code.claude.com/docs/en/env-vars — `API_TIMEOUT_MS`, `BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS`, `BASH_MAX_OUTPUT_LENGTH`; no session-timeout variable (absence finding).
+- https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents — initializer/coding-agent harness, feature-list JSON with passes-only edits, progress files, one-feature-per-session; explicitly none of (a), (b), (c).
