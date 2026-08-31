@@ -9,6 +9,7 @@ exactly once across a restart, and a delivery failure that loses nothing.
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psycopg
@@ -94,6 +95,25 @@ def notifier(db, tmp_path):
                 capture_output=True, text=True, env=environ, timeout=60,
             )
 
+        def daemon(self, **env):
+            """Start the notifier the way systemd does - no --once - and hand
+            back the process for the caller to stop."""
+            environ = dict(os.environ)
+            environ.update({
+                "SELECTOR_JOURNAL_DSN": db,
+                "SELECTOR_NOTIFY_COMMAND": str(command),
+                "SELECTOR_LOOP_URL": "https://lab.invalid/loop",
+                # The daemon's own keepalive, shortened so a test that waits
+                # for one is measured in a second rather than in twenty.
+                "SELECTOR_SSE_KEEPALIVE_SECONDS": "1",
+            })
+            environ.update({k: str(v) for k, v in env.items()})
+            return subprocess.Popen(
+                [sys.executable, str(NOTIFIER)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, env=environ,
+            )
+
         def delivered(self):
             return delivered.read_text() if delivered.exists() else ""
 
@@ -125,6 +145,45 @@ def test_a_first_start_mails_nothing_and_starts_from_the_newest_row(db, notifier
     assert result.returncode == 0, result.stderr
     assert notifier.subjects() == []
     assert cursor(db) == newest
+
+
+def test_the_daemon_keeps_listening_after_its_first_start(db, notifier):
+    """The first start sets the cursor; it must not also END the process.
+
+    Live on 2026-08-31 it did: the unit logged "first start: covering the
+    Journal from row 1227" and deactivated, and only `Restart=always` brought
+    it back ten seconds later. A safety net catching a bug is not the bug
+    being absent - the same code under `Restart=on-failure` would have exited
+    0 on every start and never listened to anything.
+    """
+    process = notifier.daemon()
+    try:
+        _wait_until(lambda: cursor(db) is not None, process)
+        append(db, "run.outcome", OUTCOME)
+        _wait_until(lambda: notifier.subjects(), process)
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+
+    assert notifier.subjects() == ["Proposal ready: acme/widgets#312"]
+
+
+def _wait_until(condition, process, timeout=20.0):
+    """Poll until the condition holds, failing loudly if the process died -
+    a daemon that exited is the failure this suite is about, and waiting the
+    full timeout for it would report as a hang rather than as an exit."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        if process.poll() is not None:
+            _, stderr = process.communicate()
+            raise AssertionError(
+                f"the notifier exited (rc {process.returncode}) instead of "
+                f"listening:\n{stderr}"
+            )
+        time.sleep(0.1)
+    raise AssertionError("timed out waiting for the notifier")
 
 
 def test_after_the_first_start_the_next_row_is_delivered(db, notifier):

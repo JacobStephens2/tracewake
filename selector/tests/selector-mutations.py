@@ -814,6 +814,16 @@ MUTATIONS = {
         "                if not dry_run:\n"
         "                    set_cursor(conn, newest)",
     ),
+    # The daemon stops watching the moment it starts: it sets its cursor and
+    # exits 0, which is what the live unit did on 2026-08-31 and what
+    # Restart=always covered up for ten seconds.
+    "the-first-start-ends-the-daemon": (NOTIFIER, NOTIFIER_SUITE,
+        "                if once:\n"
+        "                    return sent\n"
+        "                start = target = newest\n"
+        "                continue",
+        "                return sent",
+    ),
     # Delivery stops being deduplicated at all, so the credential key is
     # written and never read.
     "the-once-only-record-is-not-read": (NOTIFIER, NOTIFIER_SUITE,
