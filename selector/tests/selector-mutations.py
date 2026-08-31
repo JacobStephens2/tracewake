@@ -38,6 +38,12 @@ PROTECTION = "guardrail-sources/protection.sh"
 GUARDRAIL_SUITE = "tests/test_guardrail.py"
 PROTECTION_SUITE = "tests/test_protection_source.py"
 
+# The tracker-writing surface, and the reading of a Proposal's checks. Every
+# other suite replaces this script with a scripted fake, which is what let its
+# own argument handling reach production unexercised.
+ISSUE_SOURCE = "issue-sources/github.sh"
+ISSUE_SOURCE_SUITE = "tests/test_issue_source.py"
+
 # The window (#156). Its path is relative to the Selector, and its suite is
 # the dashboard's - run from the webapp directory, which mutation-check.sh
 # handles by naming both.
@@ -684,6 +690,21 @@ MUTATIONS = {
     "the-chip-is-green-regardless": (LIVE_REGION, WINDOW_SUITE,
         "        {% elif guardrail.protected %}",
         "        {% elif True %}",
+    ),
+    # `checks` demands a number again, which is the guard that broke the first
+    # unattended dispatch: the Run works, and the cycle dies reading the
+    # checks of the Proposal it just produced.
+    "checks-refuses-a-proposal-url": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        "if [[ ${action} == checks ]]; then",
+        "if false; then",
+    ),
+    # A Proposal URL from any repository is accepted, so `gh pr checks` - which
+    # resolves the repository from the URL and ignores --repo - can be made to
+    # answer about somebody else's pull request as though it were this Run's.
+    "a-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        '        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||\n'
+        '            die "the proposal ${number} is not in ${task_repo}"\n',
+        "",
     ),
 }
 
