@@ -683,12 +683,30 @@ all-clear, reached by a different road.
 check state to red, and so does `cycle.py`. An unknown state must never reach
 `awaiting-review` as though it had passed.
 
-**The green path needs a token permission it does not yet have.** Reading a
-Proposal's checks needs **Checks: Read** on the fine-grained PAT, and the
-operator's token does not hold it for tourbot today. Until it does, a clean
-Run's route fails loudly - `issue.route-failed`, cycle exit 1, the timer pages
-- rather than mislabelling unverified work. The other three routes do not read
-checks and are unaffected. See `../notes/selector-outcome-evidence.md`.
+**Undecided is not red either.** A run that has completed but carries no
+conclusion yet - the Actions API reports that transition briefly - is pending,
+not red, because red is *terminal*: it comments and swaps to `ready-for-human`,
+and only pending is polled again. A conclusion GitHub reports but this script
+does not recognise is still red; the distinction is between a verdict this
+script cannot read and a verdict GitHub has not given.
+
+**Green is read from workflow runs, not from check runs.** A fine-grained PAT
+cannot read check runs at all, and that is the token type rather than a grant
+anyone forgot: GitHub's fine-grained tokens offer no Checks permission, so the
+check-runs endpoint and the GraphQL rollup `gh pr checks` walks both answer 403
+whatever the token holds (#273). So `checks` asks `gh pr view` for the
+Proposal's head commit and then reads `actions/runs?head_sha=`, which the
+Actions permission the token already holds does cover, and which carries the
+same status and conclusion fields.
+
+The cost is bounded and worth naming: **this sees only Actions-based checks.**
+A required check posted by some other GitHub app would be invisible to the
+Selector and a Proposal waiting on it could read green. Every one of tourbot's
+checks is Actions today (five check runs on the first Proposal, all
+`github-actions`). The alternatives - a classic PAT with `repo` scope, or
+minting installation tokens from a GitHub App with Checks: Read - trade a broad
+credential or new moving parts for that edge case. See
+`../notes/selector-outcome-evidence.md`.
 
 Each route appends its own Journal row - `issue.retrying`, `issue.given-up`,
 `issue.awaiting-review`, `issue.handed-to-human` - so the Journal is greppable
@@ -932,7 +950,7 @@ tests/mutation-check.sh          # one suite run per mutation
 ```
 
 **Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
-mutations and the suites ran in seconds. There are now 88, and the suite each
+mutations and the suites ran in seconds. There are now 95, and the suite each
 one re-runs takes one to two minutes, so a whole run is measured in hours -
 long enough that a build usually runs the entries it added and their
 neighbours by hand, and the whole set is a thing to start and walk away from.

@@ -151,3 +151,48 @@ issue is swapped to `awaiting-review` and is waiting on you."
 The badge carries the label string verbatim rather than a friendlier word, so
 that what the page says and what the operator sees on the issue are the same
 token.
+
+## Postscript, 2026-08-31: the blocker was not a missing grant
+
+The section above says the green path waits on **Checks: Read** being added to
+the fine-grained PAT. That grant does not exist. GitHub's fine-grained personal
+access tokens offer no Checks permission at all - the token's permission picker
+lists Attestations, then Code quality, and a search for "check" returns nothing;
+the fine-grained-permissions reference has no Checks section and does not cover
+`GET /repos/{owner}/{repo}/commits/{ref}/check-runs`. The Checks API is readable
+only by GitHub Apps, OAuth tokens, and classic PATs with `repo`. So the 403 was
+permanent for this token type, whatever anyone granted (#273).
+
+What is readable is the Actions API, which the token's existing Actions
+permission covers. On `40349e3f26bc2bb0a85d92e010e241033ff62bcd`, the head of
+tourbot#713 - the Proposal the first unattended Run produced - under the
+Selector's own `GH_TOKEN`:
+
+```
+$ gh api repos/Educational-Travel-Adventures/tourbot/commits/$SHA/check-runs
+403 Resource not accessible by personal access token
+
+$ gh api "repos/Educational-Travel-Adventures/tourbot/actions/runs?head_sha=$SHA"
+200, total_count 3 - Tourbot CI, ADR numbering x2, all completed/success
+```
+
+All five check runs on that commit are `github-actions`, so the two sources say
+the same thing about tourbot today. `checks` now reads the head commit with
+`gh pr view` and grades `actions/runs?head_sha=`, and the jq translation the
+section above could only check by hand is driven by `tests/test_issue_source.py`
+with `gh` faked on PATH - green, red, pending, none, an unknown conclusion, a
+second page, and both refusals. End to end against the real Proposal:
+
+```
+$ ./issue-sources/github.sh Educational-Travel-Adventures/tourbot \
+      checks https://github.com/Educational-Travel-Adventures/tourbot/pull/713
+{"state":"green","failing":[]}
+exit=0
+```
+
+The cost, recorded here because it is invisible from the output: this reads
+only Actions-based checks. A required check posted by a non-Actions app would
+not be seen, and a Proposal waiting on one could read green. None exists on
+tourbot. Buying that edge case back means a classic PAT with `repo` scope or
+installation tokens from a GitHub App - a broad credential, or new moving
+parts.
