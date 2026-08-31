@@ -787,8 +787,16 @@ MUTATIONS = {
     # a row: the box is observed every thirty minutes, so the same expiry
     # mails on every cycle until somebody renews it or mutes the channel.
     "the-credential-warning-is-not-deduplicated": (NOTICES, NOTICES_SUITE,
-        'dedupe_key=f"credential:{raw}",',
+        "dedupe_key=_credential_key(expires_at),",
         "dedupe_key=None,",
+    ),
+    # The key goes back to being the box's SPELLING of the expiry rather than
+    # the instant (#304), so an adapter that reports `+01:00` where it used to
+    # report `Z` - the same credential, said differently - is a new key, and
+    # the warning that was already sent is sent again.
+    "the-credential-key-is-a-spelling-not-an-instant": (NOTICES, NOTICES_SUITE,
+        "    utc = expires_at.astimezone(timezone.utc)",
+        "    utc = expires_at",
     ),
     # An expiry hours away alarms as though it were minutes away, which is the
     # same channel-muting failure reached from the other side.

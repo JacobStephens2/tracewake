@@ -1102,7 +1102,7 @@ tests/mutation-check.sh          # one suite run per mutation
 ```
 
 **Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
-mutations and the suites ran in seconds. There are now 110 entries in
+mutations and the suites ran in seconds. There are now 111 entries in
 `tests/selector-mutations.py`, and the suite each
 one re-runs takes one to two minutes, so a whole run is measured in hours -
 long enough that a build usually runs the entries it added and their

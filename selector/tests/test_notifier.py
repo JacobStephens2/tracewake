@@ -253,8 +253,14 @@ def test_one_credential_is_one_line_in_the_summary_however_often_it_was_seen(
     """A day of backlog is a day of box observations. Listing every one of
     them would be the noise the floor exists to prevent, one level down."""
     notifier.run()
+    # One card, appended four times - not four calls to `box`. #304: `box`
+    # stamps the expiry from the wall clock to the second, so building it
+    # inside the loop made the test ask whether four appends land in the same
+    # second, which under load they do not. Four observations of ONE
+    # credential is what this test is about.
+    observed = box(1)
     for _ in range(4):
-        append(db, "box.observed", box(1), hours_ago=200)
+        append(db, "box.observed", observed, hours_ago=200)
 
     notifier.run()
 
