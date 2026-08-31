@@ -154,8 +154,13 @@
         replayed; this one is the tracker as it is right now, columned by the
         same Eligibility predicate the Selector picks with. The columns are
         the tracker's own labels, so what the board says and what the operator
-        sees on his issue list are the same thing. -#}
-    <h2>The queue</h2>
+        sees on his issue list are the same thing.
+
+        The whole section folds at its heading, so the page can be skimmed
+        with it shut. Open by default; loop-ui.js re-applies the stored choice
+        here after every live swap, since this fragment is what gets swapped. -#}
+    <details class="fold" data-fold="queue" open>
+    <summary><h2>The queue</h2></summary>
     <p>The whole labeled queue, read from the tracker when this page was
        requested and columned by the Selector's Eligibility. Not the Journal:
        these are the issues as they stand now, not as the last cycle found
@@ -201,6 +206,7 @@
       </section>
       {% endfor %}
     </div>
+    </details>
 
     {% if runs %}
     <h2>Runs</h2>
@@ -210,7 +216,11 @@
     {% endif %}
 
     {% if cycles %}
-    <h2>Cycles</h2>
+    {#- Folded shut by default: the cycle cards are the deep history, and the
+        page reads as an overview without them. The operator's choice is
+        stored and re-applied by loop-ui.js, same as the queue's. -#}
+    <details class="fold" data-fold="cycles">
+    <summary><h2>Cycles</h2></summary>
     <p>One card per Selector cycle: what it picked, and every issue it passed
        over with the reason it recorded.</p>
     {% for c in cycles %}
@@ -263,12 +273,13 @@
       {% endif %}
     </section>
     {% endfor %}
+    </details>
     {% endif %}
 
     {% if events %}
     <h2>Every event</h2>
     <table>
-      <thead><tr><th>at (UTC)</th><th>id</th><th>kind</th><th>payload</th></tr></thead>
+      <thead><tr><th>at</th><th>id</th><th>kind</th><th>payload</th></tr></thead>
       <tbody>
       {% for e in events %}
         <tr>

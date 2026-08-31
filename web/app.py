@@ -17,6 +17,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from typing import Callable, TypeVar
 
 import markdown as md
@@ -175,8 +176,31 @@ async def adr_detail(request: Request, slug: str):
     return _page(request, "adr_detail.html", {"adr": adr})
 
 
-def _utc(at) -> str:
-    return at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+# The operator's clock. Everything stored and exchanged stays UTC; this is
+# display only, and the abbreviation the strftime renders (EDT/EST) says so on
+# every timestamp.
+DISPLAY_TZ = ZoneInfo("America/New_York")
+
+
+def _local(at) -> str:
+    return at.astimezone(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _local_timer_next(value: str) -> str:
+    """systemd's NextElapseUSecRealtime, moved to the operator's clock.
+
+    The box answers in its own timezone (UTC there), as a formatted string
+    rather than an instant. Anything that does not parse as that shape -
+    `n/a`, a box whose clock is not UTC, a format change - is shown as
+    answered rather than guessed at.
+    """
+    try:
+        at = datetime.strptime(value, "%a %Y-%m-%d %H:%M:%S UTC").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return value
+    return at.astimezone(DISPLAY_TZ).strftime("%a %Y-%m-%d %H:%M:%S %Z")
 
 
 def _duration(start, end) -> str | None:
@@ -226,7 +250,7 @@ def _cycles(events: list[dict]) -> list[dict]:
             card.update(
                 started=True,
                 id=event["id"],
-                at=_utc(event["at"]),
+                at=_local(event["at"]),
                 repo=event["payload"].get("repo"),
                 label=event["payload"].get("label"),
                 dry_run=event["payload"].get("dry_run"),
@@ -327,7 +351,7 @@ def _runs(events: list[dict]) -> list[dict]:
             # Run ended - a different fact, and one that does not exist yet
             # while the Run is in flight.
             card.setdefault("iteration_records", []).append(
-                {**payload, "at": _utc(event["at"])}
+                {**payload, "at": _local(event["at"])}
             )
         elif event["kind"] == "run.contract":
             # The terms this Run is executing under (#162), read by the
@@ -345,7 +369,7 @@ def _runs(events: list[dict]) -> list[dict]:
             card.update(
                 dispatched=True,
                 id=event["id"],
-                at=_utc(event["at"]),
+                at=_local(event["at"]),
                 started_at=event["at"],
                 **{k: payload.get(k) for k in
                    ("issue", "title", "url", "branch", "task_ref", "area",
@@ -354,7 +378,7 @@ def _runs(events: list[dict]) -> list[dict]:
         else:
             card.update(
                 in_flight=False,
-                ended_at=_utc(event["at"]),
+                ended_at=_local(event["at"]),
                 finished_at=event["at"],
                 **{k: payload.get(k) for k in
                    ("outcome", "exit", "iterations", "faults", "proposal",
@@ -439,7 +463,7 @@ def _timer() -> dict:
         # systemd answers `n/a` for a timer with nothing scheduled, which is
         # the honest string to show: an empty cell would be indistinguishable
         # from one this page failed to fill in.
-        "next": read.get("NextElapseUSecRealtime") or "n/a",
+        "next": _local_timer_next(read.get("NextElapseUSecRealtime") or "n/a"),
     }
 
 
@@ -463,7 +487,7 @@ def _newest_reading(
         if event["kind"] in (good, bad):
             return {
                 **(event["payload"] or {}),
-                "at": _utc(event["at"]),
+                "at": _local(event["at"]),
                 "age": datetime.now(timezone.utc) - event["at"],
                 flag: event["kind"] == good,
             }
@@ -506,6 +530,9 @@ def _box(events: list[dict]) -> dict | None:
         now = datetime.now(timezone.utc)
         reading["credential_expired"] = expiry <= now
         reading["credential_remaining"] = _duration(now, expiry)
+        # Parsed, so it can be shown on the operator's clock like every other
+        # instant on the page. The unparsed branch above keeps the raw string.
+        reading["credential_expires_at"] = _local(expiry)
     return reading
 
 
@@ -654,7 +681,7 @@ def _loop_context(request: Request) -> dict:
     view = [
         {
             "id": e["id"],
-            "at": _utc(e["at"]),
+            "at": _local(e["at"]),
             "kind": e["kind"],
             "payload": e["payload"],
         }

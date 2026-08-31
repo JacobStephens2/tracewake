@@ -1,5 +1,6 @@
 """The /loop window at HTTP level: FastAPI test client over a seeded Journal."""
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import psycopg
 from fastapi.testclient import TestClient
@@ -693,7 +694,8 @@ def test_the_strip_shows_the_next_cycle_the_timer_will_fire(db, monkeypatch, tmp
             "ActiveState=active\nNextElapseUSecRealtime=Thu 2026-08-27 14:31:00 UTC",
         ),
     )
-    assert "Thu 2026-08-27 14:31:00 UTC" in strip(client.get("/loop").text)
+    # systemd answers in the box's UTC; the page shows the operator's clock.
+    assert "Thu 2026-08-27 10:31:00 EDT" in strip(client.get("/loop").text)
 
 
 def test_a_timer_that_is_not_running_is_said_so_rather_than_left_blank(
@@ -778,7 +780,9 @@ def _expiring_in(seconds: int) -> str:
 def test_the_box_card_shows_when_the_credential_expires_and_what_is_left(db):
     """Both halves. The instant is what the box actually said and is what a
     second reader can check; the remaining time is what the operator opened
-    the page to find out. Neither answers on its own."""
+    the page to find out. Neither answers on its own. The instant is shown on
+    the operator's clock, so the assertion converts the same way app._local
+    does."""
     expires = _expiring_in(6 * 3600 + 20 * 60)
     with journal.connect(db) as conn:
         journal.append(
@@ -786,8 +790,14 @@ def test_the_box_card_shows_when_the_credential_expires_and_what_is_left(db):
             "box.observed",
             {"scripts_hash": "8c1f3a90d2", "credential_expires_at": expires},
         )
+    shown = (
+        datetime.strptime(expires, "%Y-%m-%dT%H:%M:%SZ")
+        .replace(tzinfo=timezone.utc)
+        .astimezone(ZoneInfo("America/New_York"))
+        .strftime("%Y-%m-%d %H:%M:%S %Z")
+    )
     cell = strip(client.get("/loop").text)
-    assert expires in cell
+    assert shown in cell
     assert "6h 19m left" in cell or "6h 20m left" in cell
 
 
