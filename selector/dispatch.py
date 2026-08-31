@@ -29,7 +29,10 @@ left on.** A dispatch that reused a stale working tree would seed a Plan on
 top of somebody else's half-finished work and propose the lot. When the Run's
 branch already exists on the remote - which is what a retry finds (#155) - it
 is taken from there rather than recreated from the base, so a retry continues
-the same branch instead of discarding the first attempt's commits.
+the same branch instead of discarding the first attempt's commits. What that
+branch also carries is the first attempt's Progress Log, which Seeding will
+not overwrite - so it is moved aside first and kept (`keep_previous_progress`,
+#301) rather than either discarded or allowed to stop the retry.
 
 Nothing here writes to the Journal. cycle.py journals what this returns, so
 that the Journal's shape is decided in one file rather than two.
@@ -65,6 +68,8 @@ class DispatchConfig:
     remote: str
     branch_prefix: str
     seed_command: str
+    progress_log_path: str
+    run_heading: str
     box_command: str
     issue_command: str
     command_timeout_seconds: int
@@ -82,6 +87,15 @@ class DispatchConfig:
             remote=env("SELECTOR_WORK_REMOTE", "origin"),
             branch_prefix=env("SELECTOR_BRANCH_PREFIX", "loop/"),
             seed_command=env("SELECTOR_SEED_COMMAND", str(LOOP / "seed-run.sh")),
+            # Both read from the Loop's own variables rather than Selector
+            # ones, because contract.sh declares them for exactly this reason:
+            # "two scripts agreeing on a literal string by both spelling it
+            # out is a seam that breaks silently". The Selector is now the
+            # third reader of the pair, and a Selector that spelled either out
+            # would simply stop finding the Progress Log it is supposed to
+            # keep - with no error, and Seeding's refusal on the other side.
+            progress_log_path=env("LOOP_PROGRESS_LOG_PATH", "PROGRESS.md"),
+            run_heading=env("LOOP_RUN_HEADING", "## Run started"),
             box_command=env(
                 "SELECTOR_BOX_COMMAND", str(HERE / "box-sources" / "ssh.sh")
             ),
@@ -191,6 +205,23 @@ def branch_name(config: DispatchConfig, number: int, area: str) -> str:
         f"{config.branch_prefix}{number}"
 
 
+def remote_has_branch(config: DispatchConfig, branch: str) -> bool:
+    """Does the remote already carry this Run's branch?
+
+    Asked in two places and spelled out in neither: it is what makes a
+    dispatch a continuation rather than a first attempt, and `prepare_branch`
+    and `keep_previous_progress` have to give the same answer or the second
+    would append this issue's record to a file the first never continued.
+    Reads the remote-tracking ref, so it presumes the fetch `prepare_branch`
+    does; nothing else here asks the question before that fetch.
+    """
+    return _run(
+        ["git", "-C", str(config.work_repo), "rev-parse", "--verify",
+         "--quiet", f"{config.remote}/{branch}"],
+        timeout=config.command_timeout_seconds,
+    ).returncode == 0
+
+
 def prepare_branch(config: DispatchConfig, number: int, area: str) -> str:
     """Put the work checkout on the Run's branch, and say which it is."""
     if not (config.work_repo / ".git").exists():
@@ -202,20 +233,100 @@ def prepare_branch(config: DispatchConfig, number: int, area: str) -> str:
     branch = branch_name(config, number, area)
     _git(config, "fetch", "--prune", config.remote)
 
-    remote_branch = f"{config.remote}/{branch}"
-    if _run(["git", "-C", str(config.work_repo), "rev-parse", "--verify",
-             "--quiet", remote_branch],
-            timeout=config.command_timeout_seconds).returncode == 0:
+    if remote_has_branch(config, branch):
         # A retry (#155) continues the branch the first attempt left behind
         # rather than resetting it to the base, which would discard whatever
         # that attempt committed and propose an empty diff.
-        _git(config, "checkout", "-B", branch, remote_branch)
+        _git(config, "checkout", "-B", branch, f"{config.remote}/{branch}")
         return branch
 
     base = _git(config, "symbolic-ref", "--short",
                 f"refs/remotes/{config.remote}/HEAD")
     _git(config, "checkout", "-B", branch, base)
     return branch
+
+
+def kept_log_path(config: DispatchConfig) -> str:
+    """`PROGRESS-earlier.md` beside `PROGRESS.md`, whatever the latter is called."""
+    live = Path(config.progress_log_path)
+    return str(live.with_name(f"{live.stem}-earlier{live.suffix}"))
+
+
+KEPT_LOG_PREAMBLE = (
+    "# Earlier Progress Logs\n\nThe record of the attempts before this one on"
+    " this branch, moved aside by the Selector so that re-seeding does not"
+    " discard it (#301). The live log is {live}.\n"
+)
+
+
+def keep_previous_progress(config: DispatchConfig, branch: str) -> str | None:
+    """Move an earlier attempt's Progress Log aside. Returns where, or None.
+
+    The gap #301 was: `prepare_branch` continues the branch a previous attempt
+    left behind, that attempt's Run committed a Progress Log to it, and
+    `seed-run.sh` refuses to overwrite one (exit 2). Every second dispatch of
+    an issue that actually ran therefore died at Seeding, which with
+    MAX_ATTEMPTS = 2 made the retry unreachable and spent the whole budget on
+    dispatches that started nothing.
+
+    It is not only a retry, which is why what is looked at is the log in the
+    checkout rather than the shape of the dispatch. A Run proposes its
+    Progress Log along with its work, so a merged Proposal puts one on the
+    BASE branch - and from then on every dispatch cut from the base meets the
+    refusal too, first attempt or not. That is the state tourbot#646 was
+    actually in: tourbot master carries the log of the Run merged as its #711.
+    The checkout is also exactly what seed-run.sh's guard reads, so a guard
+    cleared by reading anything else would be cleared by inference.
+
+    Moved rather than discarded, and that is the whole choice. `--reseed`
+    would have been one flag, but seed-run.sh's refusal is not squeamishness:
+    the Progress Log is the ONLY account of what a Run did, and a retry that
+    binned it would leave the reason the first attempt failed unreadable to
+    the second attempt's reviewer - and to the second attempt, which reads the
+    branch it is continuing. It is committed on the Run's branch, so the
+    record travels with the work into the Proposal.
+
+    **Kept per branch, not for ever.** Appending is right within one branch: a
+    third attempt has to keep the second WITHOUT discarding the first. Across
+    branches it would be a leak - the kept file is proposed and merged like
+    any other file, so the next branch cut from the base would inherit an
+    unrelated issue's kept log and append to it, and one file would grow for
+    the life of the repository. So a branch the remote already has continues
+    its own file, and a branch cut from the base starts one. Nothing is lost
+    by that: what the base carries was merged, and a merged file's history is
+    on the base branch, which is the durable place for it.
+
+    Nothing here decides whether to re-seed: after this the Progress Log is
+    simply absent, so Seeding writes a fresh one by its ordinary path and its
+    refusal keeps every bit of its force for the case it was written for - a
+    Run's record about to be lost.
+    """
+    live = config.work_repo / config.progress_log_path
+    if not live.exists():
+        return None
+    text = live.read_text()
+    # The heading seed-run.sh counts Runs by, so the two agree about what a
+    # record is. A Progress Log that only records having been seeded is not a
+    # record of anything: it is what Seeding is about to write again, byte for
+    # byte, and moving it aside would put an empty log in the kept file and a
+    # commit on the branch on every single dispatch.
+    if not re.search(f"^{re.escape(config.run_heading)}", text, re.MULTILINE):
+        return None
+
+    kept = kept_log_path(config)
+    target = config.work_repo / kept
+    continuing = remote_has_branch(config, branch) and target.exists()
+    earlier = target.read_text() if continuing else \
+        KEPT_LOG_PREAMBLE.format(live=config.progress_log_path)
+    target.write_text(f"{earlier.rstrip()}\n\n{text.strip()}\n")
+    live.unlink()
+
+    _git(config, "add", "--", kept, config.progress_log_path)
+    if _run(["git", "-C", str(config.work_repo), "diff", "--cached", "--quiet"],
+            timeout=config.command_timeout_seconds).returncode != 0:
+        _git(config, "commit", "--quiet", "--message",
+             f"Loop: Keep the previous attempt's Progress Log in {kept}")
+    return kept
 
 
 # --- Seeding ----------------------------------------------------------------

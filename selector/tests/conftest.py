@@ -266,19 +266,35 @@ def box(tmp_path):
             .replace("@FACTS@", str(facts_file))
             .replace("@GUARDRAIL@", str(guardrail_file))
             .replace("@PROGRESS@", str(progress_file))
+            .replace("@GUEST@", str(tmp_path / "guest"))
         )
 
+    # Seeding writes BOTH files, and refuses to overwrite a Progress Log that
+    # already records a Run, because the real seed-run.sh does (exit 2). A fake
+    # that wrote only the Plan is what let #301 through: in production every
+    # second dispatch of an issue whose first attempt ran meets that refusal,
+    # and nothing here could see it.
     seed = _script(tmp_path / "seed.sh", fill('''
         printf 'seed %s\n' "$*" >> "@LOG@"
         repo=""
+        reseed=false
         while (($# > 0)); do
             case "$1" in
                 --repo) repo="$2"; shift 2 ;;
+                --reseed) reseed=true; shift ;;
                 *) shift ;;
             esac
         done
+        if ! ${reseed} && [[ -f "${repo}/PROGRESS.md" ]] &&
+            grep -q '^## Run started' "${repo}/PROGRESS.md"; then
+            printf 'seed-run.sh: PROGRESS.md already records 1 Run(s) and 1 Iteration(s).\n' >&2
+            printf 'Seeding rewrites it. Pass --reseed to discard that record, or seed a fresh checkout.\n' >&2
+            exit 2
+        fi
         printf 'a Plan the Selector seeded\n' > "${repo}/PLAN.md"
-        git -C "${repo}" add PLAN.md
+        printf '# Progress Log\n\nSeeded by seed-run.sh. No Iteration has run yet.\n' \
+            > "${repo}/PROGRESS.md"
+        git -C "${repo}" add PLAN.md PROGRESS.md
         git -C "${repo}" commit --quiet -m "Loop: Seed the Run" || true
         printf 'LOOP_SEED_RESULT=seeded\nLOOP_SEED_CRITERIA=3\n'
         exit "${SEED_EXIT:-0}"
@@ -305,6 +321,26 @@ def box(tmp_path):
                 "${NESTED_CYCLE}"
                 printf 'nested-exit %s\n' "$?"
             } >> "@LOG@" 2>&1
+        fi
+        # The Run's own bookkeeping, committed and pushed to the branch the way
+        # run.sh does it - `commit_bookkeeping "Loop: Run started"`, and then
+        # the proposal's push. A box that left the branch exactly as it found
+        # it is the fake that hid #301: the second dispatch of an issue then
+        # met a Progress Log no Run had ever written to, which is a state a
+        # real retry never meets.
+        #
+        # Only when a Run was actually reported: a box that never connected
+        # starts nothing, so it writes nothing.
+        if grep -q '^LOOP_RUN_ENDED_BY=' "@SUMMARY@"; then
+            rm -rf "@GUEST@"
+            git clone --quiet --branch "$1" "@BARE@" "@GUEST@"
+            {
+                printf '\n## Run started 2026-08-31 00:00:00\n\nTask: %s\n\n' "$2"
+                printf '### Iteration 1\n\nWhat the first attempt tried.\n\n'
+            } >> "@GUEST@/PROGRESS.md"
+            git -C "@GUEST@" -c user.email=box@example.invalid -c user.name="The Box" \
+                commit --quiet -a -m "Loop: Run started"
+            git -C "@GUEST@" push --quiet origin "$1"
         fi
         cat "@SUMMARY@"
         exit "${BOX_EXIT:-0}"

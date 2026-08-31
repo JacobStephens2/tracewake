@@ -227,10 +227,31 @@ MUTATIONS = {
     # A retry resets the branch to the base, discarding what the first attempt
     # committed and proposing an empty diff.
     "retry-discards-the-first-attempt": (DISPATCH, DISPATCH_SUITE,
-        '    if _run(["git", "-C", str(config.work_repo), "rev-parse", "--verify",\n'
-        '             "--quiet", remote_branch],\n'
-        "            timeout=config.command_timeout_seconds).returncode == 0:",
+        "    if remote_has_branch(config, branch):",
         "    if False:",
+    ),
+    # An earlier attempt's Progress Log is left where it is, so Seeding refuses
+    # to overwrite it and every retry of an issue that actually ran dies at
+    # Seeding - which is #301, and is invisible to a suite whose box writes no
+    # Progress Log.
+    "the-previous-progress-log-is-not-moved-aside": (DISPATCH, DISPATCH_SUITE,
+        '    if not re.search(f"^{re.escape(config.run_heading)}", text, re.MULTILINE):\n'
+        "        return None",
+        "    if True:\n"
+        "        return None",
+    ),
+    # It is moved aside but written whole, so a third attempt keeps the second
+    # by discarding the first - the loss the move exists to avoid.
+    "keeping-a-progress-log-overwrites-the-one-before-it": (DISPATCH, DISPATCH_SUITE,
+        '    target.write_text(f"{earlier.rstrip()}\\n\\n{text.strip()}\\n")',
+        '    target.write_text(f"{text.strip()}\\n")',
+    ),
+    # A branch cut from the base inherits and appends to whatever kept log the
+    # base carries, so one file accumulates unrelated issues' Runs for the life
+    # of the repository.
+    "the-kept-log-is-inherited-across-branches": (DISPATCH, DISPATCH_SUITE,
+        "    continuing = remote_has_branch(config, branch) and target.exists()",
+        "    continuing = target.exists()",
     ),
     # The Plan never reaches the box: the branch is seeded here and the Run is
     # started over there against whatever the remote already had.

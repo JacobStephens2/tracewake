@@ -50,6 +50,7 @@ from conftest import (
     SELECTOR,
     _script,
     events,
+    hours_ago_iso,
     issue,
     last,
     one,
@@ -82,7 +83,7 @@ def test_the_plan_is_on_the_remote_before_the_run_starts(db, box):
     The box command reports what it would have fetched, so a push that
     happened after the Run started would be visible as an absence here."""
     box.run(db, [issue(645)])
-    assert "remote-tree PLAN.md README.md" in box.commands()
+    assert "remote-tree PLAN.md PROGRESS.md README.md" in box.commands()
 
 
 def test_the_in_flight_lock_is_held_while_the_run_is_running(db, box):
@@ -208,6 +209,150 @@ def test_a_retry_continues_the_branch_the_first_attempt_left_behind(db, box):
     assert "ITERATION.txt" in box.commands(), (
         "the retry reset the branch and lost the first attempt's commit"
     )
+
+
+BRANCH_645 = "loop/645-the-nightly-sync-script"
+
+
+def _on_branch(box, path, branch=BRANCH_645):
+    """One file as it stands on a remote branch, or "" when it is not there."""
+    return subprocess.run(
+        ["git", "--git-dir", str(box.bare), "show", f"{branch}:{path}"],
+        capture_output=True, text=True,
+    ).stdout
+
+
+def test_a_second_dispatch_within_one_handover_starts_a_run(db, box):
+    """#301. The first attempt's Run committed a Progress Log to the branch,
+    and Seeding refuses to overwrite one. With MAX_ATTEMPTS = 2 that made the
+    retry unreachable: the second dispatch of any issue whose first attempt
+    ran died at Seeding, and the whole retry budget was spent on two
+    dispatches that never started anything."""
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)])
+    assert last(db, "issue.retrying")["attempt"] == 1
+
+    result = box.run(db, [issue(645)])
+    assert result.returncode == 0, result.stderr
+    outcome = last(db, "run.outcome")
+    assert outcome["attempt"] == 2
+    assert outcome["outcome"] == "agent-failed", "the second dispatch reached a Run"
+
+
+def test_a_fresh_handover_of_a_worked_issue_starts_a_run(db, box):
+    """The other shape #301 reaches, and the one tourbot#646 hit: an issue
+    labeled again long after its Run, whose branch is still on the remote.
+    Attempt 1 as far as the budget is concerned, and the same refusal."""
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)])
+
+    # Labeled again just now, so nothing has been dispatched since the
+    # Handover: the budget is untouched and only the branch remembers.
+    result = box.run(db, [issue(645, labeledAt=hours_ago_iso(0))])
+    assert result.returncode == 0, result.stderr
+    assert last(db, "run.outcome")["outcome"] == "agent-failed"
+
+
+def test_a_first_dispatch_off_a_base_that_carries_a_progress_log_starts_a_run(db, box):
+    """The shape tourbot#646 actually hit, and the widest of the three: a Run
+    proposes its Progress Log along with its work, so master carries the last
+    merged Run's log. Every dispatch cut from that base - first attempt, brand
+    new issue, branch that never existed - then met the refusal."""
+    (box.work / "PROGRESS.md").write_text(
+        "# Progress Log\n\n## Run started 2026-08-29 16:51:30\n\n"
+        "Task: acme/widgets#640\n\n### Iteration 1\n\nA Run that was merged.\n"
+    )
+    box.git("add", "PROGRESS.md")
+    box.git("commit", "--quiet", "-m", "Merge a Run's bookkeeping into master")
+    box.git("push", "--quiet", "origin", "master")
+
+    result = box.run(db, [issue(648)])
+    assert result.returncode == 0, result.stderr
+    assert one(db, "run.outcome")["outcome"] == "iteration-cap"
+    assert "A Run that was merged" in _on_branch(
+        box, "PROGRESS-earlier.md", "loop/648-the-nightly-sync-script"
+    )
+
+
+def test_the_earlier_attempts_progress_log_is_kept_on_the_branch(db, box):
+    """The record survives the re-seed. seed-run.sh's refusal exists because
+    the Progress Log is the only account of what a Run did; moving it aside
+    honours that where passing --reseed would have discarded it."""
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)])
+    box.run(db, [issue(645)])
+
+    kept = _on_branch(box, "PROGRESS-earlier.md")
+    assert "What the first attempt tried" in kept, (
+        "the retry discarded the first attempt's Progress Log"
+    )
+    assert kept.count("## Run started") == 1
+    assert _on_branch(box, "PROGRESS.md").count("## Run started") == 1, (
+        "the live Progress Log is the second attempt's alone, seeded fresh"
+    )
+
+
+def test_a_third_attempts_keeping_appends_rather_than_overwrites(db, box):
+    """One file that accumulates. A keeping that wrote whole would preserve
+    the newest attempt by discarding the one before it, which is the loss the
+    move is there to avoid."""
+    branch = BRANCH_645
+    box.git("checkout", "--quiet", "-b", branch)
+    (box.work / "PROGRESS.md").write_text(
+        "# Progress Log\n\n## Run started earlier\n\nWhat attempt one tried.\n"
+    )
+    (box.work / "PROGRESS-earlier.md").write_text(
+        "# Earlier Progress Logs\n\n## Run started long ago\n\nWhat attempt nought tried.\n"
+    )
+    box.git("add", "PROGRESS.md", "PROGRESS-earlier.md")
+    box.git("commit", "--quiet", "-m", "An attempt that ran")
+    box.git("push", "--quiet", "-u", "origin", branch)
+    box.git("checkout", "--quiet", "master")
+
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)])
+
+    kept = _on_branch(box, "PROGRESS-earlier.md")
+    assert "What attempt nought tried" in kept
+    assert "What attempt one tried" in kept
+
+
+def test_a_new_branch_starts_its_kept_log_rather_than_inheriting_one(db, box):
+    """Per branch, not for ever. The kept file is proposed and merged like any
+    other file, so a branch cut from a base that carries one would inherit an
+    unrelated issue's record and append to it - and one file would grow for
+    the life of the repository. What the base carries was merged, so its
+    history is on the base branch either way."""
+    (box.work / "PROGRESS.md").write_text(
+        "# Progress Log\n\n## Run started 2026-08-29 16:51:30\n\nThis issue's Run.\n"
+    )
+    (box.work / "PROGRESS-earlier.md").write_text(
+        "# Earlier Progress Logs\n\n## Run started 2026-08-01 09:00:00\n\n"
+        "Some other issue's attempt, merged long ago.\n"
+    )
+    box.git("add", "PROGRESS.md", "PROGRESS-earlier.md")
+    box.git("commit", "--quiet", "-m", "Two merged Runs' bookkeeping")
+    box.git("push", "--quiet", "origin", "master")
+
+    box.run(db, [issue(645)])
+
+    kept = _on_branch(box, "PROGRESS-earlier.md")
+    assert "This issue's Run" in kept
+    assert "Some other issue's attempt" not in kept, (
+        "the kept log accumulates unrelated issues and never stops growing"
+    )
+
+
+def test_keeping_a_progress_log_is_journaled(db, box):
+    """A file that moved on the Run's branch is not something to do silently:
+    the row is what a reader follows from `dispatch-failed` to why it stopped
+    being one."""
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)])
+    assert last(db, "run.dispatched")["kept_progress"] is None
+
+    box.run(db, [issue(645)])
+    assert last(db, "run.dispatched")["kept_progress"] == "PROGRESS-earlier.md"
 
 
 # --- The loud skip ----------------------------------------------------------
