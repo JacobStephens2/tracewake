@@ -44,7 +44,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from cycle import MAX_ATTEMPTS, NO_PROPOSAL, RUN_FAILURE_BOUNDS
+from cycle import MAX_ATTEMPTS, NO_PROPOSAL, RUN_FAILURE_BOUNDS, outcome_name
 
 # How close to expiry the box's credential has to be before it is worth an
 # email. The subscription login lapses eight hours after a human mints it and
@@ -53,12 +53,17 @@ from cycle import MAX_ATTEMPTS, NO_PROPOSAL, RUN_FAILURE_BOUNDS
 # a credential minted at the start of a working day does not mail at lunchtime.
 _DEFAULT_CREDENTIAL_WARN_HOURS = 2.0
 
-# How stale a row may be and still be mailed. The notifier replays what it
-# missed while it was down (that is what its cursor is for), and without a
-# floor a restart after a week would empty the backlog into the operator's
-# inbox at once. A Run that ended three days ago is not something to go and
-# look at, and thirty messages arriving together is what mutes a channel.
-_DEFAULT_MAX_AGE_HOURS = 24.0
+# How old a row may be and still be mailed on its own. The notifier replays
+# what it missed while it was down (that is what its cursor is for), and
+# without a floor a restart after a week would empty the backlog into the
+# operator's inbox at once, which is what mutes a channel.
+#
+# Seventy-two hours rather than a working day, because the outage this is
+# actually about is a weekend: a notifier that died on Friday evening should
+# still report Saturday's Runs one by one on Monday. What falls past it is
+# summarised in a single message rather than dropped - nothing the Loop was
+# silent about stays silent, which is the whole point of #280.
+_DEFAULT_MAX_AGE_HOURS = 72.0
 
 _DEFAULT_LOOP_URL = "https://lab.etadventures.com/loop"
 
@@ -109,11 +114,12 @@ def for_event(event: dict, *, now: datetime,
 
     `event` is a row as `journal.events` returns it: `id`, `at`, `kind`,
     `payload`.
-    """
-    at = event.get("at")
-    if at is not None and _hours_between(at, now) > config.max_age_hours:
-        return None
 
+    Whether a notice is worth sending is a separate question from whether it
+    is still worth *delivering*, which is `too_old` and the notifier's to ask:
+    a row that is too old to mail one-by-one is still worth counting, and
+    deciding both here would leave the notifier nothing to count.
+    """
     kind = event["kind"]
     payload = event.get("payload") or {}
     if kind == "run.outcome":
@@ -123,6 +129,55 @@ def for_event(event: dict, *, now: datetime,
     if kind == "box.observed":
         return _credential_notice(payload, now, config)
     return None
+
+
+def too_old(event: dict, *, now: datetime, config: NoticeConfig) -> bool:
+    """Whether this row is past the age at which it is mailed on its own.
+
+    The notifier replays what it missed while it was down, so a long outage
+    could otherwise put a week of Runs into one inbox at once - which is what
+    mutes a channel. Rows past the floor are counted into one summary instead
+    of dropped: the spec asked for these events to stop being silent, and
+    trading a silence for a quieter silence would be missing the point.
+    """
+    at = event.get("at")
+    return at is not None and _hours_between(at, now) > config.max_age_hours
+
+
+def backlog_notice(skipped: list[dict], *, config: NoticeConfig) -> Notice:
+    """The one message that stands in for the notices left unsent by age.
+
+    `skipped` is `{"at", "subject"}` per row, oldest first. Counted with its
+    scope rather than as a bare number, because a count with no scope is the
+    thing this repository's counting rules exist to stop.
+    """
+    oldest, newest = skipped[0]["at"], skipped[-1]["at"]
+    count = len(skipped)
+    many = count != 1
+    body = "\n".join([
+        f"{count} Loop {'notices were' if many else 'notice was'} not sent on"
+        f" {'their' if many else 'its'} own, because the",
+        f"Journal {'rows' if many else 'row'} {'they are' if many else 'it is'}"
+        f" about {'are' if many else 'is'} older than the"
+        f" {config.max_age_hours:g}-hour",
+        "floor the notifier sends within. It was down, or newly pointed at an",
+        "older row, for at least that long.",
+        "",
+        (f"They cover Journal rows written between {oldest} and {newest}:"
+         if many else f"It covers the Journal row written at {oldest}:"),
+        "",
+        *(f"  {row['at']}  {row['subject']}" for row in skipped),
+        "",
+        "Nothing is lost - every one of them is a row in the Journal, and the",
+        "board shows the Runs they belong to.",
+        "",
+        f"The Loop's board: {config.loop_url}",
+    ])
+    subject = (
+        f"{count} Loop notices were too old to send one by one" if many else
+        "1 Loop notice was too old to send on its own"
+    )
+    return Notice(subject=subject, body=body, link=config.loop_url)
 
 
 # --- Runs -------------------------------------------------------------------
@@ -137,13 +192,19 @@ def _run_notice(payload: dict, config: NoticeConfig) -> Notice:
     row to pair with every `run.dispatched`). That is what makes this the
     right row to mail off: no Run is missed and none is reported twice.
     """
-    ended_by = payload.get("outcome") or payload.get("ended_by") or "unknown"
+    raw = payload.get("outcome") or payload.get("ended_by") or "unknown"
     proposal = payload.get("proposal")
-    if ended_by == "dispatch-failed":
+    if raw == "dispatch-failed":
         return _dispatch_failure_notice(payload, config)
+    # The row carries the raw bound - it is written before the cycle's routing
+    # step draws this distinction - so the name has to be derived here, with
+    # the cycle's own rule rather than a second one. Without it a Run that
+    # reached its cap and proposed nothing would be mailed as "cut short by
+    # iteration-cap", which is the opposite of what happened.
+    ended_by = outcome_name(raw, proposal)
     if ended_by in RUN_FAILURE_BOUNDS or not proposal:
         return _failed_run_notice(payload, ended_by, config)
-    return _green_run_notice(payload, ended_by, config)
+    return _green_run_notice(payload, config)
 
 
 def _ref(payload: dict) -> str:
@@ -170,8 +231,7 @@ def _run_facts(payload: dict) -> list[str]:
     return lines
 
 
-def _green_run_notice(payload: dict, ended_by: str,
-                      config: NoticeConfig) -> Notice:
+def _green_run_notice(payload: dict, config: NoticeConfig) -> Notice:
     """(0) The Run ended within its bounds and left a Proposal.
 
     GitHub carried this message until 2026-08-31 - ADR 0013's comment on the
@@ -221,7 +281,7 @@ def _failed_run_notice(payload: dict, ended_by: str,
     attempt = payload.get("attempt")
     proposal = payload.get("proposal")
     what = (
-        "reached its iteration cap without proposing anything"
+        "ended within its bounds and left no Proposal"
         if ended_by == NO_PROPOSAL else
         f"was cut short by `{ended_by}`"
     )
@@ -240,13 +300,16 @@ def _failed_run_notice(payload: dict, ended_by: str,
             "",
         ]
     if isinstance(attempt, int):
-        lines.append(f"This was attempt {attempt} of {MAX_ATTEMPTS} since the")
-        lines.append("issue was last handed over. " + (
-            "The budget is spent, so no further Run will be started for it "
-            "until\n`ready-for-agent` is applied again."
+        lines += [
+            f"This was attempt {attempt} of {MAX_ATTEMPTS} since the issue was",
+            "last handed over.",
+        ]
+        lines += (
+            ["The budget is spent, so no further Run will be started for it",
+             "until `ready-for-agent` is applied again."]
             if attempt >= MAX_ATTEMPTS else
-            "A later cycle may pick it up again."
-        ))
+            ["A later cycle may pick it up again."]
+        )
         lines.append("")
     lines.append(f"The Loop's board: {config.loop_url}")
     # Two subjects rather than one, because they are opposite facts about how

@@ -97,37 +97,53 @@ def test_a_run_that_ended_on_a_failure_bound_is_not_green():
 
 
 def test_a_run_that_proposed_nothing_says_so():
+    """The row carries `iteration-cap`, not `no-proposal`: cycle.py writes the
+    raw bound into `run.outcome` and only renames it later, on the issue's own
+    row. A notifier reading the raw bound literally would mail "cut short by
+    iteration-cap" for a Run that was not cut short at all."""
     said = notice("run.outcome", outcome(
-        outcome="no-proposal", proposal=None, proposed="failed",
+        outcome="iteration-cap", proposal=None, proposed="failed",
         notified="no-surface", exit=6,
     ))
-    assert "no Proposal" in said.body
+    assert "without a Proposal" in said.subject
+    assert "cut short" not in said.subject
+    assert "left no Proposal" in said.body
     assert said.link == CONFIG.loop_url
 
 
 def test_a_run_with_no_surface_to_report_on_names_that():
     said = notice("run.outcome", outcome(
-        outcome="no-proposal", proposal=None, notified="no-surface",
+        outcome="iteration-cap", proposal=None, notified="no-surface",
     ))
     assert "no-surface" in said.body
 
 
 def test_a_first_failed_attempt_says_the_retry_budget_is_not_spent():
     said = notice("run.outcome", outcome(
-        outcome="no-proposal", proposal=None, attempt=1,
+        outcome="iteration-cap", proposal=None, attempt=1,
     ))
     assert "attempt 1 of 2" in said.body
 
 
 def test_a_last_failed_attempt_says_the_budget_is_spent():
     said = notice("run.outcome", outcome(
-        outcome="no-proposal", proposal=None, attempt=2,
+        outcome="iteration-cap", proposal=None, attempt=2,
     ))
     assert "attempt 2 of 2" in said.body
     assert "no further run" in said.body.lower()
 
 
 # --- (2) A dispatch or preflight that failed --------------------------------
+
+
+def test_a_dispatch_that_started_no_run_is_not_read_as_a_run_with_no_proposal():
+    """It has no Proposal either, and the two are opposite facts about how far
+    the machinery got: the operator's next command differs."""
+    said = notice("run.outcome", outcome(
+        outcome="dispatch-failed", proposal=None,
+        error="ssh: connect refused",
+    ))
+    assert "Dispatch failed" in said.subject
 
 
 def test_a_dispatch_that_started_no_run_is_a_failure_notice():
@@ -217,13 +233,46 @@ def test_the_kinds_that_are_not_failure_shaped_say_nothing():
         assert notice(kind, payload) is None, kind
 
 
-def test_a_row_older_than_the_max_age_says_nothing():
+# --- The age floor ----------------------------------------------------------
+#
+# Worth sending and still worth delivering one by one are separate questions.
+# A row past the floor keeps its notice - the notifier counts it into one
+# summary - so this asks only the second question.
+
+
+def old_row(hours):
+    return {"id": 41, "at": NOW - timedelta(hours=hours), "kind": "run.outcome",
+            "payload": outcome()}
+
+
+def test_a_row_older_than_the_floor_is_not_sent_on_its_own():
     """A notifier that was down for a week must not empty its backlog into the
-    operator's inbox: a Run that ended three days ago is not something to go
-    and look at, and thirty of them at once is what mutes a channel."""
-    stale = NOW - timedelta(hours=30)
-    assert notice("run.outcome", outcome(), at=stale) is None
+    operator's inbox one message at a time - that is what mutes a channel."""
+    assert notices.too_old(old_row(100), now=NOW, config=CONFIG) is True
 
 
-def test_a_row_inside_the_max_age_still_speaks():
-    assert notice("run.outcome", outcome(), at=NOW - timedelta(hours=2)) is not None
+def test_a_row_inside_the_floor_is_sent_on_its_own():
+    assert notices.too_old(old_row(2), now=NOW, config=CONFIG) is False
+
+
+def test_a_row_past_the_floor_still_has_a_notice_to_summarise():
+    """Dropped and deferred are different: #280 exists to end silences, so
+    what falls past the floor has to still be nameable."""
+    said = notices.for_event(old_row(100), now=NOW, config=CONFIG)
+    assert said is not None
+
+
+def test_the_backlog_summary_counts_with_its_scope():
+    """A count is a number plus a scope (ETA/counting.md): the summary says
+    how many notices and which span of Journal rows they are about."""
+    said = notices.backlog_notice(
+        [
+            {"at": "2026-08-28T09:12:00Z", "subject": "Proposal ready: a#1"},
+            {"at": "2026-08-29T11:00:00Z", "subject": "Selector cycle failed"},
+        ],
+        config=CONFIG,
+    )
+    assert "2 Loop notices" in said.subject
+    assert "2026-08-28T09:12:00Z" in said.body
+    assert "2026-08-29T11:00:00Z" in said.body
+    assert "Selector cycle failed" in said.body

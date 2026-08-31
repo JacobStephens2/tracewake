@@ -775,11 +775,32 @@ MUTATIONS = {
         "if hours > config.credential_warn_hours:",
         "if False:",
     ),
-    # The staleness floor goes, so a notifier that was down for a week empties
-    # its whole backlog into the operator's inbox on its next start.
+    # The age floor goes, so a notifier that was down for a week empties its
+    # whole backlog into the operator's inbox on its next start.
     "stale-rows-are-mailed": (NOTICES, NOTICES_SUITE,
-        "if at is not None and _hours_between(at, now) > config.max_age_hours:",
-        "if False:",
+        "    return at is not None and _hours_between(at, now) > config.max_age_hours",
+        "    return False",
+    ),
+    # The name a Run's result is CALLED stops being derived, so a Run that
+    # reached its cap and proposed nothing is mailed as "cut short by
+    # iteration-cap" - the opposite of what happened, and a different story
+    # from the one the issue's own row tells.
+    "the-run-s-result-is-not-renamed": (NOTICES, NOTICES_SUITE,
+        "    ended_by = outcome_name(raw, proposal)",
+        "    ended_by = raw",
+    ),
+    # One credential stops collapsing to one line, so a backlog holding a day
+    # of box observations lists the same warning thirty times - the noise the
+    # floor exists to prevent, one level down.
+    "the-summary-lists-one-thing-many-times": (NOTIFIER, NOTIFIER_SUITE,
+        "            notice.dedupe_key and row_seen[\"key\"] == notice.dedupe_key",
+        "            False",
+    ),
+    # The backlog past the floor is dropped instead of summarised, which turns
+    # a reported failure back into the silence #280 exists to end.
+    "the-deferred-backlog-is-dropped": (NOTIFIER, NOTIFIER_SUITE,
+        "        if deferred is not None and not any(",
+        "        if False and not any(",
     ),
     # The first start replays the Journal instead of covering what happens
     # next: every Run there has ever been, mailed at once, on install day.
@@ -796,8 +817,8 @@ MUTATIONS = {
     # Delivery stops being deduplicated at all, so the credential key is
     # written and never read.
     "the-once-only-record-is-not-read": (NOTIFIER, NOTIFIER_SUITE,
-        "if notice.dedupe_key and not dry_run and already_sent(conn, notice.dedupe_key):",
-        "if False:",
+        "            else already_sent(conn, notice.dedupe_key)",
+        "            else False",
     ),
     # A dry run writes the cursor, so reading what the Journal would have said
     # silently consumes it and the real notices are never sent.

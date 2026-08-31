@@ -171,15 +171,53 @@ def test_rows_that_are_worth_nothing_still_move_the_cursor(db, notifier):
     assert cursor(db) == quiet
 
 
-def test_a_row_older_than_the_max_age_is_passed_over_rather_than_mailed(
+def test_rows_past_the_age_floor_are_summarised_rather_than_sent_one_by_one(
         db, notifier):
+    """The floor stops a week of downtime emptying into an inbox. It must not
+    turn a reported failure back into a silence, so one message stands for the
+    lot and the Journal rows it covers are named in it."""
     notifier.run()
-    stale = append(db, "run.outcome", OUTCOME, hours_ago=48)
+    append(db, "run.outcome", OUTCOME, hours_ago=200)
+    stale = append(db, "cycle.failed", {"cycle": 7, "error": "boom"},
+                   hours_ago=190)
 
     notifier.run()
 
-    assert notifier.subjects() == []
+    assert notifier.subjects() == ["2 Loop notices were too old to send one by one"]
+    assert "Selector cycle failed" in notifier.delivered()
+    assert "Proposal ready: acme/widgets#312" in notifier.delivered()
     assert cursor(db) == stale
+
+
+def test_one_credential_is_one_line_in_the_summary_however_often_it_was_seen(
+        db, notifier):
+    """A day of backlog is a day of box observations. Listing every one of
+    them would be the noise the floor exists to prevent, one level down."""
+    notifier.run()
+    for _ in range(4):
+        append(db, "box.observed", box(1), hours_ago=200)
+
+    notifier.run()
+
+    assert notifier.subjects() == ["1 Loop notice was too old to send on its own"]
+
+
+def test_a_backlog_of_one_stale_row_still_gets_its_summary(db, notifier):
+    notifier.run()
+    append(db, "run.outcome", OUTCOME, hours_ago=200)
+
+    notifier.run()
+
+    assert notifier.subjects() == ["1 Loop notice was too old to send on its own"]
+
+
+def test_a_row_inside_the_floor_is_still_sent_on_its_own(db, notifier):
+    notifier.run()
+    append(db, "run.outcome", OUTCOME, hours_ago=48)
+
+    notifier.run()
+
+    assert notifier.subjects() == ["Proposal ready: acme/widgets#312"]
 
 
 # --- Delivery that failed ---------------------------------------------------

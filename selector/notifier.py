@@ -1,11 +1,9 @@
 """The Selector's email notifier: the Journal, read as it is written (#280).
 
-ADR 0018 put the Loop's notification surface here rather than on the box. The
-box's whole external reach stays "the repository" - no mail host on its egress
-allowlist, no fifth credential in its inventory - and this VM already holds
-mail infrastructure for the status dashboard. What it notifies about is every
-event ADR 0018 names; `notices.py` is where the choice of event and the
-wording live, and this file is the process around it.
+ADR 0018 put the Loop's notification surface here rather than on the box, and
+holds the argument for it. What it notifies about is every event that ADR
+names; `notices.py` is where the choice of event and the wording live, and
+this file is the process around it.
 
 Since the "include your own updates" account setting went back off
 (2026-08-31), this is the **single** email channel for the Loop. A green Run
@@ -26,9 +24,11 @@ once, and a first start takes it to the newest row without sending. The
 Journal holds every Run there has ever been, and installing a notifier is not
 a reason to mail all of them.
 
-**Nothing stale.** A notifier that was down for a week replays what it missed,
-and `notices.NoticeConfig.max_age_hours` is the floor under that: rows older
-than it are passed over, with the cursor still advancing past them.
+**Nothing at once, and nothing dropped.** A notifier that was down for days
+replays what it missed, and `notices.NoticeConfig.max_age_hours` is the floor
+under that: rows older than it are collected into one summary message rather
+than mailed one by one - and rather than discarded, which would trade a
+silence for a quieter silence.
 
 The mail surface is one substitutable command, the convention every other
 outward reach here follows (ADR 0004):
@@ -79,15 +79,18 @@ class NotifierConfig:
     def from_env(cls) -> "NotifierConfig":
         env = os.environ.get
         return cls(
-            notify_command=env(
-                "SELECTOR_NOTIFY_COMMAND",
-                str(HERE / "notify-sources" / "email.sh"),
+            # `or` rather than a default argument, the idiom the rest of the
+            # Selector reads env with: an override set to the empty string is
+            # an unset override, not a command named "" that cannot be run.
+            notify_command=(
+                env("SELECTOR_NOTIFY_COMMAND")
+                or str(HERE / "notify-sources" / "email.sh")
             ),
             # An SMTP call that answers in seconds or not at all. Long enough
             # for a slow relay, short enough that a wedged one cannot hold the
             # notifier off the rest of its backlog for the rest of the day.
             command_timeout_seconds=int(
-                env("SELECTOR_NOTIFY_TIMEOUT_SECONDS", "120")
+                env("SELECTOR_NOTIFY_TIMEOUT_SECONDS") or 120
             ),
             notices=notices.NoticeConfig.from_env(),
         )
@@ -152,7 +155,8 @@ def send(config: NotifierConfig, notice: notices.Notice) -> None:
 
 
 def deliver(conn: psycopg.Connection, config: NotifierConfig, row: dict,
-            *, dry_run: bool, previewed: set | None = None) -> bool:
+            *, dry_run: bool, previewed: set | None = None,
+            deferred: list | None = None) -> bool:
     """Decide, send, and record. Returns whether anything was sent.
 
     The order is send, then record the dedupe key, then let the caller move
@@ -164,11 +168,34 @@ def deliver(conn: psycopg.Connection, config: NotifierConfig, row: dict,
     warning once per cycle observed, which is the behaviour the real table
     exists to prevent - a preview that lies about what would be sent is worse
     than no preview.
+
+    `deferred` collects the notices whose rows are past the age floor. They
+    are not sent one by one and they are not dropped either: the caller mails
+    one summary for the lot, because #280 exists to end silences and a
+    silently discarded backlog would be a new one.
     """
-    notice = notices.for_event(
-        row, now=datetime.now(timezone.utc), config=config.notices
-    )
+    now = datetime.now(timezone.utc)
+    notice = notices.for_event(row, now=now, config=config.notices)
     if notice is None:
+        return False
+    if notices.too_old(row, now=now, config=config.notices):
+        # One-per-thing applies inside the summary too, and by the list rather
+        # than by `selector.notifier_sent`: a backlog holding a day of box
+        # observations is thirty copies of one credential warning, and a
+        # summary that listed all thirty would be the noise the floor exists
+        # to prevent, one level down. Not recorded as sent, because it has not
+        # been - once the replay catches up, a credential still expiring is
+        # still worth its own message.
+        if deferred is not None and not any(
+            notice.dedupe_key and row_seen["key"] == notice.dedupe_key
+            for row_seen in deferred
+        ):
+            deferred.append({
+                "at": _stamp(row["at"]),
+                "subject": notice.subject,
+                "key": notice.dedupe_key,
+            })
+        log.info("row %s: past the age floor, summarised instead", row["id"])
         return False
     if notice.dedupe_key:
         seen = (
@@ -207,6 +234,26 @@ async def serve(conn: psycopg.Connection, config: NotifierConfig, *,
     target: int | None = None
     sent = 0
     previewed: set = set()
+    # Rows past the age floor, held until the backlog is drained so that one
+    # message can stand for all of them. Flushed at every exit from the loop -
+    # including the transition to live, which is the ordinary case after a
+    # restart - because a summary that waited for the process to end would
+    # never be sent by a daemon.
+    deferred: list = []
+
+    def flush() -> int:
+        if not deferred:
+            return sent
+        notice = notices.backlog_notice(deferred, config=config.notices)
+        deferred.clear()
+        if dry_run:
+            print(f"--- would send: {notice.subject}")
+            print(notice.body)
+            print("--- end ---")
+        else:
+            send(config, notice)
+            log.info("sent the backlog summary: %r", notice.subject)
+        return sent + 1
 
     async for what, payload in journal.listen(after=start):
         if what == "ready":
@@ -223,6 +270,9 @@ async def serve(conn: psycopg.Connection, config: NotifierConfig, *,
             target = newest
             continue
         if what == "silence":
+            # Nothing arrived for a keepalive, so whatever was replayed is
+            # replayed: the backlog is drained and its summary is due.
+            sent = flush()
             if once:
                 return sent
             continue
@@ -234,13 +284,30 @@ async def serve(conn: psycopg.Connection, config: NotifierConfig, *,
             # could not read would stop delivering every later one.
             log.warning("row %s named by NOTIFY is not there", payload["id"])
             continue
-        if deliver(conn, config, row, dry_run=dry_run, previewed=previewed):
+        if deliver(conn, config, row, dry_run=dry_run, previewed=previewed,
+                   deferred=deferred):
             sent += 1
         if not dry_run:
             set_cursor(conn, row["id"])
-        if once and target is not None and row["id"] >= target:
-            return sent
-    return sent
+        if row["id"] >= (target or 0):
+            # The replay has caught up with where the Journal was when the
+            # LISTEN was established. Everything after this arrives one row at
+            # a time as it happens, so the summary is due now rather than
+            # whenever the next quiet moment is.
+            sent = flush()
+            if once:
+                return sent
+    return flush()
+
+
+def _stamp(at) -> str:
+    """A row's time, in UTC, the way the box writes instants. The summary is
+    read against the Journal, and two spellings of one timestamp would make
+    that harder than it needs to be."""
+    try:
+        return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (AttributeError, ValueError):
+        return str(at)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -255,10 +322,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--since", type=int, default=None, metavar="ID",
-        help="read from this Journal row rather than from the stored cursor "
-             "(for --dry-run: what the Journal would have said)",
+        help="with --dry-run: read from this Journal row rather than from the "
+             "stored cursor, to see what the Journal would have said",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # A reading tool, and only that. Without --dry-run it would re-send every
+    # notice from that row forward AND move the cursor, so a hand `--since 0`
+    # meant as "let me look" would mail the whole Journal at the operator. A
+    # deliberate re-send is an UPDATE of selector.notifier by hand, which is
+    # explicit about being one.
+    if args.since is not None and not args.dry_run:
+        parser.error("--since is for reading: pass --dry-run with it")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

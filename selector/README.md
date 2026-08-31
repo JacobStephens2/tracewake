@@ -7,8 +7,10 @@ What exists is **a cycle that picks, dispatches and does the bookkeeping**
 (issues #153, #154, #155) on top of the **Selector Journal** (ADR 0015, issue
 #152), **run unattended by a timer** (#156), with the **Iteration watcher**
 (#157) reading the box's Progress Log while a Run is in flight so that the
-activity is visible while it happens, and a **pause flag** on `/loop` that
-stops new Dispatches without stopping the timer (#161).
+activity is visible while it happens, a **pause flag** on `/loop` that
+stops new Dispatches without stopping the timer (#161), and an **email
+notifier** (#280, ADR 0018) that reads the Journal as it is written and is
+the Loop's only channel to an operator who is not looking at the page.
 
 ## The cycle
 
@@ -742,13 +744,19 @@ from - and mails on four kinds of row:
 | a dispatch or preflight failed | `run.outcome` (`dispatch-failed`), `cycle.failed` | a `systemctl --failed` nobody is at a keyboard to read |
 | the box's credential is close to expiring | `box.observed` | Runs cancelled by a login that lapsed overnight |
 
-Green and not-green are decided with `cycle.py`'s own `RUN_FAILURE_BOUNDS`
-rather than a second predicate, for the reason `board.py` imports
-`eligibility`: a Run cut short by its Contract can still be holding a Proposal,
-and an email calling that green would make the Selector say two things about
-one Run. What the *checks* make of the Proposal is not in the mail at all - CI
-is read afterwards, by the routing step, and the label the issue ends up
-carrying is what says whether it passed.
+Green and not-green are decided with `cycle.py`'s own `RUN_FAILURE_BOUNDS` and
+`outcome_name` rather than a second predicate, for the reason `board.py`
+imports `eligibility`. Two things would go wrong without that. A Run cut short
+by its Contract can still be holding a Proposal, and an email calling that
+green would make the Selector say two things about one Run. And a `run.outcome`
+row carries the *raw* bound - the rename to `no-proposal` happens later, on the
+issue's own row - so a Run that reached its cap with nothing to show would
+otherwise be mailed as "cut short by iteration-cap", which is the opposite of
+what happened.
+
+What the *checks* make of the Proposal is not in the mail at all - CI is read
+afterwards, by the routing step, and the label the issue ends up carrying is
+what says whether it passed.
 
 Three pieces of state, each with a failure behind it:
 
@@ -765,6 +773,12 @@ Three pieces of state, each with a failure behind it:
   thirty minutes, so without it one expiry would mail four times on its way
   out. It is keyed on the expiry instant, so renewing is what makes the next
   warning sendable.
+
+A notifier that was down for days replays what it missed, and rows past
+`SELECTOR_NOTIFY_MAX_AGE_HOURS` (72 hours - a weekend of downtime still gets
+reported Run by Run) are collected into **one** summary message naming every
+notice and the span of Journal rows it covers, rather than dropped. #280 exists
+to end silences, and a quietly discarded backlog would be a new one.
 
 A refused delivery exits the process non-zero with the cursor untouched, so
 `Restart=always` *is* the retry, and ten failures in ten minutes ends the unit
