@@ -264,7 +264,19 @@ async def serve(conn: psycopg.Connection, config: NotifierConfig, *,
                 if not dry_run:
                     set_cursor(conn, newest)
                 log.info("first start: covering the Journal from row %s", newest)
-                return sent
+                # Carry on listening. Returning here is what the live unit did
+                # on 2026-08-31: it set the cursor, logged this line and
+                # exited 0 on the very start that was supposed to begin
+                # watching. `Restart=always` brought it back ten seconds later
+                # with a cursor set, so it recovered - but a safety net
+                # catching a bug is not the bug being absent, and the same
+                # code under `Restart=on-failure` would exit 0 forever and
+                # watch nothing. `--once` still stops here: there is no
+                # backlog to drain by definition, and nothing to wait for.
+                if once:
+                    return sent
+                start = target = newest
+                continue
             if once and start >= newest:
                 return sent
             target = newest
