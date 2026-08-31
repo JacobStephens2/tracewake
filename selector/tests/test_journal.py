@@ -50,7 +50,10 @@ def test_writer_surface_is_append_only():
         # they hold a LISTEN and re-read the rows a notification names, and
         # they write nothing - a Journal that could be changed by something
         # watching it would not be a Journal.
-        "events", "iterations_seen", "contract_seen", "run_window",
+        # `event` is the notifier's read (#280): one row by id, because a
+        # NOTIFY names a row and what the notifier decides with is its whole
+        # payload.
+        "events", "event", "iterations_seen", "contract_seen", "run_window",
         "keepalive_seconds", "listen", "_drain", "_since",
     }
 

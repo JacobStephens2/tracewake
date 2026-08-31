@@ -28,6 +28,12 @@ scripts/selector-cycle.service
 scripts/selector-cycle.timer
 scripts/with-orchestration-env.sh
 
+# And how the operator is told about it: the notifier's unit (ADR 0018). It
+# runs unattended for the same reason the cycle does, and it is the only thing
+# that speaks when a Run fails - an unreviewed edit here is an alarm that goes
+# quiet without anything failing to say so.
+scripts/selector-notifier.service
+
 # Deliberately NOT here:
 #
 #   lab/webapp            the window. It renders the Journal and owns one

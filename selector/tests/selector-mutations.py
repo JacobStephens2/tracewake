@@ -64,6 +64,17 @@ LIVENESS_SUITE = "../../webapp/tests/test_liveness.py"
 HISTORY_REGION = "../../webapp/templates/_history_live.html"
 HISTORY_SUITE = "../../webapp/tests/test_run_history.py"
 
+# The notifier (#280, ADR 0018). Two targets and two suites, because it is two
+# things: which rows are worth an email and what they say (`notices.py`,
+# driven directly), and the delivery around that - the cursor, the once-only
+# record, the failure that loses nothing (`notifier.py`, driven as a process
+# against a real Journal). A mutation of the second checked against the first
+# would be checked by tests that never open a database.
+NOTICES = "notices.py"
+NOTIFIER = "notifier.py"
+NOTICES_SUITE = "tests/test_notices.py"
+NOTIFIER_SUITE = "tests/test_notifier.py"
+
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
@@ -740,6 +751,88 @@ MUTATIONS = {
         '        [[ ${head_sha} =~ ^[0-9a-f]{40}$ ]] ||\n'
         '            die "gh gave no head commit for the Proposal ${task_repo}: ${number}"\n',
         "",
+    ),
+
+    # --- The notifier (#280) ------------------------------------------------
+
+    # A Run cut short by its Contract is mailed as though it had finished
+    # cleanly, so the one message the operator gets about a failed Run says it
+    # succeeded - and the Journal and the mail disagree about one Run.
+    "a-failed-run-is-mailed-as-green": (NOTICES, NOTICES_SUITE,
+        "if ended_by in RUN_FAILURE_BOUNDS or not proposal:",
+        "if False:",
+    ),
+    # The credential warning stops being about a credential and becomes about
+    # a row: the box is observed every thirty minutes, so the same expiry
+    # mails on every cycle until somebody renews it or mutes the channel.
+    "the-credential-warning-is-not-deduplicated": (NOTICES, NOTICES_SUITE,
+        'dedupe_key=f"credential:{raw}",',
+        "dedupe_key=None,",
+    ),
+    # An expiry hours away alarms as though it were minutes away, which is the
+    # same channel-muting failure reached from the other side.
+    "every-credential-is-close-to-expiry": (NOTICES, NOTICES_SUITE,
+        "if hours > config.credential_warn_hours:",
+        "if False:",
+    ),
+    # The age floor goes, so a notifier that was down for a week empties its
+    # whole backlog into the operator's inbox on its next start.
+    "stale-rows-are-mailed": (NOTICES, NOTICES_SUITE,
+        "    return at is not None and _hours_between(at, now) > config.max_age_hours",
+        "    return False",
+    ),
+    # The name a Run's result is CALLED stops being derived, so a Run that
+    # reached its cap and proposed nothing is mailed as "cut short by
+    # iteration-cap" - the opposite of what happened, and a different story
+    # from the one the issue's own row tells.
+    "the-run-s-result-is-not-renamed": (NOTICES, NOTICES_SUITE,
+        "    ended_by = outcome_name(raw, proposal)",
+        "    ended_by = raw",
+    ),
+    # One credential stops collapsing to one line, so a backlog holding a day
+    # of box observations lists the same warning thirty times - the noise the
+    # floor exists to prevent, one level down.
+    "the-summary-lists-one-thing-many-times": (NOTIFIER, NOTIFIER_SUITE,
+        "            notice.dedupe_key and row_seen[\"key\"] == notice.dedupe_key",
+        "            False",
+    ),
+    # The backlog past the floor is dropped instead of summarised, which turns
+    # a reported failure back into the silence #280 exists to end.
+    "the-deferred-backlog-is-dropped": (NOTIFIER, NOTIFIER_SUITE,
+        "        if deferred is not None and not any(",
+        "        if False and not any(",
+    ),
+    # The first start replays the Journal instead of covering what happens
+    # next: every Run there has ever been, mailed at once, on install day.
+    "a-first-start-replays-everything": (NOTIFIER, NOTIFIER_SUITE,
+        "if start is None:\n"
+        "                # The first start. Cover what happens next, not what already\n"
+        "                # happened - see the module docstring.\n"
+        "                if not dry_run:\n"
+        "                    set_cursor(conn, newest)",
+        "if False:\n"
+        "                if not dry_run:\n"
+        "                    set_cursor(conn, newest)",
+    ),
+    # Delivery stops being deduplicated at all, so the credential key is
+    # written and never read.
+    "the-once-only-record-is-not-read": (NOTIFIER, NOTIFIER_SUITE,
+        "            else already_sent(conn, notice.dedupe_key)",
+        "            else False",
+    ),
+    # A dry run writes the cursor, so reading what the Journal would have said
+    # silently consumes it and the real notices are never sent.
+    "a-dry-run-consumes-the-backlog": (NOTIFIER, NOTIFIER_SUITE,
+        "        if not dry_run:\n"
+        '            set_cursor(conn, row["id"])',
+        "        if True:\n"
+        '            set_cursor(conn, row["id"])',
+    ),
+    # The mail command's exit code is ignored, so a relay that refused is
+    # recorded as delivered and the notice is lost.
+    "a-refused-delivery-counts-as-sent": (NOTIFIER, NOTIFIER_SUITE,
+        "if completed.returncode != 0:",
+        "if False:",
     ),
 }
 

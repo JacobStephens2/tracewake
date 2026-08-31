@@ -7,8 +7,10 @@ What exists is **a cycle that picks, dispatches and does the bookkeeping**
 (issues #153, #154, #155) on top of the **Selector Journal** (ADR 0015, issue
 #152), **run unattended by a timer** (#156), with the **Iteration watcher**
 (#157) reading the box's Progress Log while a Run is in flight so that the
-activity is visible while it happens, and a **pause flag** on `/loop` that
-stops new Dispatches without stopping the timer (#161).
+activity is visible while it happens, a **pause flag** on `/loop` that
+stops new Dispatches without stopping the timer (#161), and an **email
+notifier** (#280, ADR 0018) that reads the Journal as it is written and is
+the Loop's only channel to an operator who is not looking at the page.
 
 ## The cycle
 
@@ -716,6 +718,91 @@ issue actually carries. Bookkeeping the tracker refused is journaled as
 pages (story 31). The `run.outcome` row is written before any of this, so a
 label swap GitHub rejected never erases the Journal's record that a Run ran.
 
+## Telling the operator (#280)
+
+ADR 0013 left the Loop with one notification surface: a finished Run comments
+on its own Proposal, and GitHub's email carries it. ADR 0018 added the second,
+and put it **here rather than on the box** - the box's whole external reach
+stays "the repository", with no mail host on its egress allowlist and no fifth
+credential in its inventory (ADR 0009), while this VM already holds mail
+infrastructure and its credentials for the status dashboard.
+
+Since 2026-08-31 it is not a second surface but the **only** one. GitHub's
+"include your own updates" setting, which ADR 0013's email depended on, is
+account-global: turned on, it delivered every agent session's activity
+everywhere, so it is off for good. The comment still goes on the Proposal as
+the on-PR record; the Selector is what mails.
+
+`selector-notifier.service` holds a LISTEN on `journal_events` - the channel
+`schema.sql`'s insert trigger already NOTIFYs, the same one `/loop` pushes
+from - and mails on four kinds of row:
+
+| event | the row | what it replaces |
+| --- | --- | --- |
+| a Run finished with a Proposal | `run.outcome` | GitHub's email off ADR 0013's comment |
+| a Run ended without one | `run.outcome` | silence: no Proposal, so nothing to comment on |
+| a dispatch or preflight failed | `run.outcome` (`dispatch-failed`), `cycle.failed` | a `systemctl --failed` nobody is at a keyboard to read |
+| the box's credential is close to expiring | `box.observed` | Runs cancelled by a login that lapsed overnight |
+
+Green and not-green are decided with `cycle.py`'s own `RUN_FAILURE_BOUNDS` and
+`outcome_name` rather than a second predicate, for the reason `board.py`
+imports `eligibility`. Two things would go wrong without that. A Run cut short
+by its Contract can still be holding a Proposal, and an email calling that
+green would make the Selector say two things about one Run. And a `run.outcome`
+row carries the *raw* bound - the rename to `no-proposal` happens later, on the
+issue's own row - so a Run that reached its cap with nothing to show would
+otherwise be mailed as "cut short by iteration-cap", which is the opposite of
+what happened.
+
+What the *checks* make of the Proposal is not in the mail at all - CI is read
+afterwards, by the routing step, and the label the issue ends up carrying is
+what says whether it passed.
+
+Three pieces of state, each with a failure behind it:
+
+- **The cursor** (`selector.notifier.notified_through`) is written after the
+  mail surface accepted a notice, so a restart resumes where *delivery* got
+  to. Deliberately at-least-once: a process killed between the send and the
+  write repeats a message, which is a smaller failure than losing the only
+  notice a silent Run ever produces.
+- **`notified_through` starts NULL**, and a first start takes it to the newest
+  row and sends nothing. Zero would mean "replay the Journal", which on
+  install day is every Run there has ever been, in one inbox.
+- **`selector.notifier_sent`** holds the notices that are about a thing rather
+  than about a row. The credential is the only one: the box is observed every
+  thirty minutes, so without it one expiry would mail four times on its way
+  out. It is keyed on the expiry instant, so renewing is what makes the next
+  warning sendable.
+
+A notifier that was down for days replays what it missed, and rows past
+`SELECTOR_NOTIFY_MAX_AGE_HOURS` (72 hours - a weekend of downtime still gets
+reported Run by Run) are collected into **one** summary message naming every
+notice and the span of Journal rows it covers, rather than dropped. #280 exists
+to end silences, and a quietly discarded backlog would be a new one.
+
+A refused delivery exits the process non-zero with the cursor untouched, so
+`Restart=always` *is* the retry, and ten failures in ten minutes ends the unit
+in `failed` - where its `OnFailure` hands the alarm to the dashboard's own
+notifier, a different process with a different copy of the credentials. That
+is the one alert on this box that must not go through this one.
+
+Reading what it would have said, which changes nothing and writes nothing:
+
+```bash
+.venv/bin/python notifier.py --once --dry-run --since 0
+```
+
+Deliberately silent, so that each silence is a decision rather than an
+oversight: `issue.route-failed` and `issue.return-failed` (the tracker
+refusing bookkeeping already exits the cycle non-zero, and the unit's own
+alert names it), `box.unreachable` (the dispatch behind it pages on its own -
+one outage, one page), and every row `/loop` exists to show. Mail is for what
+happens while nobody is watching.
+
+Notifying on a *stuck* Run and on board-state transitions are both out until
+their prerequisites exist - stuck-detection, and the derived Needs-you facet.
+Detection precedes notification, or the mail is a guess.
+
 ## Files
 
 - `cycle.py` - the cycle above: Eligibility, ordering, caps, and the
@@ -767,6 +854,18 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   puts the box's checkout on the Run's branch and runs `run.sh --propose
   --notify`, printing what the Run reported. It holds no credential of its
   own and starts nothing else.
+- `notices.py` - which Journal rows are worth an email and what each one says
+  (#280). Pure: a row in, a `Notice` or `None` out, no database and no clock
+  of its own, so the wording and the choice of event are drivable directly.
+- `notifier.py` - the process around it: the LISTEN, the cursor that makes
+  delivery survive a restart, the once-per-thing record, and the failure that
+  loses nothing. `--once` drains and exits; `--dry-run --since <id>` prints
+  what the Journal would have said and writes nothing.
+- `notify-sources/email.sh` - the default `SELECTOR_NOTIFY_COMMAND`: one
+  email, subject on argv and body on stdin, handed to the status dashboard's
+  own mailer in the dashboard's venv. Email only, never SMS (ADR 0018). It
+  holds no credential of its own - the dashboard's already-rendered runtime
+  env is where the relay's are.
 - `schema.sql` - the pause flag and the append-only `journal.events` table in
   local Postgres. NOTIFY on insert and the append-only guard both live in
   schema triggers, so every append path behaves the same, including a hand
@@ -803,6 +902,12 @@ label swap GitHub rejected never erases the Journal's record that a Run ran.
   collapsed from a minute to a fraction of a second. Each snapshot is held
   still for several polls, so "exactly the new records, never a duplicate" is
   an assertion rather than a coincidence of timing.
+  `test_notices.py` and `test_notifier.py` are #280's two levels: which rows
+  are worth an email and what they say, driven directly with no database and
+  a fixed clock, and then the delivery around that - a first start that mails
+  nothing, a row delivered exactly once across a restart, a refused delivery
+  that loses nothing - driven as the real process against a real Journal with
+  the mail surface scripted.
   `test_guardrail.py` and `test_protection_source.py` are #165's two levels:
   what the cycle journals about the write protection, against a scripted
   guardrail command, and what that command itself reports - `gh` faked on
@@ -926,7 +1031,16 @@ lands one row.
 
 Three roles in `site.yml`, in this order: `selector_journal` (the Postgres
 state below), `selector_cycle` (the venv the timer's unit execs, correctly
-labelled), and `timers` (which installs and enables the timer itself).
+labelled), and `timers` (which installs and enables the timer itself, plus
+`selector-notifier.service`).
+
+The notifier is enabled unconditionally, unlike the cycle timer beside it,
+which is gated on `selector_dispatch_enabled`. It only reads the Journal and
+sends mail: with dispatch off there are no Runs to report and it sits idle,
+and with dispatch on it is the only thing that says a Run failed. Gating it
+would mean the switch that turns unattended work on also has to remember to
+turn the alarm on. It runs from this working tree, so a code change lands with
+`sudo systemctl restart selector-notifier`.
 
 `ansible/roles/selector_journal` owns the Selector state: PostgreSQL 16,
 socket-only (`listen_addresses = ''`), a peer-auth `conductor` role with

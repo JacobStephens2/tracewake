@@ -959,6 +959,24 @@ def _hand_over(
     return route.name
 
 
+def outcome_name(ended_by: str, proposal: str | None) -> str:
+    """What a Run's result is CALLED, which is not always the bound that ended
+    it: a Run that reached its cap and proposed nothing gets its own name,
+    because "iteration-cap with a Proposal" and "iteration-cap with nothing to
+    show" are opposite results and a record that called them the same thing
+    could not be read back.
+
+    A function rather than an expression inside `_route` because the notifier
+    needs the same answer (#280). The `run.outcome` row carries the raw bound -
+    it is written before this distinction is drawn - so a reader deciding what
+    to call a Run has to draw it again, and two spellings of one naming rule
+    would let the email and the issue disagree about what happened.
+    """
+    if ended_by in RUN_FAILURE_BOUNDS:
+        return ended_by
+    return ended_by if proposal else NO_PROPOSAL
+
+
 def _route(
     conn: psycopg.Connection,
     cycle_id: int,
@@ -979,14 +997,7 @@ def _route(
     proposal = outcome.get("proposal")
     ended_by = outcome["outcome"]
     failure = ended_by in RUN_FAILURE_BOUNDS or not proposal
-    # What the Journal records this attempt as, which is not always the bound
-    # that ended it: a Run that reached its cap and proposed nothing gets its
-    # own name, because "iteration-cap with a Proposal" and "iteration-cap
-    # with nothing to show" are opposite results and a Journal that called
-    # them the same thing could not be read back.
-    journaled_as = ended_by if ended_by in RUN_FAILURE_BOUNDS else (
-        ended_by if proposal else NO_PROPOSAL
-    )
+    journaled_as = outcome_name(ended_by, proposal)
 
     payload = {
         "cycle": cycle_id,
