@@ -53,6 +53,15 @@ made. What was not established is that anybody read it.
 Setting it is a stage of `wizards/loop-github-credentials.sh`, which is where
 the rest of the operator's GitHub-side setup already is.
 
+*Amended 2026-08-31.* The setting was turned on, and failed the other way: it
+is account-global, every agent session on the orchestration VM acts as the
+operator, so it delivered every issue, PR and comment any of them made
+anywhere - noise, structurally, not by volume. It is now deliberately **off**,
+and staying off. Email moved to the Selector's side (ADR 0018, which now
+carries the green-Proposal event too); the comment this ADR describes remains,
+as the on-PR record rather than the carrier. The wizard stage that set the
+checkbox is retired with it.
+
 ## What it does not reach
 
 A Run whose proposal failed has nothing to comment on, and there is no second

@@ -635,26 +635,24 @@ pause "Press Enter for the last stage - how a finished Run reaches you."
 stage "So a finished Run reaches you"
 say "A Run started with --notify comments on the draft pull request it opened,"
 say "which is the only surface the box can reach without a new host on the"
-say "egress allowlist and a fifth credential (ADR 0013)."
+say "egress allowlist and a fifth credential (ADR 0013). That comment is the"
+say "on-PR record; the email that tells you about it comes from the Selector"
+say "on the orchestration VM (ADR 0018, amended 2026-08-31)."
 printf '\n'
-say "The token you made above is yours, so that comment is authored by you - and"
-say "GitHub does not notify you about your own activity unless you ask it to."
-say "Without this setting the comment is written and nothing arrives."
+say "Do NOT turn on GitHub's 'your own updates' email setting for this. It was"
+say "this stage's instruction once, and it flooded: the setting is"
+say "account-global, every agent session acts as you, so it delivered all of"
+say "their activity everywhere - not just the Loop's proposals. It is"
+say "deliberately off (ADR 0013, amended)."
 printf '\n'
-step "Open https://github.com/settings/notifications"
-step "Under email notification preferences, turn ON:"
-step "  'Your own updates, such as when you open, comment on, or close an"
-step "   issue or pull request'"
-step "Make sure Participating notifications include Email, and that the address"
-step "  they go to is one you read when you are away from the box."
-printf '\n'
-note "Not probed, and it cannot be: this is an account setting, and a"
-note "repository-scoped token cannot read it. The failure mode is silence - the"
-note "Run reports NOTIFIED=sent truthfully, because the comment was made."
+step "Nothing to click here. Confirm the Selector's notifier is deployed"
+step "  (orchestration#280) - until it is, a finished Run is visible on"
+step "  lab.etadventures.com/loop and on the proposal itself, but no email"
+step "  arrives."
 printf '\n'
 
-if ! confirm "Is 'your own updates' turned on for this account?"; then
-    SKIPPED+=("turn on your own updates at github.com/settings/notifications - until then --notify writes a comment you are not told about")
+if ! confirm "Is the Selector's email notifier live (orchestration#280 closed)?"; then
+    SKIPPED+=("the Selector email notifier (orchestration#280) - until it ships, watch lab.etadventures.com/loop; no email announces a finished Run")
 fi
 
 finish

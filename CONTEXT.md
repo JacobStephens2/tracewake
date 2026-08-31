@@ -250,10 +250,12 @@ and so is inside the invariant rather than an exception to it.
 _Avoid_: PR-per-iteration, output contract
 
 **Run Notification**:
-How a finished Run reaches the operator who walked away from it: a comment on the
-proposal it opened, naming the bound that ended the Run, the exit code and the
-proposal. Per Run rather than per box, and unable to change what the Run did -
-it moves no exit code and is written into no Progress Log (ADR 0013).
+How a finished Run reaches the operator who walked away from it: the Selector's
+email, sent off the Journal's outcome row, with the Run's comment on its own
+proposal as the on-PR record - naming the bound that ended the Run, the exit
+code and the proposal. Per Run rather than per box, and unable to change what
+the Run did - it moves no exit code and is written into no Progress Log
+(ADR 0013; carrier moved to the Selector by ADR 0018, amended).
 _Avoid_: alert, page, report
 
 **Agent Adapter**:

@@ -22,9 +22,23 @@ GitHub still carries that email.
 
 Scope, settled with the operator (2026-08-31): email only, no paging - nothing
 in the Loop is urgent the way a down production host is, and the dashboard's
-SMS path is one call away if that changes. The events are (1) a Run that ended
-without a green proposal, (2) a Selector dispatch or preflight failure, and
-(3) an approaching credential expiry. Notifying on a *stuck* Run waits for
+SMS path is one call away if that changes. The events are (0) a Run that
+finished with a green Proposal, (1) a Run that ended without one, (2) a
+Selector dispatch or preflight failure, and (3) an approaching credential
+expiry.
+
+*Widened later the same day.* Event (0) was originally excluded - GitHub's
+own email carried the green case, contingent on the "include your own
+updates" account setting ADR 0013 depended on. Turned on, that setting
+flooded: it is account-global and every agent session acts as the operator,
+so it delivered all of their activity everywhere. It is now off for good
+(ADR 0013, amended), and the Selector is the **single** email channel for the
+Loop. The `run.outcome` row already carries the proposal URL, so the green
+email costs one more kind-match in the same LISTEN consumer. Accepted
+trade: success emails now depend on the Selector being up, where GitHub's
+did not - the timer cell and /loop page already alarm on a dead Selector,
+and a missed success email is the low-stakes miss (the proposal itself
+waits on GitHub regardless). ADR 0013's comment stays, as the on-PR record. Notifying on a *stuck* Run waits for
 stuck-detection to exist (research/2026-08-31-stuck-run-detection-spend-caps-
 timeouts.md), and notifying on board-state transitions waits for the derived
 board facets - detection precedes notification, or the mail is a guess.
