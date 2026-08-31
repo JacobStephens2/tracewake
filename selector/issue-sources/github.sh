@@ -41,7 +41,34 @@ number="${3:?usage: github.sh <owner/repo> <comment|relabel> <number> ...}"
 
 [[ ${task_repo} =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
     die "repository must be owner/name, got ${task_repo}"
-[[ ${number} =~ ^[1-9][0-9]*$ ]] || die "issue must be a number, got ${number}"
+
+# The two writing actions take an issue NUMBER, and nothing else: the number is
+# the whole of what says which issue is commented on or relabeled.
+#
+# `checks` is the exception, and it is deliberate rather than lax. cycle.py
+# holds a Proposal's URL - the box reports it, nothing parses a number out of
+# it - so demanding a number here would break the one path that runs after
+# every successful Run. It did, on the first unattended dispatch: the Run
+# worked, and the cycle died reading the checks of the Proposal it had just
+# produced (tourbot #712, 2026-08-31).
+#
+# A URL is still checked twice over. It must be a pull request URL, because
+# `gh pr checks` would happily take a branch name and answer about a Proposal
+# other than the one this Run produced; and it must name THIS repository,
+# because `gh pr checks <url>` resolves the repository from the URL and
+# ignores --repo, so a foreign URL is not a mismatch gh would catch - it is a
+# different Proposal, answered as though it were this one.
+if [[ ${action} == checks ]]; then
+    if [[ ${number} =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then
+        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||
+            die "the proposal ${number} is not in ${task_repo}"
+    elif [[ ! ${number} =~ ^[1-9][0-9]*$ ]]; then
+        die "proposal must be a pull request URL or a number, got ${number}"
+    fi
+else
+    [[ ${number} =~ ^[1-9][0-9]*$ ]] ||
+        die "issue must be a number, got ${number}"
+fi
 
 command -v gh >/dev/null 2>&1 ||
     die "gh is not installed - the Selector writes to the tracker as the operator, off the Loop's box"
