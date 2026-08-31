@@ -137,6 +137,23 @@ def events(conn: psycopg.Connection, limit: int = 200,
     ]
 
 
+def event(conn: psycopg.Connection, event_id: int) -> dict | None:
+    """One row by id, or None if there is no such row.
+
+    The notifier's read (#280): a NOTIFY names a row by id only - its payload
+    is capped at 8000 bytes - and what the notifier decides with is the whole
+    payload. `events(since=...)` would answer with every row from there
+    onward, which is a different question.
+    """
+    row = conn.execute(
+        "SELECT id, at, kind, payload FROM journal.events WHERE id = %s",
+        (event_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"id": row[0], "at": row[1], "kind": row[2], "payload": row[3]}
+
+
 def run_window(conn: psycopg.Connection, runs: int) -> tuple[int | None, int]:
     """Where the most recent `runs` Runs start, and how many are older.
 

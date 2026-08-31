@@ -18,6 +18,35 @@ INSERT INTO selector.control (singleton)
 VALUES (true)
 ON CONFLICT (singleton) DO NOTHING;
 
+-- How far the notifier (#280, ADR 0018) has read the Journal, and which
+-- one-per-thing notices it has already sent. Control state like the pause
+-- flag, and outside journal.events for the same reason: the Journal records
+-- what happened, and this records how far one reader of it has got.
+--
+-- `notified_through` is NULL until the notifier has run once, and that is the
+-- whole of its first-start rule: a fresh notifier takes the cursor to the
+-- newest row and covers what happens NEXT. Zero would mean "replay the
+-- Journal from the beginning", which on the day this is installed is every
+-- Run there has ever been, all at once, into one inbox.
+CREATE TABLE IF NOT EXISTS selector.notifier (
+    singleton        boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    notified_through bigint
+);
+
+INSERT INTO selector.notifier (singleton)
+VALUES (true)
+ON CONFLICT (singleton) DO NOTHING;
+
+-- Notices that are about a thing rather than about a row: the box's
+-- credential is observed once every cycle, so without this the same expiry
+-- would mail four times on its way out. Keyed on what the notice is about
+-- (the expiry instant), so renewing the credential is what makes the next
+-- warning sendable.
+CREATE TABLE IF NOT EXISTS selector.notifier_sent (
+    dedupe_key text PRIMARY KEY,
+    at         timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE SCHEMA IF NOT EXISTS journal;
 
 CREATE TABLE IF NOT EXISTS journal.events (

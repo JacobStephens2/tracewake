@@ -1,0 +1,70 @@
+[Unit]
+Description=Email the operator about the Loop's Runs, failures and credential expiry
+Documentation=https://github.com/Educational-Travel-Adventures/orchestration/blob/master/lab/single-user-factory/selector/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+# The Journal is the whole input. Without it there is nothing to listen to and
+# nowhere to record what has been delivered, so this must not run at all.
+Requires=postgresql.service
+
+# In [Unit], NOT [Service] - systemd silently ignores OnFailure= in [Service]
+# and the unit otherwise looks perfectly configured. Verify rather than trust:
+#     systemctl show selector-notifier.service -p OnFailure --value
+#
+# What this catches is the notifier's own failure, and it is the one alert on
+# this box that must not go through the notifier: a relay that refused is
+# exactly the case where the Loop's own mail is not arriving. The dashboard's
+# unit-failure alert is a different process, a different venv and a different
+# copy of the credentials, which is as independent as one mail relay allows.
+OnFailure=notify-unit-failure@%n.service
+
+# In [Unit] as well, and for the same class of reason: these two moved out of
+# [Service] in systemd 229 and are ignored there. They are what stops a
+# permanently misconfigured relay from restarting every ten seconds forever in
+# silence - after ten failures inside ten minutes the unit ends in `failed`,
+# which is what the OnFailure above is waiting for.
+#     systemctl show selector-notifier.service -p StartLimitBurst --value
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=conductor
+Group=conductor
+WorkingDirectory=/srv/orchestration/lab/single-user-factory/selector
+
+# Deliberately NOT through with-orchestration-env.sh, which is the one thing
+# this unit does differently from selector-cycle.service. Two reasons, and the
+# second is the load-bearing one:
+#
+#   - it needs no 1Password token of its own. The only secret in play is the
+#     SMTP credential, and the mail command it execs (notify-sources/email.sh)
+#     runs the dashboard's own mailer, which reads the dashboard's own
+#     already-rendered runtime env.
+#   - it is a long-lived process. `op inject` resolves once per launch, so a
+#     daemon started through the wrapper would hold whatever the vault said
+#     weeks ago; the env files below are re-read on every restart, and the
+#     dashboard's render-env.sh is what keeps them current.
+#
+# Both files are optional-marked ("-"): a missing one yields a clear "SMTP
+# config missing" from the mailer rather than a unit that refuses to start.
+EnvironmentFile=-/etc/orchestration/status-dashboard.env
+EnvironmentFile=-/run/status-dashboard/env.runtime
+
+# The interpreter is named explicitly rather than relying on the shebang: the
+# fcontext rule that labels this repository's scripts bin_t only matches
+# `scripts/*.sh`, so notifier.py lands as var_t and systemd refuses to exec it
+# (203/EXEC, no traceback). The venv's bin/ is labelled bin_t by
+# ansible/roles/selinux_labels, and passing the script as an argument means it
+# only has to be readable.
+ExecStart=/srv/orchestration/lab/single-user-factory/selector/.venv/bin/python \
+    /srv/orchestration/lab/single-user-factory/selector/notifier.py
+
+# A refused delivery exits non-zero on purpose, with the cursor left where it
+# was, so restarting IS the retry. Ten seconds because the usual cause is a
+# relay that is briefly unhappy; the start limit in [Unit] is what bounds it.
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
