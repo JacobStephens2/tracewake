@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import events
-from events import MAX_ATTEMPTS, NO_PROPOSAL, RUN_FAILURE_BOUNDS, outcome_name
+from events import MAX_ATTEMPTS, NO_PROPOSAL, is_failure, outcome_name
 
 # How close to expiry the box's credential has to be before it is worth an
 # email. The subscription login lapses eight hours after a human mints it and
@@ -204,7 +204,7 @@ def _run_notice(record: events.RunOutcome, config: NoticeConfig) -> Notice:
     # proposed nothing would be mailed as "cut short by iteration-cap", which
     # is the opposite of what happened.
     ended_by = outcome_name(raw, proposal)
-    if ended_by in RUN_FAILURE_BOUNDS or not proposal:
+    if is_failure(ended_by, proposal):
         return _failed_run_notice(record, ended_by, config)
     return _green_run_notice(record, config)
 

@@ -237,25 +237,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'ended_by', 'dispatch-failed',
         'error', 'ssh: connect to host loop.etadventures.com port 22: no route to host'));
 
--- 6. A cycle that picked nothing, because a Run is in flight.
-INSERT INTO journal.events (at, kind, payload) VALUES
-    (now() - interval '35 minutes', 'cycle.started',
-     jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
-        'dry_run', true))
-    RETURNING id INTO cycle_id;
-
-INSERT INTO journal.events (at, kind, payload) VALUES
-    (now() - interval '35 minutes' + interval '2 seconds', 'cycle.finished',
-     jsonb_build_object('cycle', cycle_id, 'considered', 3,
-        'eligible', jsonb_build_array(661, 663), 'picked', NULL,
-        'skipped', jsonb_build_object('attempts-exhausted', 1),
-        'halted', 'run-in-flight', 'in_flight', true,
-        'dispatched_in_window', 3, 'daily_cap', 4,
-        'returned', jsonb_build_array(), 'dry_run', true));
-
--- 7. The Run in flight: dispatched, no outcome. This is also the Selector's
---    own in-flight lock, which is why the cycle above picked nothing. The
+-- 6. The Run in flight: dispatched, no outcome. This is also the Selector's
+--    own in-flight lock - the next cycle stands halted on it (case 7). The
 --    watcher's rows ride with it: the Contract read once, and an Iteration
 --    per poll - the only sign of life a Run gives off before it ends.
 INSERT INTO journal.events (at, kind, payload) VALUES
@@ -320,6 +303,25 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'agent_exit', 0, 'exit_note', NULL, 'turn_bound', 100,
         'noop', true, 'head_before', '9e1d4c72ab05',
         'head_after', '9e1d4c72ab05', 'promise', NULL, 'dirty', false));
+
+-- 7. A cycle that picked nothing, because the Run above is in flight. Timed
+--    after that Run's dispatch, so the history the fixture tells is
+--    consistent: the lock exists before a cycle halts on it.
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '28 minutes', 'cycle.started',
+     jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
+        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'dry_run', true))
+    RETURNING id INTO cycle_id;
+
+INSERT INTO journal.events (at, kind, payload) VALUES
+    (now() - interval '28 minutes' + interval '2 seconds', 'cycle.finished',
+     jsonb_build_object('cycle', cycle_id, 'considered', 3,
+        'eligible', jsonb_build_array(661, 663), 'picked', NULL,
+        'skipped', jsonb_build_object('attempts-exhausted', 1),
+        'halted', 'run-in-flight', 'in_flight', true,
+        'dispatched_in_window', 3, 'daily_cap', 4,
+        'returned', jsonb_build_array(), 'dry_run', true));
 
 -- 8. A cycle that failed outright: the tracker could not be read, so there
 --    was no queue to reason about.

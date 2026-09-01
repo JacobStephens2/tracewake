@@ -120,7 +120,6 @@ def test_the_runs_stdout_summary_is_captured_into_the_journal(db, box):
     box.run(db, [issue(645)])
     outcome = one(db, "run.outcome")
     assert outcome["ended_by"] == "iteration-cap"
-    assert outcome["ended_by"] == "iteration-cap"
     assert outcome["exit"] == 0
     assert outcome["iterations"] == 5
     assert outcome["faults"] == "none"

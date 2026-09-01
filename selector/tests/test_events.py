@@ -104,6 +104,24 @@ def test_the_route_names_and_the_kinds_derived_from_them():
     assert events.ROUTE_NAMES == ("retrying", "awaiting-review", "given-up",
                                   "handed-to-human")
     assert events.route_kind("awaiting-review") == "issue.awaiting-review"
+    # The kind -> name map is the same derivation, made once: the reader and
+    # the page both import it rather than re-deriving their own copies.
+    assert events.ROUTE_KIND_NAMES["issue.given-up"] == "given-up"
+    assert set(events.ROUTE_KIND_NAMES.values()) == set(events.ROUTE_NAMES)
+
+
+def test_a_failed_dispatch_keeps_its_own_name():
+    # The naming rule is total over the whole ended_by axis: the sentinel is
+    # not a Run that ran, so it must never come back as "no-proposal".
+    assert events.outcome_name(events.DISPATCH_FAILED, None) == \
+        events.DISPATCH_FAILED
+
+
+def test_the_failure_predicate_is_spelled_once_and_total():
+    assert events.is_failure("run-clock", PROPOSAL)
+    assert events.is_failure("iteration-cap", None)
+    assert not events.is_failure("iteration-cap", PROPOSAL)
+    assert events.is_failure(events.NO_PROPOSAL, None)
 
 
 def test_the_checks_vocabulary_is_closed_and_none_is_not_red():

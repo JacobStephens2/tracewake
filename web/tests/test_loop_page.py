@@ -432,6 +432,25 @@ def test_a_run_whose_checks_never_ran_is_not_called_red(db):
     assert "No check ran" in runs
 
 
+def test_a_route_row_with_no_outcome_falls_back_to_the_bound(db):
+    """Hand appends are legitimate and readers are total over thin rows, so a
+    route row that carries no `outcome` must not pin the card's outcome to
+    None - the run.outcome row's bound stands in, as it did before the
+    vocabulary landed."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _ended(conn, cycle)
+        journal.append(
+            conn, "issue.handed-to-human",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "label": "ready-for-human", "checks": "red", "failing": []},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert ">None<" not in runs
+    assert "iteration-cap" in runs
+
+
 def test_a_run_waiting_on_a_retry_says_so(db):
     """A retry has no label swap, so the card has to say why an issue with a
     failed Run is still in the agent queue."""

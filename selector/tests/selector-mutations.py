@@ -308,9 +308,11 @@ MUTATIONS = {
     ),
     # A Run that proposed nothing is treated as one that did, so the Selector
     # reads checks for a Proposal that does not exist.
-    "no-proposal-treated-as-a-proposal": (CYCLE, OUTCOMES_SUITE,
-        "failure = ended_by in RUN_FAILURE_BOUNDS or not proposal",
-        "failure = ended_by in RUN_FAILURE_BOUNDS",
+    # The predicate is spelled once now, in the vocabulary, so this breaks it
+    # there - and the router's suite must still notice.
+    "no-proposal-treated-as-a-proposal": (EVENTS, OUTCOMES_SUITE,
+        "return ended_by in RUN_FAILURE_BOUNDS or not proposal",
+        "return ended_by in RUN_FAILURE_BOUNDS",
     ),
     # The retry budget is never spent on failures, so a Run that fails every
     # time is retried forever and the operator is never told.
@@ -802,7 +804,7 @@ MUTATIONS = {
     # cleanly, so the one message the operator gets about a failed Run says it
     # succeeded - and the Journal and the mail disagree about one Run.
     "a-failed-run-is-mailed-as-green": (NOTICES, NOTICES_SUITE,
-        "if ended_by in RUN_FAILURE_BOUNDS or not proposal:",
+        "if is_failure(ended_by, proposal):",
         "if False:",
     ),
     # The credential warning stops being about a credential and becomes about

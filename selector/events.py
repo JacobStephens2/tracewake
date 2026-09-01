@@ -53,10 +53,30 @@ ROUTE_NAMES = ("retrying", "awaiting-review", "given-up", "handed-to-human")
 # this vocabulary exists to prevent.
 CHECK_STATES = ("green", "red", "pending", "none")
 
+# The sentinel on the ended_by axis for a box that never started a Run. A Run
+# that ended names its Bound; a dispatch that failed names this instead, and
+# the two are told apart exactly as dispatch.py tells them apart - by whether
+# the box reported LOOP_RUN_ENDED_BY at all.
+DISPATCH_FAILED = "dispatch-failed"
+
 
 def route_kind(name: str) -> str:
     """The event kind a route's row is journaled under."""
     return f"issue.{name}"
+
+
+# The kind -> name map, derived once: `route_record` reads it per row and the
+# page imports it rather than deriving its own copy, so there is exactly one
+# spelling of which kinds are routes.
+ROUTE_KIND_NAMES = {route_kind(name): name for name in ROUTE_NAMES}
+
+
+def is_failure(ended_by, proposal) -> bool:
+    """The failure predicate, spelled once (#280): the Contract cut the Run
+    short, or it left nothing to review. Total over both the raw bound and
+    the derived name, so the router (which holds the raw bound) and the
+    notifier (which holds the derived name) read the same rule."""
+    return ended_by in RUN_FAILURE_BOUNDS or not proposal
 
 
 def outcome_name(ended_by: str, proposal: str | None) -> str:
@@ -70,8 +90,12 @@ def outcome_name(ended_by: str, proposal: str | None) -> str:
     the same answer (#280): the `run.outcome` row carries the raw bound - it
     is written before this distinction is drawn - and every reader deciding
     what to call a Run draws it again through this function.
+
+    Total over the whole ended_by axis: a dispatch that started no Run keeps
+    its sentinel rather than being misnamed "no-proposal", which is a claim
+    about a Run that ran.
     """
-    if ended_by in RUN_FAILURE_BOUNDS:
+    if ended_by == DISPATCH_FAILED or ended_by in RUN_FAILURE_BOUNDS:
         return ended_by
     return ended_by if proposal else NO_PROPOSAL
 
@@ -79,12 +103,6 @@ def outcome_name(ended_by: str, proposal: str | None) -> str:
 # --- The kinds and their constructors ---------------------------------------
 
 RUN_OUTCOME = "run.outcome"
-
-# The sentinel on the ended_by axis for a box that never started a Run. A Run
-# that ended names its Bound; a dispatch that failed names this instead, and
-# the two are told apart exactly as dispatch.py tells them apart - by whether
-# the box reported LOOP_RUN_ENDED_BY at all.
-DISPATCH_FAILED = "dispatch-failed"
 
 
 def run_outcome(*, cycle, issue, title, url, task_ref, attempt, branch,
@@ -776,8 +794,7 @@ class RouteRow:
 
 
 def route_record(row) -> RouteRow:
-    kinds = {route_kind(name): name for name in ROUTE_NAMES}
-    name = kinds.get(row.get("kind"))
+    name = ROUTE_KIND_NAMES.get(row.get("kind"))
     if name is None:
         raise ValueError(
             f"a route reader was handed a {row.get('kind')!r} row"

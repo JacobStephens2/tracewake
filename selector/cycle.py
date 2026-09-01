@@ -73,6 +73,7 @@ from events import (  # noqa: E402
     MAX_ATTEMPTS,
     NO_PROPOSAL,
     RUN_FAILURE_BOUNDS,
+    is_failure,
     outcome_name,
 )
 
@@ -981,7 +982,7 @@ def _route(
     number = pick["number"]
     proposal = outcome.get("proposal")
     ended_by = outcome["ended_by"]
-    failure = ended_by in RUN_FAILURE_BOUNDS or not proposal
+    failure = is_failure(ended_by, proposal)
     journaled_as = outcome_name(ended_by, proposal)
 
     base = dict(

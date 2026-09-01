@@ -298,7 +298,7 @@ def _cycles(rows: list[dict]) -> list[dict]:
 # constructors. The names also reach the page as CSS classes
 # (`badge-awaiting-review`); the badge-pin test in test_loop_page.py is what
 # keeps a rename from quietly unstyling a card.
-ROUTE_NAMES = {events.route_kind(name): name for name in events.ROUTE_NAMES}
+ROUTE_NAMES = dict(events.ROUTE_KIND_NAMES)
 ROUTE_KINDS = set(ROUTE_NAMES)
 
 # Every kind a Run card is built from, so the membership test is one lookup
@@ -342,13 +342,17 @@ def _runs(rows: list[dict]) -> list[dict]:
                 label=routed.label,
                 failing=routed.failing,
                 checks=routed.checks,
-                # The route's own reading of how the Run ended: a Run that hit
-                # its cap and proposed nothing is `no-proposal` here while
-                # `run.outcome` carries the bound, and the card says the thing
-                # the operator was told on the issue. Rows arrive newest
-                # first, so this lands before the outcome row's fallback.
-                outcome=routed.outcome,
             )
+            # The route's own reading of how the Run ended: a Run that hit
+            # its cap and proposed nothing is `no-proposal` here while
+            # `run.outcome` carries the bound, and the card says the thing
+            # the operator was told on the issue. Rows arrive newest first,
+            # so this lands before the outcome row's fallback - and only when
+            # the route actually carries a reading, because a thin route row
+            # (a hand append; readers are total over those) must not pin the
+            # card's outcome to nothing.
+            if routed.outcome is not None:
+                card["outcome"] = routed.outcome
         elif kind == events.RUN_ITERATION:
             # The watcher's rows (#157): what the Run is doing, while it
             # does it. Named for what they are rather than folded into the
@@ -608,6 +612,7 @@ def _guardrail(rows: list[dict]) -> dict | None:
         ref_head=record.ref_head,
         rules=record.rules,
         paths=record.paths,
+        unreviewed=record.unreviewed,
         detail=record.detail,
         stale=card["age"] > GUARDRAIL_MAX_AGE,
     )
