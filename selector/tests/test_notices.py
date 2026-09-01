@@ -182,6 +182,13 @@ def in_hours(hours):
     return (NOW + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def in_hours_offset(hours):
+    """The same instant `in_hours` names, spelled `+01:00` rather than `Z` -
+    what a differently-configured box would report."""
+    at = (NOW + timedelta(hours=hours)).astimezone(timezone(timedelta(hours=1)))
+    return at.isoformat()
+
+
 def test_a_credential_with_hours_left_says_nothing():
     assert notice("box.observed", box(in_hours(6))) is None
 
@@ -203,6 +210,26 @@ def test_the_credential_notice_is_keyed_on_the_instant_it_is_about():
     thirty minutes and the same expiry would otherwise mail four times before
     it arrived."""
     said = notice("box.observed", box(in_hours(1)))
+    assert said.dedupe_key == "credential:" + in_hours(1)
+
+
+def test_two_spellings_of_one_expiry_are_one_credential():
+    """#304. The key is the instant, not the box's spelling of it: an adapter
+    that starts reporting `+01:00` where it used to report `Z` is reporting
+    the same credential, and a key that changed with the spelling would mail
+    the same warning a second time."""
+    zulu = notice("box.observed", box(in_hours(1)))
+    offset = notice("box.observed", box(in_hours_offset(1)))
+    assert offset is not None
+    assert offset.dedupe_key == zulu.dedupe_key
+
+
+def test_a_sub_second_expiry_keys_the_same_as_its_whole_second():
+    """The box prints whole seconds; a fractional one is the same credential
+    and not a second warning. Held by the key's format rather than by a
+    truncation of its own - which is what this pins, against a later
+    `isoformat()` that would let the fraction back in."""
+    said = notice("box.observed", box(in_hours(1).replace("Z", ".472Z")))
     assert said.dedupe_key == "credential:" + in_hours(1)
 
 

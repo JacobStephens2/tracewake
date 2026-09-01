@@ -97,7 +97,8 @@ class Notice:
     `dedupe_key` is how a notice says "this is about a thing, not about a
     row". The credential is the only one that needs it - the box is observed
     every cycle, so the same expiry would otherwise mail four times on its way
-    out - and it is keyed on the expiry instant, so renewing the credential is
+    out - and it is keyed on the expiry instant rather than on the box's
+    spelling of it (`_credential_key`, #304), so renewing the credential is
     what makes the next warning sendable again. `None` means every occurrence
     is its own event, which is true of Runs.
     """
@@ -428,8 +429,34 @@ def _credential_notice(payload: dict, now: datetime,
         subject=f"The Loop box's credential {headline}",
         body=body,
         link=config.loop_url,
-        dedupe_key=f"credential:{raw}",
+        dedupe_key=_credential_key(expires_at),
     )
+
+
+def _credential_key(expires_at: datetime) -> str:
+    """The dedupe key for one credential: the expiry INSTANT, not the box's
+    spelling of it.
+
+    Decided in #304. The key used to be the raw string the box reported, and
+    two observations of one credential collapsed only while the box spelled
+    the expiry identically every time - true today, because the value is
+    stored and echoed verbatim, and silently false the day an adapter
+    re-derives it, reports `+00:00` instead of `Z`, or gains a fractional
+    second. The failure mode was quiet in the worst way: not a crash but a
+    second copy of a warning `selector.notifier_sent` exists to send once.
+
+    Normalising to UTC whole seconds keeps the key BYTE-IDENTICAL for every
+    box spelling it `2026-08-30T01:13:44Z` today, so the rows already in
+    `selector.notifier_sent` still match and nobody is mailed twice by this
+    change landing.
+
+    The format is whole seconds, which is also what drops the fraction a
+    `01:13:44.472Z` would carry: the box prints seconds, and two credentials
+    expiring inside one second is not a thing that happens. Keep it - reaching
+    for `isoformat()` here would make a fractional expiry its own credential.
+    """
+    utc = expires_at.astimezone(timezone.utc)
+    return "credential:" + utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # --- Instants ---------------------------------------------------------------

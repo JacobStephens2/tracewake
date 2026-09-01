@@ -227,10 +227,31 @@ MUTATIONS = {
     # A retry resets the branch to the base, discarding what the first attempt
     # committed and proposing an empty diff.
     "retry-discards-the-first-attempt": (DISPATCH, DISPATCH_SUITE,
-        '    if _run(["git", "-C", str(config.work_repo), "rev-parse", "--verify",\n'
-        '             "--quiet", remote_branch],\n'
-        "            timeout=config.command_timeout_seconds).returncode == 0:",
+        "    if remote_has_branch(config, branch):",
         "    if False:",
+    ),
+    # An earlier attempt's Progress Log is left where it is, so Seeding refuses
+    # to overwrite it and every retry of an issue that actually ran dies at
+    # Seeding - which is #301, and is invisible to a suite whose box writes no
+    # Progress Log.
+    "the-previous-progress-log-is-not-moved-aside": (DISPATCH, DISPATCH_SUITE,
+        '    if not re.search(f"^{re.escape(config.run_heading)}", text, re.MULTILINE):\n'
+        "        return None",
+        "    if True:\n"
+        "        return None",
+    ),
+    # It is moved aside but written whole, so a third attempt keeps the second
+    # by discarding the first - the loss the move exists to avoid.
+    "keeping-a-progress-log-overwrites-the-one-before-it": (DISPATCH, DISPATCH_SUITE,
+        '    target.write_text(f"{earlier.rstrip()}\\n\\n{text.strip()}\\n")',
+        '    target.write_text(f"{text.strip()}\\n")',
+    ),
+    # A branch cut from the base inherits and appends to whatever kept log the
+    # base carries, so one file accumulates unrelated issues' Runs for the life
+    # of the repository.
+    "the-kept-log-is-inherited-across-branches": (DISPATCH, DISPATCH_SUITE,
+        "    continuing = remote_has_branch(config, branch) and target.exists()",
+        "    continuing = target.exists()",
     ),
     # The Plan never reaches the box: the branch is seeded here and the Run is
     # started over there against whatever the remote already had.
@@ -766,8 +787,16 @@ MUTATIONS = {
     # a row: the box is observed every thirty minutes, so the same expiry
     # mails on every cycle until somebody renews it or mutes the channel.
     "the-credential-warning-is-not-deduplicated": (NOTICES, NOTICES_SUITE,
-        'dedupe_key=f"credential:{raw}",',
+        "dedupe_key=_credential_key(expires_at),",
         "dedupe_key=None,",
+    ),
+    # The key goes back to being the box's SPELLING of the expiry rather than
+    # the instant (#304), so an adapter that reports `+01:00` where it used to
+    # report `Z` - the same credential, said differently - is a new key, and
+    # the warning that was already sent is sent again.
+    "the-credential-key-is-a-spelling-not-an-instant": (NOTICES, NOTICES_SUITE,
+        "    utc = expires_at.astimezone(timezone.utc)",
+        "    utc = expires_at",
     ),
     # An expiry hours away alarms as though it were minutes away, which is the
     # same channel-muting failure reached from the other side.

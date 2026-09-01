@@ -42,6 +42,10 @@ _Avoid_: PRD, prd.json, fix_plan.md, spec
 The append-only record of what each Iteration did, what it decided and why, and
 what is blocked. Initialized by Seeding and appended to from then on.
 Session-scoped, deleted when the Run's work ends; not permanent documentation.
+A second Run on the same branch gets a fresh one: the Selector moves the
+previous Run's into `PROGRESS-earlier.md` before Seeding, because Seeding
+refuses to overwrite a log that records a Run and that record is the only
+account of what the Run did (#301).
 _Avoid_: progress.txt, changelog, journal
 
 **Seeding**:

@@ -743,6 +743,11 @@ def _dispatch_pick(
     }
     try:
         branch = dispatch.prepare_branch(dispatch_config, number, pick["area"])
+        # Both before the dispatch is journaled, because neither has reached
+        # anything outside this VM yet: the branch is a checkout and the
+        # keeping is a commit that is pushed with the Plan. A failure here is
+        # a cycle that failed with nothing dispatched, not a Run that broke.
+        kept = dispatch.keep_previous_progress(dispatch_config, branch)
     except dispatch.DispatchFailed as exc:
         # Nothing has been dispatched, so nothing holds the lock and nothing
         # is journaled as a dispatch. The cycle still fails loudly.
@@ -755,7 +760,15 @@ def _dispatch_pick(
     journal.append(
         conn,
         "run.dispatched",
-        {**outcome, "area": pick.get("area"), "check": pick.get("check")},
+        {
+            **outcome,
+            "area": pick.get("area"),
+            "check": pick.get("check"),
+            # Null on a first dispatch, and the path on a retry that had an
+            # earlier attempt's Progress Log to move aside. A file that moved
+            # on the Run's branch is not something to do silently.
+            "kept_progress": kept,
+        },
     )
     try:
         seeded = dispatch.seed(

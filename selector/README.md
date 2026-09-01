@@ -79,6 +79,8 @@ decision downstream, but it does not become a work source (ADR 0015).
 | `SELECTOR_WORK_REMOTE` | `origin` | |
 | `SELECTOR_BRANCH_PREFIX` | `loop/` | |
 | `SELECTOR_SEED_COMMAND` | `../loop/seed-run.sh` | the Loop's own seed step |
+| `LOOP_PROGRESS_LOG_PATH` | `PROGRESS.md` | the Progress Log kept aside before Seeding |
+| `LOOP_RUN_HEADING` | `## Run started` | what marks a Progress Log as recording a Run |
 | `SELECTOR_BOX_COMMAND` | `box-sources/ssh.sh` | the box, and the Run on it |
 | `SELECTOR_ISSUE_COMMAND` | `issue-sources/github.sh` | comments and label swaps |
 | `SELECTOR_COMMAND_TIMEOUT_SECONDS` | `300` | git, Seeding, tracker writes |
@@ -91,6 +93,12 @@ decision downstream, but it does not become a work source (ADR 0015).
 | `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
 | `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |
 | `SELECTOR_SSE_KEEPALIVE_SECONDS` | `20` | how long an open `/loop` stream may say nothing before a keepalive |
+
+The last two are deliberately the **Loop's** names rather than `SELECTOR_*`
+ones. `contract.sh` declares both because `seed-run.sh` and `run.sh` have to
+agree about them, and the Selector is now the third reader: one that spelled
+either out would quietly stop finding the Progress Log it is supposed to keep,
+and meet Seeding's refusal on the other side of that silence.
 
 Two timeouts because the two waits are nothing like each other: everything
 except the Run should answer in seconds, and giving a comment or a fetch the
@@ -122,7 +130,11 @@ Five steps, in this order, all of them through substitutable commands:
 1. **The branch.** `git fetch`, then `loop/<number>-<owning-area>` from the
    base branch - or from the branch itself when the remote already has one,
    so a retry continues what the first attempt committed instead of resetting
-   it away.
+   it away. A branch a previous attempt actually ran on carries that attempt's
+   `PROGRESS.md`, and Seeding refuses to overwrite one; it is appended to
+   `PROGRESS-earlier.md` and committed here, so step 2 meets a branch with no
+   live Progress Log on it and the record it would have discarded is still on
+   the branch and still in the Proposal (#301).
 2. **Seeding.** The Loop's own `seed-run.sh`, unchanged, with `--area` and
    `--check` taken from the issue's sections. It still runs HERE rather than
    on the box: ADR 0010's enforcement is that the box's token holds no Issues
@@ -142,7 +154,10 @@ Five steps, in this order, all of them through substitutable commands:
 `run.dispatched` is journaled **before** step 4 and `run.outcome` after it.
 That gap is the in-flight lock every later cycle reads, so the ordering is the
 concurrency control rather than bookkeeping: a dispatch journaled only on
-success would leave the ninety minutes a Run takes unguarded.
+success would leave the ninety minutes a Run takes unguarded. Its
+`kept_progress` field names the file step 1 moved an earlier Progress Log
+into, and is null when there was none to move - a file that moved on the Run's
+branch is not something to do silently.
 
 A Run that ended on a bound is an outcome, not a failure - the Termination
 Contract working is not the Selector failing, and a cycle exits 0 for it. A
@@ -661,6 +676,29 @@ swaps no label, so the issue is simply picked again by the ordinary route, and
 `prepare_branch` continues the branch the first attempt left behind rather than
 resetting it - which is what stops a retry proposing an empty diff.
 
+**A retry re-seeds, and keeps what it re-seeds over.** The first attempt's
+Progress Log is moved to `PROGRESS-earlier.md` and committed before Seeding
+runs (`keep_previous_progress`). Three routes were open and this is the one
+taken: `--reseed` would have been one flag, but `seed-run.sh` refuses for a
+reason - the Progress Log is the only account of what a Run did, and the second
+attempt reads the branch it is continuing - and seeding a fresh branch would
+abandon the first attempt's commits, which is what `prepare_branch` exists to
+avoid.
+
+`PROGRESS-earlier.md` is **per branch**. A branch the remote already has
+continues its own file, so a third attempt keeps the second without discarding
+the first; a branch cut from the base starts one, so a kept log that reached
+the base by being merged is not inherited and appended to by the next issue,
+which would leave one file growing for the life of the repository. Nothing is
+lost either way - a merged file's history is on the base branch.
+
+Until this was fixed, three shapes reached no Run at all: a retry inside
+one Handover, a fresh Handover of an issue worked before, and - once the first
+Proposal was merged - **every** dispatch, because a Run proposes its Progress
+Log with its work and so a merge puts one on the base branch. That last one is
+what `tourbot#646` was in: tourbot master carries the log of the Run merged as
+its #711, so a first attempt off master met the refusal too.
+
 **Nothing is dispatched a third time.** Two guards, deliberately independent:
 the give-up swaps the label out of the queue, and Eligibility refuses an issue
 whose Journal already holds `MAX_ATTEMPTS` dispatches since it was last
@@ -1064,7 +1102,8 @@ tests/mutation-check.sh          # one suite run per mutation
 ```
 
 **Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
-mutations and the suites ran in seconds. There are now 95, and the suite each
+mutations and the suites ran in seconds. There are now 111 entries in
+`tests/selector-mutations.py`, and the suite each
 one re-runs takes one to two minutes, so a whole run is measured in hours -
 long enough that a build usually runs the entries it added and their
 neighbours by hand, and the whole set is a thing to start and walk away from.
