@@ -14,6 +14,10 @@ from psycopg.types.json import Jsonb
 import journal
 import testdb
 
+# The end-of-run report on throwaway databases this run failed to drop
+# (#178). Imported rather than restated: one definition of what a leak is.
+from testdb import pytest_terminal_summary  # noqa: F401
+
 
 @pytest.fixture
 def db():
@@ -496,5 +500,3 @@ def last(dsn, kind):
     rows = events(dsn, kind)
     assert rows, f"no {kind} row in the Journal"
     return rows[-1]["payload"]
-
-

@@ -57,6 +57,12 @@ JOURNAL = "journal.py"
 LIVE_REGION = "../../webapp/templates/_loop_live.html"
 LIVENESS_SUITE = "../../webapp/tests/test_liveness.py"
 
+# The throwaway-database harness (#178). Its guards are not about what the
+# Selector picks - they are about the suite's own residue not accumulating
+# unseen on the box, which is a property no other suite can check for it.
+TESTDB = "testdb.py"
+TESTDB_SUITE = "tests/test_testdb.py"
+
 # Run history and the budget (#160). The same window module, a suite of its
 # own: history's claim is what it does NOT read, and a mutation checked
 # against test_loop_page.py - which drives a page that reads the tracker on
@@ -872,6 +878,29 @@ MUTATIONS = {
     "a-refused-delivery-counts-as-sent": (NOTIFIER, NOTIFIER_SUITE,
         "if completed.returncode != 0:",
         "if False:",
+    ),
+    # The harness stops keeping its books, so a database it failed to drop is
+    # gone from the run's memory the moment the drop raises - which is the
+    # state #178 was reported in: residue on the box and nothing that knew.
+    "leak-not-tracked": (TESTDB, TESTDB_SUITE, "    _created.add(name)\n", ""),
+    # A failed drop is swallowed, so the name is discarded as though the drop
+    # had worked. Silence in exactly the case worth hearing about.
+    "leak-survives-a-failed-drop": (TESTDB, TESTDB_SUITE,
+        "        _drop(name)\n",
+        "        try:\n            _drop(name)\n        except Exception:\n            pass\n",
+    ),
+    # The sweep's dry run drops for real - an operator asking what WOULD go,
+    # and being answered by it going.
+    "dry-sweep-drops": (TESTDB, TESTDB_SUITE, "            if dry_run:", "            if False:"),
+    # Nothing leaked, says the report, whatever the run actually left.
+    "leak-report-silent": (TESTDB, TESTDB_SUITE, "    names = leaked()", "    names = []"),
+    # The keeper connection closes as soon as the schema is applied, which is
+    # what the harness used to do. A live throwaway database then has nothing
+    # attached to it between statements, is indistinguishable from residue,
+    # and the sweep takes a concurrent run's database out from under it.
+    "sweep-takes-a-live-run": (TESTDB, TESTDB_SUITE,
+        "        keeper.execute(SCHEMA.read_text())\n",
+        "        keeper.execute(SCHEMA.read_text())\n        keeper.close()\n",
     ),
 }
 
