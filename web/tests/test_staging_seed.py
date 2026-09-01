@@ -47,6 +47,11 @@ STATES = [
     # The guardrail chip (#165), journaled by the same part of the cycle as
     # the box card and invisible in a preview without a row of its own.
     "the executed paths are review-gated",
+    # The watcher's rows (#157): the in-flight card's Iteration table (a
+    # no-op Iteration is its most distinctive cell), and the one-row failure
+    # a Run whose Progress Log could not be read carries instead.
+    "no-op",
+    "The Progress Log could not be read",
 ]
 
 
@@ -110,6 +115,120 @@ def test_every_skip_reason_the_selector_can_journal_is_shown(seeded):
     body = client.get("/loop").text
     for reason in ("blocked-by-open-dependency", "proposal-open", "missing-section"):
         assert reason in body
+
+
+def _constructor_shapes():
+    """Every payload shape the shipping writer can produce, per kind, built
+    by calling every constructor once with stand-in values. The expected key
+    sets come from the vocabulary itself, so the fixture is graded against
+    the writer it impersonates and not against a hand-kept list."""
+    import events
+    samples = [
+        events.cycle_started(repo="r", label="l", allowlist=["a"],
+                             daily_cap=4, dry_run=False),
+        events.cycle_skipped(reason="cycle-in-progress"),
+        events.cycle_picked(cycle=1, number=2, title="t", url="u", area="a",
+                            check="c"),
+        events.cycle_finished(cycle=1, considered=0, eligible=[], skipped={},
+                              picked=None, halted=None, in_flight=None,
+                              dispatched_in_window=0, daily_cap=4,
+                              returned=[], dry_run=False),
+        events.cycle_failed(cycle=1, error="e"),
+        events.issue_skipped(cycle=1, number=2, title="t", url="u",
+                             reason="r", detail="d"),
+        events.issue_returned(cycle=1, number=2, title="t", url="u",
+                              reason="r", detail="d", added_label="a",
+                              removed_label="b"),
+        events.issue_return_failed(cycle=1, number=2, title="t", url="u",
+                                   reason="r", detail="d", added_label="a",
+                                   removed_label="b", error="e"),
+        events.issue_retrying(cycle=1, issue=2, title="t", url="u", attempt=1,
+                              outcome="agent-failed", proposal=None),
+        events.issue_awaiting_review(cycle=1, issue=2, title="t", url="u",
+                                     attempt=1, outcome="iteration-cap",
+                                     proposal="p", label="l", checks="green"),
+        events.issue_given_up(cycle=1, issue=2, title="t", url="u", attempt=2,
+                              outcome="agent-failed", proposal=None,
+                              label="l"),
+        events.issue_handed_to_human(cycle=1, issue=2, title="t", url="u",
+                                     attempt=1, outcome="iteration-cap",
+                                     proposal="p", label="l", checks="red",
+                                     failing=[]),
+        events.issue_route_failed(cycle=1, issue=2, title="t", url="u",
+                                  attempt=1, outcome="iteration-cap",
+                                  proposal="p", label=None, error="e"),
+        events.issue_route_failed(cycle=1, issue=2, title="t", url="u",
+                                  attempt=1, outcome="iteration-cap",
+                                  proposal="p", label="l", error="e",
+                                  checks="green"),
+        events.issue_route_failed(cycle=1, issue=2, title="t", url="u",
+                                  attempt=1, outcome="iteration-cap",
+                                  proposal="p", label="l", error="e",
+                                  checks="red", failing=["x"]),
+        events.run_dispatched(cycle=1, issue=2, title="t", url="u",
+                              task_ref="tr", attempt=1, branch="b", area="a",
+                              check=None, kept_progress=None),
+        events.run_outcome(cycle=1, issue=2, title="t", url="u",
+                           task_ref="tr", attempt=1, branch="b",
+                           ended_by="iteration-cap", exit=0, iterations=1,
+                           faults="none", proposal="p", proposed="proposed",
+                           notified="sent", seed="s", criteria="1"),
+        events.run_dispatch_failed(cycle=1, issue=2, title="t", url="u",
+                                   task_ref="tr", attempt=1, branch="b",
+                                   error="e"),
+        events.run_iteration(cycle=1, issue=2, attempt=1, branch="b",
+                             task_ref="tr", iteration=1, started="s",
+                             run_started="s", agent_exit=0, exit_note=None,
+                             turn_bound=40, noop=False, head_before="h",
+                             head_after="h", promise=None, dirty=False),
+        events.run_contract(cycle=1, issue=2, attempt=1, branch="b",
+                            task_ref="tr", run_started="s", contract=[]),
+        events.run_watch_failed(cycle=1, issue=2, attempt=1, branch="b",
+                                task_ref="tr", error="e"),
+        events.box_observed(cycle=1, scripts_hash="h", guest_template="g",
+                            agent="a", agent_version="v",
+                            credential_expires_at="t"),
+        events.box_unreachable(cycle=1, error="e"),
+        events.guardrail_observed(cycle=1, ref="r", ref_head="h", rules=[],
+                                  paths=[], unreviewed=[], protected=True,
+                                  detail=None),
+        events.guardrail_unreadable(cycle=1, error="e"),
+    ]
+    shapes = {}
+    for kind, payload in samples:
+        shapes.setdefault(kind, set()).add(frozenset(payload))
+    return shapes
+
+
+def test_every_seeded_row_wears_a_shape_the_writer_writes(seeded):
+    """Writer-strict, where the page's readers are deliberately tolerant: a
+    reader must take rows from any era, but the fixture impersonates today's
+    writer, and a fixture that drifts from the writer is reader-side folklore
+    with a database behind it - `box.observed` seeded without
+    `credential_expires_at` meant no preview could ever render the credential
+    headline, and nothing said so.
+    """
+    shapes = _constructor_shapes()
+    with psycopg.connect(seeded, autocommit=True) as conn:
+        rows = conn.execute(
+            "SELECT kind, payload FROM journal.events"
+        ).fetchall()
+    strays = []
+    for kind, payload in rows:
+        allowed = shapes.get(kind)
+        if allowed is None:
+            strays.append(f"{kind}: no constructor produces this kind")
+        elif frozenset(payload) not in allowed:
+            strays.append(f"{kind}: keys {sorted(payload)}")
+    assert not strays, (
+        "seeded rows the writer would not write:\n" + "\n".join(strays)
+    )
+    # And the whole vocabulary, not most of it: the header's promise is that
+    # every state appears, and five kinds were quietly absent for a year of
+    # the file saying so.
+    assert {kind for kind, _ in rows} == set(shapes), (
+        "the fixture no longer covers every kind the Selector writes"
+    )
 
 
 def test_seeding_twice_changes_nothing(seeded):

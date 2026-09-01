@@ -75,6 +75,18 @@ NOTIFIER = "notifier.py"
 NOTICES_SUITE = "tests/test_notices.py"
 NOTIFIER_SUITE = "tests/test_notifier.py"
 
+# The Journal Event vocabulary. Its own suite drives the constructors, the
+# readers and the naming rules directly, and also holds the sweep - the guard
+# that no shipping module spells a kind outside events.py. The seed fixture is
+# a mutation target of its own because it impersonates the writer, and the
+# suite that grades it is the dashboard's.
+EVENTS = "events.py"
+EVENTS_SUITE = "tests/test_events.py"
+SEED = "seed.sql"
+SEED_SUITE = "../../webapp/tests/test_staging_seed.py"
+RUNS_REGION = "../../webapp/templates/_runs.html"
+LOOP_CSS = "../../webapp/static/loop.css"
+
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
@@ -95,7 +107,7 @@ MUTATIONS = {
     "open-proposal-ignored": (CYCLE, CYCLE_SUITE, "if open_proposals:", "if False:"),
     # The retry budget never runs out, so a task that cannot be done is
     # re-dispatched forever instead of reaching the operator.
-    "retry-budget-unbounded": (CYCLE, CYCLE_SUITE, "MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 9999"),
+    "retry-budget-unbounded": (EVENTS, CYCLE_SUITE, "MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 9999"),
     # The budget stops being scoped to the current Handover, so re-labeling a
     # given-up issue - the operator saying "try that again" - does nothing.
     "budget-ignores-the-handover": (CYCLE, CYCLE_SUITE,
@@ -125,7 +137,11 @@ MUTATIONS = {
     ),
     # An underspecified issue is seeded anyway, which is the case ADR 0014
     # says must be returned to the operator rather than guessed at.
-    "sections-not-required": (CYCLE, CYCLE_SUITE, "if missing:", "if False:"),
+    # Anchored with its indentation: `guardrail_verdict` has an `if missing:`
+    # of its own, and an anchor that matches twice is one the harness refuses.
+    "sections-not-required": (CYCLE, CYCLE_SUITE,
+        "\n    if missing:", "\n    if False:",
+    ),
     # A section heading with nothing under it satisfies the requirement, so an
     # empty `## Owning area` seeds a Run scoped to the empty string.
     "empty-section-counts-as-present": (CYCLE, CYCLE_SUITE,
@@ -146,8 +162,8 @@ MUTATIONS = {
     ),
     # Skips stop being journaled under the name the window reads, so "why not
     # #646 yesterday?" has no recorded answer.
-    "skips-not-journaled": (CYCLE, CYCLE_SUITE,
-        '"issue.skipped",', '"issue.considered",',
+    "skips-not-journaled": (EVENTS, CYCLE_SUITE,
+        'ISSUE_SKIPPED = "issue.skipped"', 'ISSUE_SKIPPED = "issue.considered"',
     ),
     # The in-flight lock never expires, so one cycle killed between
     # dispatching and recording the outcome wedges every later cycle forever.
@@ -193,8 +209,11 @@ MUTATIONS = {
     # The in-flight lock stops being written under the name every cycle reads,
     # so the ninety minutes a Run takes are unguarded and a second cycle
     # dispatches underneath the first.
+    # Spend reads outcomes where it should read dispatches, so the ninety
+    # minutes between the two rows - the in-flight lock itself - goes unread.
     "in-flight-lock-not-taken": (CYCLE, DISPATCH_SUITE,
-        '        "run.dispatched",', '        "run.attempted",',
+        "(CAP_WINDOW_HOURS, IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),",
+        "(CAP_WINDOW_HOURS, IN_FLIGHT_STALE_HOURS, events.RUN_OUTCOME),",
     ),
     # The comment naming the gap says nothing, so an issue is taken out of the
     # queue with no record of why - the silence the loud skip exists to stop.
@@ -283,7 +302,7 @@ MUTATIONS = {
 
     # A Run cut short by the Termination Contract is read as a success, so a
     # failed Run's branch is offered for review as though it had finished.
-    "run-failures-not-detected": (CYCLE, OUTCOMES_SUITE,
+    "run-failures-not-detected": (EVENTS, OUTCOMES_SUITE,
         'RUN_FAILURE_BOUNDS = ("run-clock", "consecutive-noops", "agent-failed")',
         "RUN_FAILURE_BOUNDS = ()",
     ),
@@ -331,15 +350,18 @@ MUTATIONS = {
     ),
     # The journaled label stops being the label that was applied, so the
     # Journal can say one queue while the tracker says another.
+    # The route's one value used to be split into a journaled label and an
+    # applied one; the constructors closed that seam, so the divergence left
+    # to guard is the relabel itself applying something other than the route.
     "journaled-label-is-not-the-applied-one": (CYCLE, OUTCOMES_SUITE,
-        '    payload = {**payload, "label": route.label}',
-        '    payload = {**payload, "label": None}',
+        "            add=route.label, remove=config.label,",
+        "            add=config.review_label, remove=config.label,",
     ),
     # Bookkeeping the tracker refused is swallowed, so a Run whose result
     # never reached the issue looks like a cycle that worked (story 31).
     "route-failure-not-paged": (CYCLE, OUTCOMES_SUITE,
-        'journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})\n        raise CycleFailed(str(exc)) from exc',
-        'journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})\n        return route.name',
+        "journal.append(conn, *failed(str(exc)))\n        raise CycleFailed(str(exc)) from exc",
+        "journal.append(conn, *failed(str(exc)))\n        return route.name",
     ),
     # The comment is posted after the swap rather than before, so a swap that
     # landed and a comment that failed leaves the issue out of every queue
@@ -460,7 +482,7 @@ MUTATIONS = {
     # flight says nothing about what it is allowed to do - which is the whole
     # of what the card is for.
     "the-contract-never-reaches-the-card": (WINDOW, WINDOW_SUITE,
-        '            card["contract"] = payload.get("contract")',
+        '            card["contract"] = events.run_contract_record(row).contract',
         "            pass",
     ),
     # The Run's Iterations render newest first, so a Run reads as counting
@@ -505,8 +527,8 @@ MUTATIONS = {
     # box unreachable for a week still renders last week's hash and a
     # guardrail that has stopped answering still renders green.
     "the-cards-hide-an-outage": (WINDOW, WINDOW_SUITE,
-        '        if event["kind"] in (good, bad):',
-        '        if event["kind"] == good:',
+        '        if row["kind"] in kinds:',
+        '        if row["kind"] == kinds[0]:',
     ),
 
     # --- The queue board (#158) ---------------------------------------------
@@ -715,8 +737,8 @@ MUTATIONS = {
     # has not checked - the failure the timer cell guards against, one panel
     # along.
     "an-old-reading-still-stands-for-now": (WINDOW, WINDOW_SUITE,
-        '        reading["stale"] = reading["age"] > GUARDRAIL_MAX_AGE',
-        '        reading["stale"] = False',
+        '        stale=card["age"] > GUARDRAIL_MAX_AGE,',
+        "        stale=False,",
     ),
     # The chip renders the protected branch whatever the verdict was.
     "the-chip-is-green-regardless": (LIVE_REGION, WINDOW_SUITE,
@@ -872,6 +894,57 @@ MUTATIONS = {
     "a-refused-delivery-counts-as-sent": (NOTIFIER, NOTIFIER_SUITE,
         "if completed.returncode != 0:",
         "if False:",
+    ),
+    # --- The Journal Event vocabulary --------------------------------------
+    # A legacy row's spelling stops being normalized, so a pre-vocabulary
+    # dispatch failure reads back with no ended_by and the notifier calls it
+    # a Run without a Proposal - the exact misread the reader exists to end.
+    "legacy-outcome-spelling-unread": (EVENTS, EVENTS_SUITE,
+        'ended_by=payload.get("ended_by") or payload.get("outcome"),',
+        'ended_by=payload.get("ended_by"),',
+    ),
+    # The route kinds stop deriving from the route names, so the writer and
+    # every reader of `issue.*` rows silently disagree about the kind.
+    "route-kind-derivation-broken": (EVENTS, EVENTS_SUITE,
+        'return f"issue.{name}"',
+        'return f"issues.{name}"',
+    ),
+    # A constructor misspells its own key, which is the writer-side drift the
+    # whole vocabulary exists to make impossible.
+    "a-constructor-key-misspelled": (EVENTS, EVENTS_SUITE,
+        '        "ended_by": ended_by, "exit": exit, "iterations": iterations,',
+        '        "endedby": ended_by, "exit": exit, "iterations": iterations,',
+    ),
+    # A shipping module spells a kind by hand again - behavior identical, and
+    # only the sweep can notice, which is what the sweep is for.
+    "a-kind-spelled-outside-the-vocabulary": (CYCLE, EVENTS_SUITE,
+        "journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n        raise\n",
+        'journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n        raise\n',
+    ),
+    # The staging fixture drifts from the writer - a key today's writer always
+    # journals goes missing from a seeded row, the state a preview would
+    # silently stop rendering.
+    "the-fixture-drifts-from-the-writer": (SEED, SEED_SUITE,
+        "'seed', 'seeded', 'criteria', '3'))",
+        "'seed', 'seeded'))",
+    ),
+    # The none state folds back into red on the card, contradicting the
+    # comment the Selector posted on the issue - the defect this branch fixed.
+    "the-none-state-renders-as-red": (RUNS_REGION, WINDOW_SUITE,
+        '{% elif r.checks == "none" %}',
+        "{% elif false %}",
+    ),
+    # A route's badge loses its stylesheet rule, which no Python suite can
+    # see - the pin over loop.css is the guard, and this is its mutation.
+    "a-route-badge-loses-its-stylesheet": (LOOP_CSS, WINDOW_SUITE,
+        ".run .badge-retrying {",
+        ".run .badge-retried {",
+    ),
+    # The decision module drags the dispatcher back in, and the purity its
+    # docstring claims - drivable with no database - quietly stops being true.
+    "notices-drags-the-dispatcher-back-in": (NOTICES, NOTICES_SUITE,
+        "import events\nfrom events import",
+        "import cycle  # noqa: F401\nimport events\nfrom events import",
     ),
 }
 

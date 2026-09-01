@@ -100,6 +100,9 @@
       <p class="detail">
         {% if r.checks == "pending" %}The Proposal's checks did not finish
         inside the Selector's wait, so it was not put in the review queue.
+        {% elif r.checks == "none" %}No check ran against the Proposal at
+        all - not the same fact as passing - so it was not put in the review
+        queue.
         {% else %}The Proposal's checks are red:
         {% for name in r.failing %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
         {% endif %}

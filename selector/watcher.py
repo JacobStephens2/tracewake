@@ -48,6 +48,7 @@ from pathlib import Path
 
 import psycopg
 
+import events
 import journal
 
 HERE = Path(__file__).resolve().parent
@@ -407,7 +408,10 @@ class Watcher:
             if record["iteration"] in seen:
                 continue
             seen.add(record["iteration"])
-            journal.append(conn, "run.iteration", {**self.run, **record})
+            # A checked unpacking: the parser's keys and the constructor's
+            # parameters are the same names, so a record field only one side
+            # knows is a TypeError here, not a silently journaled extra.
+            journal.append(conn, *events.run_iteration(**self.run, **record))
 
     def _journal_contract(self, conn: psycopg.Connection, text: str) -> None:
         """The Run's terms, once.
@@ -428,7 +432,7 @@ class Watcher:
         if not of_this_run([record], self.started, self.config.clock_skew_seconds):
             return
         self._contract_journaled = True
-        journal.append(conn, "run.contract", {**self.run, **record})
+        journal.append(conn, *events.run_contract(**self.run, **record))
 
     def _read(self, conn: psycopg.Connection) -> str | None:
         try:
@@ -458,7 +462,9 @@ class Watcher:
             return None
         self._reported_failure = True
         try:
-            journal.append(conn, "run.watch-failed", {**self.run, "error": error})
+            journal.append(
+                conn, *events.run_watch_failed(**self.run, error=error)
+            )
         except psycopg.Error:
             pass
         return None

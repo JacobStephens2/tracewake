@@ -119,7 +119,7 @@ def test_the_runs_stdout_summary_is_captured_into_the_journal(db, box):
     so everything asserted here can only have come from what was captured."""
     box.run(db, [issue(645)])
     outcome = one(db, "run.outcome")
-    assert outcome["outcome"] == "iteration-cap"
+    assert outcome["ended_by"] == "iteration-cap"
     assert outcome["ended_by"] == "iteration-cap"
     assert outcome["exit"] == 0
     assert outcome["iterations"] == 5
@@ -148,7 +148,7 @@ def test_a_run_that_ended_on_a_bound_is_not_a_selector_failure(db, box):
     result = box.run(db, [issue(645)], BOX_EXIT=4)
     assert result.returncode == 0, result.stderr
     outcome = one(db, "run.outcome")
-    assert outcome["outcome"] == "agent-failed"
+    assert outcome["ended_by"] == "agent-failed"
     assert outcome["exit"] == 4
     assert outcome["proposal"].endswith("/13")
 
@@ -161,7 +161,7 @@ def test_a_box_that_starts_no_run_fails_the_cycle_loudly(db, box):
     result = box.run(db, [issue(645)], BOX_EXIT=255)
     assert result.returncode != 0
     outcome = one(db, "run.outcome")
-    assert outcome["outcome"] == "dispatch-failed"
+    assert outcome["ended_by"] == "dispatch-failed"
     assert "no route" in outcome["error"].lower()
 
 
@@ -181,7 +181,7 @@ def test_a_seeding_refusal_stops_the_dispatch_before_the_box(db, box):
     result = box.run(db, [issue(645)], SEED_EXIT=1)
     assert result.returncode != 0
     assert "box " not in box.commands(), "no Run was started"
-    assert one(db, "run.outcome")["outcome"] == "dispatch-failed"
+    assert one(db, "run.outcome")["ended_by"] == "dispatch-failed"
 
 
 # --- Retries and attempts ---------------------------------------------------
@@ -236,7 +236,7 @@ def test_a_second_dispatch_within_one_handover_starts_a_run(db, box):
     assert result.returncode == 0, result.stderr
     outcome = last(db, "run.outcome")
     assert outcome["attempt"] == 2
-    assert outcome["outcome"] == "agent-failed", "the second dispatch reached a Run"
+    assert outcome["ended_by"] == "agent-failed", "the second dispatch reached a Run"
 
 
 def test_a_fresh_handover_of_a_worked_issue_starts_a_run(db, box):
@@ -250,7 +250,7 @@ def test_a_fresh_handover_of_a_worked_issue_starts_a_run(db, box):
     # Handover: the budget is untouched and only the branch remembers.
     result = box.run(db, [issue(645, labeledAt=hours_ago_iso(0))])
     assert result.returncode == 0, result.stderr
-    assert last(db, "run.outcome")["outcome"] == "agent-failed"
+    assert last(db, "run.outcome")["ended_by"] == "agent-failed"
 
 
 def test_a_first_dispatch_off_a_base_that_carries_a_progress_log_starts_a_run(db, box):
@@ -268,7 +268,7 @@ def test_a_first_dispatch_off_a_base_that_carries_a_progress_log_starts_a_run(db
 
     result = box.run(db, [issue(648)])
     assert result.returncode == 0, result.stderr
-    assert one(db, "run.outcome")["outcome"] == "iteration-cap"
+    assert one(db, "run.outcome")["ended_by"] == "iteration-cap"
     assert "A Run that was merged" in _on_branch(
         box, "PROGRESS-earlier.md", "loop/648-the-nightly-sync-script"
     )

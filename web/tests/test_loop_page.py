@@ -13,14 +13,18 @@ client = TestClient(app)
 
 
 def test_loop_page_renders_journal_newest_first(db):
+    # Two real kinds - this file once invented `cycle.summary` here, which no
+    # writer has ever produced, and nothing could notice. `cycle.skipped`
+    # keeps the old fixture's property: it carries no `cycle` key, so it
+    # reaches the event table and builds no card.
     with journal.connect(db) as conn:
-        journal.append(conn, "cycle.summary", {"eligible": 3})
+        journal.append(conn, "cycle.skipped", {"reason": "cycle-in-progress"})
         journal.append(conn, "run.dispatched", {"issue": 646})
     resp = client.get("/loop")
     assert resp.status_code == 200
     assert "terminal.css" in resp.text
     body = resp.text
-    assert body.index("run.dispatched") < body.index("cycle.summary")
+    assert body.index("run.dispatched") < body.index("cycle.skipped")
     assert "646" in body
 
 
@@ -394,6 +398,38 @@ def test_a_red_run_names_the_failing_checks_on_its_card(db):
     runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
     assert '<span class="badge badge-handed-to-human">ready-for-human</span>' in runs
     assert "phpunit" in runs and "lint" in runs
+
+
+def test_every_route_name_has_a_badge_rule_in_the_stylesheet():
+    """The route names reach the page as CSS classes (`badge-<name>`), and
+    the stylesheet cannot import a constant - so this is the pin that makes a
+    Route rename fail a suite instead of quietly unstyling a card."""
+    from pathlib import Path
+
+    import events
+    css = (Path(__file__).resolve().parents[1] / "static" / "loop.css").read_text()
+    missing = [name for name in events.ROUTE_NAMES
+               if f".badge-{name}" not in css]
+    assert not missing, f"loop.css has no rule for badge-{missing}"
+
+
+def test_a_run_whose_checks_never_ran_is_not_called_red(db):
+    """`none` and `red` are opposite facts about how far a Proposal was
+    verified - the Selector's own comment on the issue says so - and the card
+    must not contradict the comment. This rendered as "The Proposal's checks
+    are red: ." until the checks vocabulary got one owner."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(conn, cycle)
+        _ended(conn, cycle)
+        journal.append(
+            conn, "issue.handed-to-human",
+            {"cycle": cycle, "issue": 645, "attempt": 1,
+             "label": "ready-for-human", "checks": "none", "failing": []},
+        )
+    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    assert "checks are red" not in runs
+    assert "No check ran" in runs
 
 
 def test_a_run_waiting_on_a_retry_says_so(db):

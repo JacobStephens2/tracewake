@@ -66,8 +66,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import control  # noqa: E402
 import dispatch  # noqa: E402
+import events  # noqa: E402
 import journal  # noqa: E402
 import watcher  # noqa: E402
+from events import (  # noqa: E402
+    MAX_ATTEMPTS,
+    NO_PROPOSAL,
+    RUN_FAILURE_BOUNDS,
+    outcome_name,
+)
 
 HERE = Path(__file__).resolve().parent
 
@@ -91,25 +98,6 @@ HERE = Path(__file__).resolve().parent
 # honest reading of "work this issue". An issue that IS too big for one Run
 # still says so by carrying the section, and the fence still holds for it.
 REQUIRED_SECTIONS = ("Acceptance criteria",)
-
-# One automatic retry, then the give-up swap (#155). Two dispatches for an
-# issue is the budget spent - counted since the issue was last labeled, so
-# re-applying the label after a give-up is a fresh Handover with a fresh
-# budget, which is how an operator says "try that again".
-MAX_ATTEMPTS = 2
-
-# The ending bounds that mean the Run failed rather than finished (#155,
-# story 14). `iteration-cap` is the Run doing what it was designed to do -
-# with faults or without them - and everything else is the Termination
-# Contract cutting a Run short. A failure is retried once; a Run that reached
-# its cap is judged on the Proposal it left instead.
-RUN_FAILURE_BOUNDS = ("run-clock", "consecutive-noops", "agent-failed")
-
-# A Run that ended within its bounds and proposed nothing is recorded under
-# this instead of an ending bound. It is treated as a failed attempt: there is
-# no Proposal to read checks for and nothing for the operator to review, and a
-# second attempt on the same branch may well produce one.
-NO_PROPOSAL = "no-proposal"
 
 # Every comment the Selector posts ends with this. One copy, because four
 # comments that each carried their own would drift, and the line is a claim
@@ -473,15 +461,16 @@ def spend(conn: psycopg.Connection) -> Spend:
             "SELECT (payload->>'issue')::bigint, at,"
             "       at > now() - make_interval(hours => %s),"
             "       at < now() - make_interval(hours => %s)"
-            "  FROM journal.events WHERE kind = 'run.dispatched'",
-            (CAP_WINDOW_HOURS, IN_FLIGHT_STALE_HOURS),
+            "  FROM journal.events WHERE kind = %s",
+            (CAP_WINDOW_HOURS, IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),
         ).fetchall()
     ]
     outcomes = [
         row[0]
         for row in conn.execute(
             "SELECT (payload->>'issue')::bigint FROM journal.events"
-            " WHERE kind = 'run.outcome'"
+            " WHERE kind = %s",
+            (events.RUN_OUTCOME,),
         ).fetchall()
     ]
     return Spend(dispatches, outcomes)
@@ -677,16 +666,16 @@ def _return_to_operator(
     is noisy rather than lossy.
     """
     number = int(record["number"])
-    payload = {
-        "cycle": cycle_id,
-        "number": number,
-        "title": record.get("title"),
-        "url": record.get("url"),
-        "reason": "missing-section",
-        "detail": detail,
-        "added_label": config.needs_info_label,
-        "removed_label": config.label,
-    }
+    returned = dict(
+        cycle=cycle_id,
+        number=number,
+        title=record.get("title"),
+        url=record.get("url"),
+        reason="missing-section",
+        detail=detail,
+        added_label=config.needs_info_label,
+        removed_label=config.label,
+    )
     try:
         dispatch.comment(
             dispatch_config,
@@ -702,9 +691,11 @@ def _return_to_operator(
             remove=config.label,
         )
     except dispatch.DispatchFailed as exc:
-        journal.append(conn, "issue.return-failed", {**payload, "error": str(exc)})
+        journal.append(
+            conn, *events.issue_return_failed(**returned, error=str(exc))
+        )
         return False
-    journal.append(conn, "issue.returned", payload)
+    journal.append(conn, *events.issue_returned(**returned))
     return True
 
 
@@ -733,14 +724,14 @@ def _dispatch_pick(
     """
     number = pick["number"]
     task_ref = f"{config.task_repo}#{number}"
-    outcome = {
-        "cycle": cycle_id,
-        "issue": number,
-        "title": pick.get("title"),
-        "url": pick.get("url"),
-        "task_ref": task_ref,
-        "attempt": attempt,
-    }
+    context = dict(
+        cycle=cycle_id,
+        issue=number,
+        title=pick.get("title"),
+        url=pick.get("url"),
+        task_ref=task_ref,
+        attempt=attempt,
+    )
     try:
         branch = dispatch.prepare_branch(dispatch_config, number, pick["area"])
         # Both before the dispatch is journaled, because neither has reached
@@ -751,24 +742,21 @@ def _dispatch_pick(
     except dispatch.DispatchFailed as exc:
         # Nothing has been dispatched, so nothing holds the lock and nothing
         # is journaled as a dispatch. The cycle still fails loudly.
-        journal.append(
-            conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)}
-        )
+        journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
         raise CycleFailed(str(exc)) from exc
 
-    outcome["branch"] = branch
+    context["branch"] = branch
     journal.append(
         conn,
-        "run.dispatched",
-        {
-            **outcome,
-            "area": pick.get("area"),
-            "check": pick.get("check"),
+        *events.run_dispatched(
+            **context,
+            area=pick.get("area"),
+            check=pick.get("check"),
             # Null on a first dispatch, and the path on a retry that had an
             # earlier attempt's Progress Log to move aside. A file that moved
             # on the Run's branch is not something to do silently.
-            "kept_progress": kept,
-        },
+            kept_progress=kept,
+        ),
     )
     try:
         seeded = dispatch.seed(
@@ -794,20 +782,21 @@ def _dispatch_pick(
             summary = dispatch.start_run(dispatch_config, branch, task_ref)
     except dispatch.DispatchFailed as exc:
         journal.append(
-            conn,
-            "run.outcome",
-            {**outcome, "outcome": "dispatch-failed", "error": str(exc)},
+            conn, *events.run_dispatch_failed(**context, error=str(exc))
         )
         raise CycleFailed(str(exc)) from exc
 
-    outcome.update(summary)
-    # `outcome` beside `ended_by` rather than instead of it: a dispatch that
-    # never started a Run has no bound to name, so the page and any later
-    # reader need one key that is filled in for every row of this kind.
-    outcome["outcome"] = summary["ended_by"]
-    outcome["seed"] = seeded.get("LOOP_SEED_RESULT")
-    outcome["criteria"] = seeded.get("LOOP_SEED_CRITERIA")
-    journal.append(conn, "run.outcome", outcome)
+    # `**summary` is a checked unpacking: the box report's fields and the
+    # constructor's parameters are the same seven names, and a field one side
+    # grows that the other does not know is a TypeError here rather than a
+    # silently journaled extra.
+    kind, outcome = events.run_outcome(
+        **context,
+        **summary,
+        seed=seeded.get("LOOP_SEED_RESULT"),
+        criteria=seeded.get("LOOP_SEED_CRITERIA"),
+    )
+    journal.append(conn, kind, outcome)
     return outcome
 
 
@@ -921,10 +910,6 @@ class Route:
     name: str
     label: str
 
-    @property
-    def kind(self) -> str:
-        return f"issue.{self.name}"
-
 
 def AWAITING_REVIEW(config: Config) -> Route:
     return Route("awaiting-review", config.review_label)
@@ -944,8 +929,9 @@ def _hand_over(
     dispatch_config: dispatch.DispatchConfig,
     number: int,
     body: str | None,
-    payload: dict,
     route: Route,
+    row: tuple,
+    failed,
 ) -> str:
     """Comment (when there is something to say), swap the label, journal it.
 
@@ -954,8 +940,12 @@ def _hand_over(
     with nothing on it saying why. The green route passes no body - the
     Proposal is the artifact and a comment restating that it exists is noise
     on an issue the operator is about to open anyway.
+
+    `row` is the route's Journal Event, already constructed, and `failed`
+    builds the `issue.route-failed` row for a tracker that refused - so both
+    spellings of the bookkeeping come from the vocabulary rather than from
+    this function editing payloads.
     """
-    payload = {**payload, "label": route.label}
     try:
         if body is not None:
             dispatch.comment(
@@ -966,28 +956,10 @@ def _hand_over(
             add=route.label, remove=config.label,
         )
     except dispatch.DispatchFailed as exc:
-        journal.append(conn, "issue.route-failed", {**payload, "error": str(exc)})
+        journal.append(conn, *failed(str(exc)))
         raise CycleFailed(str(exc)) from exc
-    journal.append(conn, route.kind, payload)
+    journal.append(conn, *row)
     return route.name
-
-
-def outcome_name(ended_by: str, proposal: str | None) -> str:
-    """What a Run's result is CALLED, which is not always the bound that ended
-    it: a Run that reached its cap and proposed nothing gets its own name,
-    because "iteration-cap with a Proposal" and "iteration-cap with nothing to
-    show" are opposite results and a record that called them the same thing
-    could not be read back.
-
-    A function rather than an expression inside `_route` because the notifier
-    needs the same answer (#280). The `run.outcome` row carries the raw bound -
-    it is written before this distinction is drawn - so a reader deciding what
-    to call a Run has to draw it again, and two spellings of one naming rule
-    would let the email and the issue disagree about what happened.
-    """
-    if ended_by in RUN_FAILURE_BOUNDS:
-        return ended_by
-    return ended_by if proposal else NO_PROPOSAL
 
 
 def _route(
@@ -1008,33 +980,38 @@ def _route(
     """
     number = pick["number"]
     proposal = outcome.get("proposal")
-    ended_by = outcome["outcome"]
+    ended_by = outcome["ended_by"]
     failure = ended_by in RUN_FAILURE_BOUNDS or not proposal
     journaled_as = outcome_name(ended_by, proposal)
 
-    payload = {
-        "cycle": cycle_id,
-        "issue": number,
-        "title": pick.get("title"),
-        "url": pick.get("url"),
-        "attempt": attempt,
-        "outcome": journaled_as,
-        "proposal": proposal,
-    }
+    base = dict(
+        cycle=cycle_id,
+        issue=number,
+        title=pick.get("title"),
+        url=pick.get("url"),
+        attempt=attempt,
+        outcome=journaled_as,
+        proposal=proposal,
+    )
 
     if failure and attempt < MAX_ATTEMPTS:
         # No label swap and no comment. The issue keeps `ready-for-agent`, so
         # the next cycle picks it up again by the ordinary route - the retry
         # is the queue working rather than a second dispatch path - and
         # prepare_branch continues the branch this attempt left behind.
-        journal.append(conn, "issue.retrying", {**payload, "of": MAX_ATTEMPTS})
+        journal.append(conn, *events.issue_retrying(**base))
         return "retrying"
 
     if failure:
+        route = GIVEN_UP(config)
         return _hand_over(
             conn, config, dispatch_config, number,
             _failure_comment(config, journaled_as, attempt, proposal),
-            payload, GIVEN_UP(config),
+            route,
+            events.issue_given_up(**base, label=route.label),
+            lambda error: events.issue_route_failed(
+                **base, label=route.label, error=error
+            ),
         )
 
     try:
@@ -1046,20 +1023,24 @@ def _route(
         # and guessing either way would be the Selector inventing a fact. It
         # is journaled and paged like any other refusal.
         journal.append(
-            conn, "issue.route-failed",
-            {**payload, "label": None, "error": str(exc)},
+            conn, *events.issue_route_failed(**base, label=None, error=str(exc))
         )
         raise CycleFailed(str(exc)) from exc
 
     state = answer["state"]
-    payload = {**payload, "checks": state}
 
     if state == "green":
         # The only route into the review queue, and the only one that posts no
         # comment. Everything else lands on the operator.
+        route = AWAITING_REVIEW(config)
         return _hand_over(
-            conn, config, dispatch_config, number, None,
-            payload, AWAITING_REVIEW(config),
+            conn, config, dispatch_config, number, None, route,
+            events.issue_awaiting_review(
+                **base, label=route.label, checks=state
+            ),
+            lambda error: events.issue_route_failed(
+                **base, label=route.label, error=error, checks=state
+            ),
         )
 
     # Everything below hands the issue to the operator with the same label,
@@ -1081,9 +1062,16 @@ def _route(
         body = _red_checks_comment(config, proposal, answer["failing"])
         failing = answer["failing"]
 
+    route = HANDED_TO_HUMAN(config)
     return _hand_over(
-        conn, config, dispatch_config, number, body,
-        {**payload, "failing": failing}, HANDED_TO_HUMAN(config),
+        conn, config, dispatch_config, number, body, route,
+        events.issue_handed_to_human(
+            **base, label=route.label, checks=state, failing=failing
+        ),
+        lambda error: events.issue_route_failed(
+            **base, label=route.label, error=error, checks=state,
+            failing=failing
+        ),
     )
 
 
@@ -1145,14 +1133,13 @@ def run_cycle(
     """One cycle. Returns the summary it journaled, plus what it then did."""
     cycle_id = journal.append(
         conn,
-        "cycle.started",
-        {
-            "repo": config.task_repo,
-            "label": config.label,
-            "allowlist": list(config.allowlist),
-            "daily_cap": config.daily_cap,
-            "dry_run": dry_run,
-        },
+        *events.cycle_started(
+            repo=config.task_repo,
+            label=config.label,
+            allowlist=list(config.allowlist),
+            daily_cap=config.daily_cap,
+            dry_run=dry_run,
+        ),
     )
     # Before the queue, and long before the dispatch that holds the process
     # for the length of a Run. A box card read after the Run would go stale
@@ -1165,8 +1152,11 @@ def run_cycle(
         facts, box_error = observe_box(config)
         journal.append(
             conn,
-            "box.observed" if facts else "box.unreachable",
-            {"cycle": cycle_id, **(facts or {"error": box_error})},
+            *(
+                events.box_observed(cycle=cycle_id, **facts)
+                if facts
+                else events.box_unreachable(cycle=cycle_id, error=box_error)
+            ),
         )
         # The other half of the same claim (#165): the box card says what is
         # RUNNING, and this says whether it could have got there without a
@@ -1176,14 +1166,19 @@ def run_cycle(
         guardrail, guardrail_error = observe_guardrail(config)
         journal.append(
             conn,
-            "guardrail.observed" if guardrail else "guardrail.unreadable",
-            {"cycle": cycle_id, **(guardrail or {"error": guardrail_error})},
+            *(
+                events.guardrail_observed(cycle=cycle_id, **guardrail)
+                if guardrail
+                else events.guardrail_unreadable(
+                    cycle=cycle_id, error=guardrail_error
+                )
+            ),
         )
 
     try:
         queue = fetch_queue(config)
     except CycleFailed as exc:
-        journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})
+        journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
         raise
 
     cycle_spend = spend(conn)
@@ -1201,15 +1196,14 @@ def run_cycle(
         skipped[reason] = skipped.get(reason, 0) + 1
         journal.append(
             conn,
-            "issue.skipped",
-            {
-                "cycle": cycle_id,
-                "number": number,
-                "title": record.get("title"),
-                "url": record.get("url"),
-                "reason": reason,
-                "detail": detail,
-            },
+            *events.issue_skipped(
+                cycle=cycle_id,
+                number=number,
+                title=record.get("title"),
+                url=record.get("url"),
+                reason=reason,
+                detail=detail,
+            ),
         )
         # The loud skip. Independent of the caps and of the pick: returning an
         # underspecified issue is handing work back to the operator, not
@@ -1251,7 +1245,7 @@ def run_cycle(
             "area": _area(picked_record, body_sections),
             "check": _check_command(check) or None,
         }
-        journal.append(conn, "cycle.picked", pick)
+        journal.append(conn, *events.cycle_picked(**pick))
 
     summary = {
         "cycle": cycle_id,
@@ -1270,7 +1264,7 @@ def run_cycle(
     # process for as long as the Run lasts, and a cycle card that only
     # appeared once the Run had finished would leave the page with no record
     # of the decision that started it for ninety minutes.
-    journal.append(conn, "cycle.finished", summary)
+    journal.append(conn, *events.cycle_finished(**summary))
 
     summary["return_failures"] = return_failures
     summary["outcome"] = None
@@ -1312,7 +1306,7 @@ def _report(summary: dict) -> None:
     if outcome:
         print(f"branch       {outcome['branch']}")
         print(
-            f"run          {outcome['outcome']}"
+            f"run          {outcome['ended_by']}"
             f" (exit {outcome.get('exit', '?')},"
             f" {outcome.get('iterations', '?')} iteration(s),"
             f" faults {outcome.get('faults', '?')})"
@@ -1350,7 +1344,9 @@ def main(argv: list[str] | None = None) -> int:
                 # thirty-minute timer and a ninety-minute Run this happens two
                 # or three times per Run, and a timer whose OnFailure paged
                 # for it would page for the Selector working.
-                journal.append(conn, "cycle.skipped", {"reason": "cycle-in-progress"})
+                journal.append(
+                    conn, *events.cycle_skipped(reason="cycle-in-progress")
+                )
                 print("cycle.py: another cycle is running; this one stood down")
                 return 0
             summary = run_cycle(conn, config, dispatch_config, dry_run=args.dry_run)

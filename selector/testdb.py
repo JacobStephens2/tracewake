@@ -18,6 +18,8 @@ from pathlib import Path
 import psycopg
 from psycopg.types.json import Jsonb
 
+import events
+
 SCHEMA = Path(__file__).with_name("schema.sql")
 
 # The maintenance database every role may connect to; used only to create and
@@ -47,9 +49,21 @@ def append_run(dsn: str, issue: int, *, outcome=None, hours_ago: int = 0) -> Non
     ever could - journal.events is append-only, so a test that wants history
     writes history rather than editing it.
     """
-    rows = [("run.dispatched", {"issue": issue})]
+    # Through the constructors, so "what a Run looks like in the Journal" has
+    # exactly one definition - the gaps are Nones a test has no value for,
+    # which the readers are total over. Only the INSERT stays local, because
+    # backdating needs an explicit `at` that journal.append does not take.
+    rows = [events.run_dispatched(
+        cycle=None, issue=issue, title=None, url=None, task_ref=None,
+        attempt=None, branch=None, area=None, check=None, kept_progress=None,
+    )]
     if outcome is not None:
-        rows.append(("run.outcome", {"issue": issue, "outcome": outcome}))
+        rows.append(events.run_outcome(
+            cycle=None, issue=issue, title=None, url=None, task_ref=None,
+            attempt=None, branch=None, ended_by=outcome, exit=None,
+            iterations=None, faults=None, proposal=None, proposed=None,
+            notified=None, seed=None, criteria=None,
+        ))
     with psycopg.connect(dsn, autocommit=True) as conn:
         for kind, payload in rows:
             conn.execute(

@@ -12,6 +12,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import notices  # noqa: E402
 
+
+def test_the_decision_module_is_importable_without_the_dispatcher():
+    """Purity, checked rather than claimed: the docstring says "no database",
+    and importing this module used to execute the whole Selector's import
+    graph anyway (cycle, psycopg, dispatch, watcher) for four names. The
+    vocabulary module is the dependency now, and it is pure."""
+    import subprocess
+    import sys as _sys
+    done = subprocess.run(
+        [_sys.executable, "-c",
+         "import sys; import notices; "
+         "leaked = [m for m in ('cycle', 'psycopg', 'dispatch', 'watcher')"
+         " if m in sys.modules]; "
+         "sys.exit(f'notices dragged in {leaked}' if leaked else 0)"],
+        capture_output=True, text=True,
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+
 NOW = datetime(2026, 8, 31, 12, 0, 0, tzinfo=timezone.utc)
 CONFIG = notices.NoticeConfig(
     credential_warn_hours=2,
@@ -43,7 +62,6 @@ def outcome(**overrides):
         "proposal": PROPOSAL,
         "proposed": "proposed",
         "notified": "sent",
-        "outcome": "iteration-cap",
         "seed": "seeded",
         "criteria": "3",
     }
@@ -140,7 +158,7 @@ def test_a_dispatch_that_started_no_run_is_not_read_as_a_run_with_no_proposal():
     """It has no Proposal either, and the two are opposite facts about how far
     the machinery got: the operator's next command differs."""
     said = notice("run.outcome", outcome(
-        outcome="dispatch-failed", proposal=None,
+        ended_by="dispatch-failed", proposal=None,
         error="ssh: connect refused",
     ))
     assert "Dispatch failed" in said.subject
@@ -148,7 +166,7 @@ def test_a_dispatch_that_started_no_run_is_not_read_as_a_run_with_no_proposal():
 
 def test_a_dispatch_that_started_no_run_is_a_failure_notice():
     said = notice("run.outcome", outcome(
-        outcome="dispatch-failed", proposal=None,
+        ended_by="dispatch-failed", proposal=None,
         error="the box started no Run (exit 255): ssh: connect refused",
     ))
     assert "connect refused" in said.body
