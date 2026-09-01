@@ -782,15 +782,16 @@ from - and mails on four kinds of row:
 | a dispatch or preflight failed | `run.outcome` (`dispatch-failed`), `cycle.failed` | a `systemctl --failed` nobody is at a keyboard to read |
 | the box's credential is close to expiring | `box.observed` | Runs cancelled by a login that lapsed overnight |
 
-Green and not-green are decided with `cycle.py`'s own `RUN_FAILURE_BOUNDS` and
-`outcome_name` rather than a second predicate, for the reason `board.py`
-imports `eligibility`. Two things would go wrong without that. A Run cut short
-by its Contract can still be holding a Proposal, and an email calling that
-green would make the Selector say two things about one Run. And a `run.outcome`
-row carries the *raw* bound - the rename to `no-proposal` happens later, on the
-issue's own row - so a Run that reached its cap with nothing to show would
-otherwise be mailed as "cut short by iteration-cap", which is the opposite of
-what happened.
+Green and not-green are decided with the vocabulary's own `RUN_FAILURE_BOUNDS`
+and `outcome_name` (`events.py`) rather than a second predicate, for the
+reason `board.py` imports `eligibility`. Two things would go wrong without
+that. A Run cut short by its Contract can still be holding a Proposal, and an
+email calling that green would make the Selector say two things about one Run.
+And a `run.outcome` row carries the *raw* bound under `ended_by` - the rename
+to `no-proposal` happens later, on the issue's own row, the one place a
+derived `outcome` name is journaled - so a Run that reached its cap with
+nothing to show would otherwise be mailed as "cut short by iteration-cap",
+which is the opposite of what happened.
 
 What the *checks* make of the Proposal is not in the mail at all - CI is read
 afterwards, by the routing step, and the label the issue ends up carrying is
@@ -892,9 +893,21 @@ Detection precedes notification, or the mail is a guess.
   puts the box's checkout on the Run's branch and runs `run.sh --propose
   --notify`, printing what the Run reported. It holds no credential of its
   own and starts nothing else.
+- `events.py` - the Journal Event vocabulary (CONTEXT.md): every kind, one
+  constructor and one reader each, and the naming rules - `outcome_name`, the
+  failure bounds, the retry budget, the route names, the checks states.
+  Closed for writers, so shipping code cannot invent a kind or misspell a
+  key; total for readers, so a row from any era - the dual-spelled bound, a
+  sparse seed row, a hand append - normalizes in one place. Pure on purpose:
+  no psycopg, no clock, no import from `cycle`, which is what lets the page
+  and the notifier import the meaning of a row without the machinery around
+  it. Its suite holds the sweep: no kind literal ships outside this file.
 - `notices.py` - which Journal rows are worth an email and what each one says
-  (#280). Pure: a row in, a `Notice` or `None` out, no database and no clock
-  of its own, so the wording and the choice of event are drivable directly.
+  (#280). Pure: a row in through `events.py`'s readers, a `Notice` or `None`
+  out, no database and no clock of its own, so the wording and the choice of
+  event are drivable directly - and the purity is a checked property, not a
+  claim (its suite imports it in a subprocess and fails if the dispatcher
+  comes too).
 - `notifier.py` - the process around it: the LISTEN, the cursor that makes
   delivery survive a restart, the once-per-thing record, and the failure that
   loses nothing. `--once` drains and exits; `--dry-run --since <id>` prints
@@ -916,7 +929,11 @@ Detection precedes notification, or the mail is a guess.
   database, apply `schema.sql`, drop it afterwards. Used by this suite and by
   `lab/webapp/tests/` (the dashboard side). Needs a Postgres role matching
   the OS user with CREATEDB.
-- `tests/` - three suites at three boundaries. `test_journal.py` is the
+- `tests/` - suites at their boundaries. `test_events.py` drives the
+  vocabulary directly - every constructor's key set, every reader's
+  normalization of every era of row, the naming rules - and holds the sweep
+  that fails when a kind literal ships outside `events.py`.
+  `test_journal.py` is the
   Journal against the real engine: NOTIFY asserted by a live listener,
   mutation blocked by the guard triggers, ordering. `test_cycle.py` runs the
   real `cycle.py --dry-run` against canned queue states, reading only the
@@ -1102,7 +1119,7 @@ tests/mutation-check.sh          # one suite run per mutation
 ```
 
 **Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
-mutations and the suites ran in seconds. There are now 111 entries in
+mutations and the suites ran in seconds. There are now 119 entries in
 `tests/selector-mutations.py`, and the suite each
 one re-runs takes one to two minutes, so a whole run is measured in hours -
 long enough that a build usually runs the entries it added and their
@@ -1183,9 +1200,13 @@ fails if a new one is ever added and left alone.
 
 `selector_staging` is built from `schema.sql` plus `seed.sql`, and is
 disposable. Note before you read the strip against it: the budget cell says
-`7 of 4`, because the fixture packs every outcome state into one hour and each
-needs its own dispatch. Unreachable in life - the cap refuses the fifth - and
-explained where the fixture packs them.
+`8 of 4`, because the fixture packs every outcome state into the last hours
+and each needs its own dispatch. Unreachable in life - the cap refuses the
+fifth - and explained where the fixture packs them. Every seeded row wears the
+shape today's writer writes: `lab/webapp/tests/test_staging_seed.py` grades
+each payload's key set against `events.py`'s constructors, and the seeded
+kinds must cover the whole vocabulary, so the fixture cannot drift from the
+writer it impersonates.
 
 
 
