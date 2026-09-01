@@ -125,6 +125,15 @@ budget is counted from, which is why a Route that GitHub refused still leaves a
 task that cannot be dispatched a third time.
 _Avoid_: ledger, log, queue
 
+**Journal Event**:
+One append to the Selector Journal: a kind naming what happened and a payload
+carrying what a reader needs. The vocabulary of Events - every kind and each
+payload's shape - has one owning module, closed for writers and open for
+readers: shipping code constructs every row through it, while a reader renders
+a kind it does not know generically rather than failing, which is what keeps a
+hand append legitimate.
+_Avoid_: log entry, message, notification
+
 **Queue Board**:
 The tracker's whole labeled queue as five columns on `/loop`, read when the page
 is requested rather than replayed from the Selector Journal: Eligible, blocked,

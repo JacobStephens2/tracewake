@@ -17,6 +17,10 @@ from typing import AsyncIterator
 import psycopg
 from psycopg.types.json import Jsonb
 
+# The constants alone: this module's own reader is named `events`, so the
+# vocabulary module cannot come in under its usual name.
+from events import RUN_CONTRACT, RUN_DISPATCHED, RUN_ITERATION
+
 CHANNEL = "journal_events"
 
 # One convention, worth stating because it looks like an inconsistency: an
@@ -62,11 +66,12 @@ def iterations_seen(conn: psycopg.Connection, issue: int,
     """
     rows = conn.execute(
         "SELECT DISTINCT (payload->>'iteration')::int FROM journal.events"
-        " WHERE kind = 'run.iteration'"
+        " WHERE kind = %s"
         "   AND payload->>'issue' = %s"
         "   AND payload->>'attempt' IS NOT DISTINCT FROM %s"
         "   AND payload->>'iteration' ~ '^[0-9]+$'",
-        (str(issue), None if attempt is None else str(attempt)),
+        (RUN_ITERATION, str(issue),
+         None if attempt is None else str(attempt)),
     ).fetchall()
     return {row[0] for row in rows}
 
@@ -92,11 +97,12 @@ def contract_seen(conn: psycopg.Connection, issue: int,
     """
     row = conn.execute(
         "SELECT 1 FROM journal.events"
-        " WHERE kind = 'run.contract'"
+        " WHERE kind = %s"
         "   AND payload->>'issue' = %s"
         "   AND payload->>'attempt' IS NOT DISTINCT FROM %s"
         " LIMIT 1",
-        (str(issue), None if attempt is None else str(attempt)),
+        (RUN_CONTRACT, str(issue),
+         None if attempt is None else str(attempt)),
     ).fetchone()
     return row is not None
 
@@ -167,17 +173,17 @@ def run_window(conn: psycopg.Connection, runs: int) -> tuple[int | None, int]:
     it, so reading from this floor cannot cut a card in half.
     """
     rows = conn.execute(
-        "SELECT id FROM journal.events WHERE kind = 'run.dispatched'"
+        "SELECT id FROM journal.events WHERE kind = %s"
         " ORDER BY id DESC LIMIT %s",
-        (runs,),
+        (RUN_DISPATCHED, runs),
     ).fetchall()
     if not rows:
         return None, 0
     floor = rows[-1][0]
     older = conn.execute(
         "SELECT count(*) FROM journal.events"
-        " WHERE kind = 'run.dispatched' AND id < %s",
-        (floor,),
+        " WHERE kind = %s AND id < %s",
+        (RUN_DISPATCHED, floor),
     ).fetchone()[0]
     return floor, older
 

@@ -352,7 +352,7 @@ def test_a_route_that_failed_still_recorded_the_run(db, box):
     box.run_summary(CLEAN_RUN)
     box.checks(GREEN_CHECKS)
     box.run(db, [issue(645)], ISSUE_EXIT=1)
-    assert one(db, "run.outcome")["outcome"] == "iteration-cap"
+    assert one(db, "run.outcome")["ended_by"] == "iteration-cap"
 
 
 def test_a_checks_read_that_fails_reaches_the_operator(db, box):

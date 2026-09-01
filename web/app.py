@@ -38,6 +38,7 @@ sys.path.insert(0, str(PROJECT / "selector"))
 import board as queue_board  # noqa: E402
 import control  # noqa: E402
 import cycle  # noqa: E402
+import events  # noqa: E402
 import journal  # noqa: E402
 
 import preview  # noqa: E402
@@ -231,49 +232,54 @@ def _duration(start, end) -> str | None:
     return f"{secs}s"
 
 
-def _cycles(events: list[dict]) -> list[dict]:
+def _cycles(rows: list[dict]) -> list[dict]:
     """Group Journal rows into one card per Selector cycle, newest first.
 
     A cycle's events all carry the id of its `cycle.started` row in
     `payload.cycle`, so the grouping is the Journal's own, not a guess made
     here. This page is a window and a scribe: it re-renders what the Selector
-    decided and decides nothing itself (ADR 0015).
+    decided and decides nothing itself (ADR 0015) - and what each row holds is
+    the vocabulary's knowledge, read through its records rather than re-guessed
+    here as key tuples.
     """
     cards: dict[int, dict] = {}
-    for event in events:  # newest first
-        if event["kind"] == "cycle.started":
+    for row in rows:  # newest first
+        kind = row["kind"]
+        if kind == events.CYCLE_STARTED:
             # `started` marks the card as whole. The Journal read is capped,
             # so the oldest cycle on the page is usually cut in half by the
             # limit, and a card built from the leftovers would render as a
             # nameless, timeless cycle rather than as the absence it is.
-            card = cards.setdefault(event["id"], {"skips": []})
+            started = events.cycle_started_record(row)
+            card = cards.setdefault(started.id, {"skips": []})
             card.update(
                 started=True,
-                id=event["id"],
-                at=_local(event["at"]),
-                repo=event["payload"].get("repo"),
-                label=event["payload"].get("label"),
-                dry_run=event["payload"].get("dry_run"),
+                id=started.id,
+                at=_local(started.at),
+                repo=started.repo,
+                label=started.label,
+                dry_run=started.dry_run,
             )
             continue
-        cycle_id = (event["payload"] or {}).get("cycle")
+        cycle_id = (row["payload"] or {}).get("cycle")
         if cycle_id is None:
             continue
         card = cards.setdefault(cycle_id, {"skips": []})
-        if event["kind"] == "issue.skipped":
-            card["skips"].append(event["payload"])
-        elif event["kind"] == "cycle.picked":
-            card["pick"] = event["payload"]
-        elif event["kind"] == "cycle.finished":
-            card["summary"] = event["payload"]
-        elif event["kind"] == "cycle.failed":
-            card["failed"] = event["payload"].get("error")
-        elif event["kind"] in ("issue.returned", "issue.return-failed"):
+        if kind == events.ISSUE_SKIPPED:
+            card["skips"].append(events.issue_skipped_record(row))
+        elif kind == events.CYCLE_PICKED:
+            card["pick"] = events.cycle_picked_record(row)
+        elif kind == events.CYCLE_FINISHED:
+            card["summary"] = events.cycle_finished_record(row)
+        elif kind == events.CYCLE_FAILED:
+            card["failed"] = events.cycle_failed_record(row).error
+        elif kind in (events.ISSUE_RETURNED, events.ISSUE_RETURN_FAILED):
             # The loud skip's second half. Kept beside the skip it belongs to
             # rather than in a list of its own: "skipped, and handed back" is
             # one fact about one issue.
-            card.setdefault("returned", {})[event["payload"].get("number")] = (
-                event["payload"].get("error") or True
+            handed = events.issue_returned_record(row)
+            card.setdefault("returned", {})[handed.number] = (
+                handed.error or True
             )
     whole = [card for card in cards.values() if card.get("started")]
     for card in whole:
@@ -285,29 +291,25 @@ def _cycles(events: list[dict]) -> list[dict]:
 
 # The Journal rows that say where an outcome put the issue (#155). One kind
 # per route so that the Journal is greppable by outcome, which means the page
-# has to know the set rather than matching a prefix.
-# kind -> the route name the card is styled and worded by. Spelled out rather
-# than derived by splitting the kind apart, because the name reaches the page
-# as a CSS class (`badge-awaiting-review`): a mapping that is wrong fails when
-# this file is read, where deriving it would have failed silently the day an
-# event kind was renamed and a badge quietly lost its colour.
-ROUTE_NAMES = {
-    "issue.awaiting-review": "awaiting-review",
-    "issue.handed-to-human": "handed-to-human",
-    "issue.given-up": "given-up",
-    "issue.retrying": "retrying",
-}
+# has to know the set rather than matching a prefix. The set is the
+# vocabulary's own declaration now - this used to be spelled out here so a
+# rename would fail loudly, and the failure that spelling could not catch (a
+# renamed Route quietly un-matching the map) is caught earlier still by the
+# constructors. The names also reach the page as CSS classes
+# (`badge-awaiting-review`); the badge-pin test in test_loop_page.py is what
+# keeps a rename from quietly unstyling a card.
+ROUTE_NAMES = dict(events.ROUTE_KIND_NAMES)
 ROUTE_KINDS = set(ROUTE_NAMES)
 
 # Every kind a Run card is built from, so the membership test is one lookup
 # rather than a set union rebuilt per event.
 RUN_KINDS = ROUTE_KINDS | {
-    "run.dispatched", "run.outcome", "run.iteration", "run.watch-failed",
-    "run.contract",
+    events.RUN_DISPATCHED, events.RUN_OUTCOME, events.RUN_ITERATION,
+    events.RUN_WATCH_FAILED, events.RUN_CONTRACT,
 }
 
 
-def _runs(events: list[dict]) -> list[dict]:
+def _runs(rows: list[dict]) -> list[dict]:
     """One card per dispatch, newest first: the Run in flight, and the Runs
     that have ended with what they produced.
 
@@ -319,77 +321,105 @@ def _runs(events: list[dict]) -> list[dict]:
     guessing at it.
     """
     cards: dict[tuple, dict] = {}
-    for event in events:  # newest first
-        payload = event["payload"] or {}
-        if event["kind"] not in RUN_KINDS:
+    for row in rows:  # newest first
+        kind = row["kind"]
+        payload = row["payload"] or {}
+        if kind not in RUN_KINDS:
             continue
         if payload.get("issue") is None:
             continue
         key = (payload["issue"], payload.get("attempt"))
         card = cards.setdefault(key, {"in_flight": True})
-        if event["kind"] in ROUTE_KINDS:
+        if kind in ROUTE_KINDS:
             # Where the outcome put the issue (#155). Journaled as its own row
             # rather than folded into `run.outcome`, because the route is
             # decided after that row is written - so the card learns it from
             # the routing event or shows no badge at all, which is what an
             # in-flight Run and a route the tracker refused both look like.
+            routed = events.route_record(row)
             card.update(
-                route=ROUTE_NAMES[event["kind"]],
-                label=payload.get("label"),
-                failing=payload.get("failing"),
-                checks=payload.get("checks"),
-                # The route's own reading of how the Run ended. A Run that hit
-                # its cap and proposed nothing is journaled `no-proposal` here
-                # while `run.outcome` still carries the bound, and the card
-                # should say the thing the operator was told on the issue.
-                routed_outcome=payload.get("outcome"),
+                route=routed.route,
+                label=routed.label,
+                failing=routed.failing,
+                checks=routed.checks,
             )
-        elif event["kind"] == "run.iteration":
+            # The route's own reading of how the Run ended: a Run that hit
+            # its cap and proposed nothing is `no-proposal` here while
+            # `run.outcome` carries the bound, and the card says the thing
+            # the operator was told on the issue. Rows arrive newest first,
+            # so this lands before the outcome row's fallback - and only when
+            # the route actually carries a reading, because a thin route row
+            # (a hand append; readers are total over those) must not pin the
+            # card's outcome to nothing.
+            if routed.outcome is not None:
+                card["outcome"] = routed.outcome
+        elif kind == events.RUN_ITERATION:
             # The watcher's rows (#157): what the Run is doing, while it
             # does it. Named for what they are rather than folded into the
             # card's `iterations`, which is a COUNT the box reported when the
             # Run ended - a different fact, and one that does not exist yet
             # while the Run is in flight.
-            card.setdefault("iteration_records", []).append(
-                {**payload, "at": _local(event["at"])}
-            )
-        elif event["kind"] == "run.contract":
+            record = events.run_iteration_record(row)
+            card.setdefault("iteration_records", []).append({
+                "iteration": record.iteration,
+                "started": record.started,
+                "agent_exit": record.agent_exit,
+                "exit_note": record.exit_note,
+                "turn_bound": record.turn_bound,
+                "noop": record.noop,
+                "head_before": record.head_before,
+                "head_after": record.head_after,
+                "promise": record.promise,
+                "dirty": record.dirty,
+                "at": _local(record.at),
+            })
+        elif kind == events.RUN_CONTRACT:
             # The terms this Run is executing under (#162), read by the
             # watcher out of the summary the box writes at Run start. It is
             # the BOX's Contract and not this side's configuration: the two
             # can differ, and a panel showing the wrong one would reassure
             # about bounds nothing is enforcing.
-            card["contract"] = payload.get("contract")
-        elif event["kind"] == "run.watch-failed":
+            card["contract"] = events.run_contract_record(row).contract
+        elif kind == events.RUN_WATCH_FAILED:
             # Said once per Run by the watcher, and shown, because a Run with
             # no Iterations on its card and a Run whose Progress Log could not
             # be read look identical otherwise.
-            card["watch_error"] = payload.get("error")
-        elif event["kind"] == "run.dispatched":
+            card["watch_error"] = events.run_watch_failed_record(row).error
+        elif kind == events.RUN_DISPATCHED:
+            record = events.run_dispatched_record(row)
             card.update(
                 dispatched=True,
-                id=event["id"],
-                at=_local(event["at"]),
-                started_at=event["at"],
-                **{k: payload.get(k) for k in
-                   ("issue", "title", "url", "branch", "task_ref", "area",
-                    "check", "attempt", "cycle")},
+                id=record.id,
+                at=_local(record.at),
+                started_at=record.at,
+                issue=record.issue,
+                title=record.title,
+                url=record.url,
+                branch=record.branch,
+                task_ref=record.task_ref,
+                area=record.area,
+                check=record.check,
+                attempt=record.attempt,
+                cycle=record.cycle,
             )
         else:
+            record = events.run_outcome_record(row)
             card.update(
                 in_flight=False,
-                ended_at=_local(event["at"]),
-                finished_at=event["at"],
-                **{k: payload.get(k) for k in
-                   ("outcome", "exit", "iterations", "faults", "proposal",
-                    "notified", "error")},
+                ended_at=_local(record.at),
+                finished_at=record.at,
+                exit=record.exit,
+                iterations=record.iterations,
+                faults=record.faults,
+                proposal=record.proposal,
+                notified=record.notified,
+                error=record.error,
             )
-            # Events arrive newest first, so the route was read BEFORE this
-            # row and this update would otherwise overwrite its reading with
-            # the raw bound. Where the route renamed the outcome, its name
-            # wins: it is what the operator was told on the issue.
-            if card.get("routed_outcome"):
-                card["outcome"] = card["routed_outcome"]
+            # The route row - read above, because rows arrive newest first -
+            # owns the outcome's NAME. The raw bound stands in only when no
+            # route was journaled, which is what an in-flight Run and a route
+            # the tracker refused both look like.
+            card.setdefault("outcome", record.ended_by)
     # Same rule as the cycle cards: a card whose `run.dispatched` scrolled off
     # the read limit is an absence, not a nameless Run.
     whole = [card for card in cards.values() if card.get("dispatched")]
@@ -467,9 +497,7 @@ def _timer() -> dict:
     }
 
 
-def _newest_reading(
-    events: list[dict], good: str, bad: str, flag: str
-) -> dict | None:
+def _newest(rows: list[dict], kinds: tuple, reader):
     """The newest of a status read's two rows, whichever kind it is.
 
     Both cells the cycle fills in - the box card and the guardrail chip - are
@@ -478,23 +506,22 @@ def _newest_reading(
     while every cycle since had failed would be the page hiding the one fact
     worth showing.
 
-    `flag` is what the caller calls "the good kind happened"; it and `at` are
-    written AFTER the payload, because the Journal is append-only and its rows
-    outlive this code - a future payload that happened to carry either name
-    must not overwrite what the page worked out for itself.
+    Returns `(record, card)`: the vocabulary's record of the row, and the
+    page's own additions - the localized `at` and the reading's age. What the
+    record knows is attributes, so no payload key, present or future, can
+    overwrite it; the old dict-splat here had to defend that with a reserved-
+    key convention nothing recorded.
     """
-    for event in events:  # newest first
-        if event["kind"] in (good, bad):
-            return {
-                **(event["payload"] or {}),
-                "at": _local(event["at"]),
-                "age": datetime.now(timezone.utc) - event["at"],
-                flag: event["kind"] == good,
+    for row in rows:  # newest first
+        if row["kind"] in kinds:
+            return reader(row), {
+                "at": _local(row["at"]),
+                "age": datetime.now(timezone.utc) - row["at"],
             }
     return None
 
 
-def _box(events: list[dict]) -> dict | None:
+def _box(rows: list[dict]) -> dict | None:
     """The newest thing known about the box, observed or failed.
 
     The credential's remaining life is worked out HERE rather than journaled,
@@ -510,12 +537,24 @@ def _box(events: list[dict]) -> dict | None:
     guardrail because whether the paths are protected is a judgement with
     rejected alternatives in it; whether an instant has passed is not.
     """
-    reading = _newest_reading(events, "box.observed", "box.unreachable", "reachable")
-    if reading is None:
+    found = _newest(
+        rows, (events.BOX_OBSERVED, events.BOX_UNREACHABLE), events.box_record
+    )
+    if found is None:
         return None
-    expires_at = reading.get("credential_expires_at")
-    reading["credential_expired"] = None
-    reading["credential_remaining"] = None
+    record, card = found
+    card.update(
+        reachable=record.reachable,
+        error=record.error,
+        scripts_hash=record.scripts_hash,
+        guest_template=record.guest_template,
+        agent=record.agent,
+        agent_version=record.agent_version,
+        credential_expires_at=record.credential_expires_at,
+        credential_expired=None,
+        credential_remaining=None,
+    )
+    expires_at = record.credential_expires_at
     if expires_at:
         try:
             expiry = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -526,14 +565,14 @@ def _box(events: list[dict]) -> dict | None:
             # guessed at. The box is the only thing that knows the shape, and
             # a card that rendered an unparsed string as "expired" would page
             # for a format change.
-            return reading
+            return card
         now = datetime.now(timezone.utc)
-        reading["credential_expired"] = expiry <= now
-        reading["credential_remaining"] = _duration(now, expiry)
+        card["credential_expired"] = expiry <= now
+        card["credential_remaining"] = _duration(now, expiry)
         # Parsed, so it can be shown on the operator's clock like every other
         # instant on the page. The unparsed branch above keeps the raw string.
-        reading["credential_expires_at"] = _local(expiry)
-    return reading
+        card["credential_expires_at"] = _local(expiry)
+    return card
 
 
 # How old a guardrail reading may be and still stand for now. The timer fires
@@ -546,7 +585,7 @@ def _box(events: list[dict]) -> dict | None:
 GUARDRAIL_MAX_AGE = timedelta(minutes=90)
 
 
-def _guardrail(events: list[dict]) -> dict | None:
+def _guardrail(rows: list[dict]) -> dict | None:
     """The newest reading of the write protection over the executed paths.
 
     The box card's rule, turned up one notch by `stale`: a chip is a claim
@@ -557,12 +596,27 @@ def _guardrail(events: list[dict]) -> dict | None:
     be a second opinion about whether the Selector is protected, with no way
     to tell which of the two had been reviewed.
     """
-    reading = _newest_reading(
-        events, "guardrail.observed", "guardrail.unreadable", "readable"
+    found = _newest(
+        rows,
+        (events.GUARDRAIL_OBSERVED, events.GUARDRAIL_UNREADABLE),
+        events.guardrail_record,
     )
-    if reading is not None:
-        reading["stale"] = reading["age"] > GUARDRAIL_MAX_AGE
-    return reading
+    if found is None:
+        return None
+    record, card = found
+    card.update(
+        readable=record.readable,
+        protected=record.protected,
+        error=record.error,
+        ref=record.ref,
+        ref_head=record.ref_head,
+        rules=record.rules,
+        paths=record.paths,
+        unreviewed=record.unreviewed,
+        detail=record.detail,
+        stale=card["age"] > GUARDRAIL_MAX_AGE,
+    )
+    return card
 
 
 def _selector_state(

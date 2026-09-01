@@ -47,6 +47,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import events
+
 HERE = Path(__file__).resolve().parent
 LOOP = HERE.parent / "loop"
 
@@ -466,7 +468,7 @@ def checks(config: DispatchConfig, task_repo: str, proposal: str) -> dict:
         raise DispatchFailed(
             f"the checks on {proposal} did not parse: {exc}"
         ) from exc
-    if state not in ("green", "red", "pending", "none"):
+    if state not in events.CHECK_STATES:
         raise DispatchFailed(f"unknown check state {state!r} on {proposal}")
     return {"state": state, "failing": failing}
 

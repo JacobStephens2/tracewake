@@ -14,12 +14,13 @@ ADR 0018's four events, and the one row each is read off:
     (2) a dispatch or preflight failed              run.outcome, cycle.failed
     (3) the box's credential is close to expiring   box.observed
 
-Green and not-green are decided here with `cycle.py`'s own predicate rather
-than a second one. A Run that ended on a failure bound can still be holding a
-Proposal - `agent-failed` after a push is exactly that - and cycle.py routes
+Green and not-green are decided with the vocabulary's own naming rules
+(`events.RUN_FAILURE_BOUNDS`, `events.outcome_name`) rather than a second
+predicate. A Run that ended on a failure bound can still be holding a
+Proposal - `agent-failed` after a push is exactly that - and the cycle routes
 it as a failure and retries it. An email that called the same Run green would
 be the Selector saying two different things about one Run, and the operator
-would have no way to tell which was true. So `RUN_FAILURE_BOUNDS` is imported,
+would have no way to tell which was true. One spelling of the rule, imported,
 for the reason `board.py` imports `eligibility`.
 
 What is deliberately silent, so that the silence is a decision rather than an
@@ -44,7 +45,8 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from cycle import MAX_ATTEMPTS, NO_PROPOSAL, RUN_FAILURE_BOUNDS, outcome_name
+import events
+from events import MAX_ATTEMPTS, NO_PROPOSAL, is_failure, outcome_name
 
 # How close to expiry the box's credential has to be before it is worth an
 # email. The subscription login lapses eight hours after a human mints it and
@@ -122,13 +124,12 @@ def for_event(event: dict, *, now: datetime,
     deciding both here would leave the notifier nothing to count.
     """
     kind = event["kind"]
-    payload = event.get("payload") or {}
-    if kind == "run.outcome":
-        return _run_notice(payload, config)
-    if kind == "cycle.failed":
-        return _cycle_failure_notice(payload, config)
-    if kind == "box.observed":
-        return _credential_notice(payload, now, config)
+    if kind == events.RUN_OUTCOME:
+        return _run_notice(events.run_outcome_record(event), config)
+    if kind == events.CYCLE_FAILED:
+        return _cycle_failure_notice(events.cycle_failed_record(event), config)
+    if kind == events.BOX_OBSERVED:
+        return _credential_notice(events.box_record(event), now, config)
     return None
 
 
@@ -184,7 +185,7 @@ def backlog_notice(skipped: list[dict], *, config: NoticeConfig) -> Notice:
 # --- Runs -------------------------------------------------------------------
 
 
-def _run_notice(payload: dict, config: NoticeConfig) -> Notice:
+def _run_notice(record: events.RunOutcome, config: NoticeConfig) -> Notice:
     """Every `run.outcome` row is worth exactly one email; which one it is
     depends on what the Run left behind.
 
@@ -193,46 +194,46 @@ def _run_notice(payload: dict, config: NoticeConfig) -> Notice:
     row to pair with every `run.dispatched`). That is what makes this the
     right row to mail off: no Run is missed and none is reported twice.
     """
-    raw = payload.get("outcome") or payload.get("ended_by") or "unknown"
-    proposal = payload.get("proposal")
-    if raw == "dispatch-failed":
-        return _dispatch_failure_notice(payload, config)
+    raw = record.ended_by or "unknown"
+    proposal = record.proposal
+    if raw == events.DISPATCH_FAILED:
+        return _dispatch_failure_notice(record, config)
     # The row carries the raw bound - it is written before the cycle's routing
     # step draws this distinction - so the name has to be derived here, with
-    # the cycle's own rule rather than a second one. Without it a Run that
-    # reached its cap and proposed nothing would be mailed as "cut short by
-    # iteration-cap", which is the opposite of what happened.
+    # the vocabulary's one rule. Without it a Run that reached its cap and
+    # proposed nothing would be mailed as "cut short by iteration-cap", which
+    # is the opposite of what happened.
     ended_by = outcome_name(raw, proposal)
-    if ended_by in RUN_FAILURE_BOUNDS or not proposal:
-        return _failed_run_notice(payload, ended_by, config)
-    return _green_run_notice(payload, config)
+    if is_failure(ended_by, proposal):
+        return _failed_run_notice(record, ended_by, config)
+    return _green_run_notice(record, config)
 
 
-def _ref(payload: dict) -> str:
+def _ref(record: events.RunOutcome) -> str:
     """How a Run is named in a subject line. `task_ref` is the repository and
     the number together, which is what the operator searches for; the bare
     number is the fallback for a row written before there was one."""
-    return payload.get("task_ref") or f"#{payload.get('issue')}"
+    return record.task_ref or f"#{record.issue}"
 
 
-def _run_facts(payload: dict) -> list[str]:
+def _run_facts(record: events.RunOutcome) -> list[str]:
     """The Run's own report, in the shape `run.sh` printed it. Every line is
     something the box said - nothing here is derived - so a reader comparing
     this against the Progress Log is comparing two copies of one fact."""
     lines = [
-        f"  issue:      {_ref(payload)} - {payload.get('title') or ''}".rstrip(),
-        f"  branch:     {payload.get('branch') or 'unknown'}",
-        f"  ended by:   {payload.get('outcome') or payload.get('ended_by')}",
-        f"  exit code:  {payload.get('exit')}",
-        f"  iterations: {payload.get('iterations')}",
-        f"  faults:     {payload.get('faults') or 'none'}",
+        f"  issue:      {_ref(record)} - {record.title or ''}".rstrip(),
+        f"  branch:     {record.branch or 'unknown'}",
+        f"  ended by:   {record.ended_by}",
+        f"  exit code:  {record.exit}",
+        f"  iterations: {record.iterations}",
+        f"  faults:     {record.faults or 'none'}",
     ]
-    if payload.get("notified"):
-        lines.append(f"  notified:   {payload['notified']}")
+    if record.notified:
+        lines.append(f"  notified:   {record.notified}")
     return lines
 
 
-def _green_run_notice(payload: dict, config: NoticeConfig) -> Notice:
+def _green_run_notice(record: events.RunOutcome, config: NoticeConfig) -> Notice:
     """(0) The Run ended within its bounds and left a Proposal.
 
     GitHub carried this message until 2026-08-31 - ADR 0013's comment on the
@@ -246,11 +247,11 @@ def _green_run_notice(payload: dict, config: NoticeConfig) -> Notice:
     routing step, and this row is written before it. "Green" here means the
     Run finished and proposed, not that CI passed.
     """
-    proposal = payload["proposal"]
+    proposal = record.proposal
     body = "\n".join([
-        f"A Run finished and left a Proposal for {_ref(payload)}.",
+        f"A Run finished and left a Proposal for {_ref(record)}.",
         "",
-        *_run_facts(payload),
+        *_run_facts(record),
         f"  proposal:   {proposal}",
         "",
         "Its checks are read by the cycle after this, and the label the issue",
@@ -260,13 +261,13 @@ def _green_run_notice(payload: dict, config: NoticeConfig) -> Notice:
         f"The Loop's board: {config.loop_url}",
     ])
     return Notice(
-        subject=f"Proposal ready: {_ref(payload)}",
+        subject=f"Proposal ready: {_ref(record)}",
         body=body,
         link=proposal,
     )
 
 
-def _failed_run_notice(payload: dict, ended_by: str,
+def _failed_run_notice(record: events.RunOutcome, ended_by: str,
                        config: NoticeConfig) -> Notice:
     """(1) The Run was cut short, or reached its cap with nothing to show.
 
@@ -279,22 +280,22 @@ def _failed_run_notice(payload: dict, ended_by: str,
     retry the routing then declined would be worse than one that says how many
     attempts the Handover has left.
     """
-    attempt = payload.get("attempt")
-    proposal = payload.get("proposal")
+    attempt = record.attempt
+    proposal = record.proposal
     what = (
         "ended within its bounds and left no Proposal"
         if ended_by == NO_PROPOSAL else
         f"was cut short by `{ended_by}`"
     )
     lines = [
-        f"A Run for {_ref(payload)} {what}.",
+        f"A Run for {_ref(record)} {what}.",
         "",
-        *_run_facts(payload),
+        *_run_facts(record),
     ]
     if proposal:
         lines.append(f"  proposal:   {proposal}")
     lines.append("")
-    if payload.get("notified") == "no-surface":
+    if record.notified == "no-surface":
         lines += [
             "The Run reported `no-surface`: it had no Proposal to comment on,",
             "and the box has no second way to reach anybody. This message is it.",
@@ -318,9 +319,9 @@ def _failed_run_notice(payload: dict, ended_by: str,
     # partial Proposal worth reading, and one that ran to its cap and proposed
     # nothing has left the operator nothing at all.
     subject = (
-        f"Run ended without a Proposal: {_ref(payload)}"
+        f"Run ended without a Proposal: {_ref(record)}"
         if ended_by == NO_PROPOSAL else
-        f"Run cut short by {ended_by}: {_ref(payload)}"
+        f"Run cut short by {ended_by}: {_ref(record)}"
     )
     return Notice(
         subject=subject,
@@ -329,7 +330,8 @@ def _failed_run_notice(payload: dict, ended_by: str,
     )
 
 
-def _dispatch_failure_notice(payload: dict, config: NoticeConfig) -> Notice:
+def _dispatch_failure_notice(record: events.RunOutcome,
+                             config: NoticeConfig) -> Notice:
     """(2a) The box started no Run at all - an SSH that did not connect, a
     Seeding step that refused, a push GitHub rejected.
 
@@ -338,13 +340,13 @@ def _dispatch_failure_notice(payload: dict, config: NoticeConfig) -> Notice:
     machinery rather than about the work.
     """
     body = "\n".join([
-        f"A dispatch for {_ref(payload)} failed before any Run started.",
+        f"A dispatch for {_ref(record)} failed before any Run started.",
         "",
-        f"  issue:      {_ref(payload)} - {payload.get('title') or ''}".rstrip(),
-        f"  branch:     {payload.get('branch') or 'not prepared'}",
-        f"  attempt:    {payload.get('attempt')}",
+        f"  issue:      {_ref(record)} - {record.title or ''}".rstrip(),
+        f"  branch:     {record.branch or 'not prepared'}",
+        f"  attempt:    {record.attempt}",
         "",
-        f"  {payload.get('error') or 'no error was recorded'}",
+        f"  {record.error or 'no error was recorded'}",
         "",
         "The cycle exited non-zero, so selector-cycle.service has failed and",
         "its own unit alert names the unit. This one names the issue.",
@@ -352,21 +354,22 @@ def _dispatch_failure_notice(payload: dict, config: NoticeConfig) -> Notice:
         f"The Loop's board: {config.loop_url}",
     ])
     return Notice(
-        subject=f"Dispatch failed: {_ref(payload)}",
+        subject=f"Dispatch failed: {_ref(record)}",
         body=body,
         link=config.loop_url,
     )
 
 
-def _cycle_failure_notice(payload: dict, config: NoticeConfig) -> Notice:
+def _cycle_failure_notice(record: events.CycleFailure,
+                          config: NoticeConfig) -> Notice:
     """(2b) The cycle failed before it had a Run to fail - the tracker did not
     answer, the queue did not parse, the branch could not be prepared."""
     body = "\n".join([
         "A Selector cycle failed. No Run was dispatched by it.",
         "",
-        f"  cycle:      {payload.get('cycle')}",
+        f"  cycle:      {record.cycle}",
         "",
-        f"  {payload.get('error') or 'no error was recorded'}",
+        f"  {record.error or 'no error was recorded'}",
         "",
         "The timer fires again in thirty minutes and will try the whole cycle",
         "afresh. A second message about the same failure means it is not",
@@ -384,7 +387,7 @@ def _cycle_failure_notice(payload: dict, config: NoticeConfig) -> Notice:
 # --- The credential ---------------------------------------------------------
 
 
-def _credential_notice(payload: dict, now: datetime,
+def _credential_notice(reading: events.BoxReading, now: datetime,
                        config: NoticeConfig) -> Notice | None:
     """(3) The box's model credential is about to stop working, or has.
 
@@ -399,7 +402,7 @@ def _credential_notice(payload: dict, now: datetime,
     expiry, and inventing an alarm out of a field that was never filled in is
     how a channel earns being ignored.
     """
-    raw = payload.get("credential_expires_at")
+    raw = reading.credential_expires_at
     expires_at = _instant(raw)
     if expires_at is None:
         return None
