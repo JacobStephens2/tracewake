@@ -63,7 +63,7 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
 targets=(cycle.py control.py dispatch.py watcher.py board.py journal.py
-         notices.py notifier.py ../../webapp/app.py
+         notices.py notifier.py testdb.py ../../webapp/app.py
          guardrail-sources/protection.sh
          issue-sources/github.sh
          ../../webapp/templates/_loop_live.html

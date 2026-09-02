@@ -928,7 +928,8 @@ Detection precedes notification, or the mail is a guess.
 - `testdb.py` - the shared throwaway-test-database harness: create a random
   database, apply `schema.sql`, drop it afterwards. Used by this suite and by
   `lab/webapp/tests/` (the dashboard side). Needs a Postgres role matching
-  the OS user with CREATEDB.
+  the OS user with CREATEDB. It also keeps the books on its own residue, for
+  the reason in **Throwaway databases that outlive their run** below.
 - `tests/` - suites at their boundaries. `test_events.py` drives the
   vocabulary directly - every constructor's key set, every reader's
   normalization of every era of row, the naming rules - and holds the sweep
@@ -969,9 +970,58 @@ Detection precedes notification, or the mail is a guess.
   PATH and a throwaway repository with a real `origin/master` in it, so
   neither the network nor the state of the checkout the suite runs in can
   change the answer.
+  `test_testdb.py` is #178 at the harness's own boundary: what the throwaway
+  database harness leaked, and the sweep for what a killed run left - both
+  against real databases on the real instance, including a second process
+  driven through `throwaway_db()` to stand in for a concurrent run.
 
 The window is `lab/webapp`'s `/loop` page, which imports `journal.py` from
 here and renders at request time.
+
+### Throwaway databases that outlive their run (#178)
+
+`throwaway_db()` drops what it creates, and the drop is robust: `WITH (FORCE)`
+terminates whatever is still attached, retried past the two errors FORCE
+itself can raise - a backend on its way out (`ObjectInUse`) and an autovacuum
+worker owned by another role, which this connection is not allowed to signal
+(`InsufficientPrivilege`).
+
+What no `finally:` can cover is a run that does not reach it: pytest killed,
+a `SIGKILL`, the box rebooted. That leaves a `selector_test_*` database with
+nobody left to drop it, and for a while nothing said so - 23 of them, 173 MB,
+found by an operator running a count while scoping something else. So two
+things now report:
+
+- **At the end of a run**, both suites print the databases *that run* created
+  and failed to drop, by name. It is a report and not a failure; the drop
+  raising is what fails a run.
+- **A sweep** clears the residue of runs that are no longer around to ask:
+
+      .venv/bin/python testdb.py --sweep            # and --sweep --dry-run
+
+  It drops only `selector_test_*` databases with **no session attached**, and
+  it drops without FORCE - FORCE is right in `_drop`, where the only backends
+  on the database are the test's own, and wrong here, where they are somebody
+  else's. One that attaches between the listing and the drop raises
+  `ObjectInUse` and is skipped rather than terminated. The live `selector`
+  Journal and #175's `selector_staging` are outside the prefix and are never
+  candidates.
+
+  "No session attached" is only a safe rule because `throwaway_db()` holds one
+  connection open for the life of the database. It did not always: the
+  connection that applies `schema.sql` used to close before the DSN was handed
+  over, so a live throwaway database routinely had **nothing** attached to it
+  between one statement and the next - a test whose subject connects from a
+  subprocess may have nothing attached for most of its life - and the sweep
+  would have taken a concurrent run's database out from under it. That is what
+  the keeper connection is for, and `sweep-takes-a-live-run` in
+  `tests/selector-mutations.py` is what keeps it.
+
+The counterpart trap, and the reason the end-of-run report tracks names rather
+than counting rows: a bare `SELECT count(*) ... WHERE datname LIKE
+'selector\_test\_%'` at the end of a run reports a *concurrent* suite's live
+database as this run's leak. The tally on #178 read 25 when the leak was 23,
+for exactly that reason.
 
 ### The push (#159)
 
