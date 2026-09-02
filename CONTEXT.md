@@ -18,11 +18,21 @@ Iteration, keeping all state on disk in the repo. Huntley's and Matt Pocock's, n
 ETA's.
 _Avoid_: the Loop, our Ralph
 
+**Tracewake**:
+The system in its generic, operator-owned form: the Run machinery, the Selector
+and its window, with everything that names a company, a tracker, a box or a
+person arriving as configuration rather than living in the code. Every term in
+this glossary is a Tracewake term; the Loop is one instance of it.
+_Avoid_: the generic Loop, the personal Loop, the fork, Patchyard (reserved for
+the intake-and-review factory the Loop deliberately stripped)
+
 **Loop**:
-ETA's single-operator instantiation of Ralph: the Run, its Termination Contract,
-the box it executes on, and the Proposal-Only Output it produces. Sibling to the
-ETA Factory, which solves the same problem at a company threat model.
-_Avoid_: Ralph, the Ralph loop, the agent
+ETA's instance of Tracewake, and our implementation of the Ralph technique: the
+Run, its Termination Contract, the box it executes on, and the Proposal-Only
+Output it produces. Sibling to the ETA Factory, which solves the same problem
+at a company threat model.
+_Avoid_: Ralph, the Ralph loop, the agent, Tracewake (the product; this is one
+instance of it)
 
 **Iteration**:
 One agent process, launched and exited. Context is discarded at its boundary, and
