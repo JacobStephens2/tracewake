@@ -177,10 +177,11 @@ authenticates against a subscription rather than a metered credential.
 _Avoid_: exit condition, iteration cap
 
 **Bound**:
-One condition of the Termination Contract. There are five, and a Run names the
-one that ended it: `iteration-cap`, `run-clock`, `consecutive-noops`,
-`agent-failed`. So "iteration cap" is the right name for one bound and the wrong
-name for the whole Contract, which is what the entry above is guarding.
+One condition of the Termination Contract. The Contract declares five numbers,
+two of which end an Iteration rather than a Run, so a Run ends on one of four
+and names it: `iteration-cap`, `run-clock`, `consecutive-noops`, `agent-failed`.
+"Iteration cap" is the right name for one bound and the wrong name for the
+whole Contract, which is what the entry above is guarding.
 _Avoid_: limit, guardrail, timeout
 
 **Discipline Skills**:
