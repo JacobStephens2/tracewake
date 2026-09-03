@@ -63,13 +63,13 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
 targets=(cycle.py control.py dispatch.py watcher.py board.py journal.py
-         notices.py notifier.py testdb.py ../../webapp/app.py
+         notices.py notifier.py testdb.py ../web/app.py
          guardrail-sources/protection.sh
          issue-sources/github.sh
-         ../../webapp/templates/_loop_live.html
-         ../../webapp/templates/_history_live.html)
+         ../web/templates/_loop_live.html
+         ../web/templates/_history_live.html)
 backup_dir="$(mktemp -d)"
-# Backed up under a flattened name - `../../webapp/app.py` would otherwise
+# Backed up under a flattened name - `../web/app.py` would otherwise
 # write outside the backup directory, which is a mutation runner quietly
 # scribbling on the repository.
 backup_of() { printf '%s/%s' "${backup_dir}" "${1//\//_}"; }
@@ -115,14 +115,14 @@ while IFS=$'\t' read -r mutation target suite; do
     # </dev/null for the reason the Loop's runner documents: without it the
     # suite inherits this loop's stdin - the mutation list - and the loop ends
     # early while reporting every mutation caught.
-    # The window's suite is the dashboard's, and the dashboard has its own
+    # The window's suite is the window's own, and the window has its own
     # venv - FastAPI and its test client are not in the Selector's. Running it
     # with the wrong interpreter would fail at `import fastapi` and report
     # every window mutation "caught" for a reason that has nothing to do with
     # the mutation, which is worse than not checking it at all.
     suite_python="${python_cmd}"
     case "${suite}" in
-        ../../webapp/*) suite_python="${selector_dir}/../../webapp/.venv/bin/python" ;;
+        ../web/*) suite_python="${selector_dir}/../web/.venv/bin/python" ;;
     esac
     # An interpreter that is not there fails the OTHER way round: pytest never
     # runs, no `FAILED` line is printed, and the mutation is reported
@@ -136,7 +136,7 @@ while IFS=$'\t' read -r mutation target suite; do
         printf '  Build it: python3 -m venv %s && %s/bin/pip install -r %s\n' \
             "$(dirname -- "$(dirname -- "${suite_python}")")" \
             "$(dirname -- "$(dirname -- "${suite_python}")")" \
-            "${selector_dir}/../../webapp/requirements-dev.txt" >&2
+            "${selector_dir}/../web/requirements-dev.txt" >&2
         exit 2
     fi
 

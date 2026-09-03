@@ -36,8 +36,8 @@ def test_a_cycle_journals_the_protection_standing_over_the_executed_paths(db, bo
     assert row["ref"] == "master"
     assert row["rules"] == ["deletion", "non_fast_forward", "pull_request"]
     assert row["paths"] == [
-        "lab/single-user-factory/loop",
-        "lab/single-user-factory/selector",
+        "loop",
+        "selector",
     ]
     assert row["unreviewed"] == []
     assert row["protected"] is True
@@ -96,14 +96,14 @@ def test_an_executed_path_that_differs_from_the_protected_ref_is_not_protected(
     systemd is about to exec."""
     box.guardrail(GUARDRAIL.replace(
         "SELECTOR_GUARDRAIL_UNREVIEWED=",
-        "SELECTOR_GUARDRAIL_UNREVIEWED=lab/single-user-factory/selector/cycle.py",
+        "SELECTOR_GUARDRAIL_UNREVIEWED=selector/cycle.py",
     ))
 
     box.run(db, [issue(645)])
 
     row = one(db, "guardrail.observed")
     assert row["protected"] is False
-    assert row["unreviewed"] == ["lab/single-user-factory/selector/cycle.py"]
+    assert row["unreviewed"] == ["selector/cycle.py"]
     assert "cycle.py" in row["detail"]
 
 

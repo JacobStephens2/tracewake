@@ -13,33 +13,34 @@
 # could keep green.
 
 # The Loop's scripts. Executed on the box, and placed there by
-# `ansible/roles/loop_scripts`, which copies them out of THIS tree rather than
-# out of a merge - so what is sitting here is what the next apply deploys.
-lab/single-user-factory/loop
+# `deploy/ansible/roles/loop_scripts`, which copies them out of THIS tree
+# rather than out of a merge - so what is sitting here is what the next apply
+# deploys.
+loop
 
 # The Selector itself: the cycle systemd starts every thirty minutes, the
 # dispatch that seeds a branch and starts a Run on the box, the watcher, the
 # Journal, and this declaration.
-lab/single-user-factory/selector
+selector
 
-# How that cycle is invoked: the unit, its timer, and the wrapper named in its
-# ExecStart that resolves the credentials it runs with.
-scripts/selector-cycle.service
-scripts/selector-cycle.timer
-scripts/with-orchestration-env.sh
+# How that cycle is invoked: the units and the timer. The wrapper named in the
+# unit's ExecStart resolves the instance's credentials and so lives in the
+# instance's own tree, not this one - guarding it needs the multi-tree
+# Guardrail, which is a ticket of its own.
+deploy/systemd/tracewake-selector-cycle.service
+deploy/systemd/tracewake-selector-cycle.timer
 
 # And how the operator is told about it: the notifier's unit (ADR 0018). It
 # runs unattended for the same reason the cycle does, and it is the only thing
 # that speaks when a Run fails - an unreviewed edit here is an alarm that goes
 # quiet without anything failing to say so.
-scripts/selector-notifier.service
+deploy/systemd/tracewake-selector-notifier.service
 
 # Deliberately NOT here:
 #
-#   lab/webapp            the window. It renders the Journal and owns one
+#   web/                  the window. It renders the Journal and owns one
 #                         control (the pause flag); it dispatches nothing, and
 #                         no Run reads it.
-#   ansible/roles/loop_*  the apply that puts the Loop on the box. An apply is
-#                         a human at a keyboard - Attendedness holds - and what
-#                         it deploys is `lab/single-user-factory/loop`, which is
-#                         declared above.
+#   deploy/ansible/       the apply that puts the Loop on the box. An apply is
+#     roles/loop_*        a human at a keyboard - Attendedness holds - and what
+#                         it deploys is `loop`, which is declared above.

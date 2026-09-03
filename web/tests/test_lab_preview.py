@@ -1,4 +1,4 @@
-"""Tests for scripts/lab-preview.sh, the Attended Preview's front door.
+"""Tests for web/lab-preview.sh, the Attended Preview's front door.
 
 ADR 0016 puts two properties in this script and nowhere else: a preview names
 the branch and SHA it actually landed on, and one preview at a time is held by
@@ -21,7 +21,7 @@ import time
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent / "lab-preview.sh"
+SCRIPT = Path(__file__).resolve().parents[1] / "lab-preview.sh"
 
 MAX_AGE = 4 * 60 * 60
 

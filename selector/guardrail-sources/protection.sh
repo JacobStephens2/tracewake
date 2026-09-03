@@ -55,10 +55,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="${SELECTOR_PROTECTED_REPO:-Educational-Travel-Adventures/orchestration}"
 ref="${SELECTOR_PROTECTED_REF:-master}"
 remote="${SELECTOR_PROTECTED_REMOTE:-origin}"
-# Four levels up: guardrail-sources -> selector -> single-user-factory -> lab.
+# Two levels up: guardrail-sources -> selector -> the repository root.
 # The deployed tree is the one this script is deployed in, which is what makes
 # the comparison below about the code that is actually going to run.
-tree="${SELECTOR_PROTECTED_TREE:-$(cd "${here}/../../../.." && pwd)}"
+tree="${SELECTOR_PROTECTED_TREE:-$(cd "${here}/../.." && pwd)}"
 paths_file="${SELECTOR_PROTECTED_PATHS:-${here}/paths.txt}"
 
 command -v gh >/dev/null 2>&1 || {

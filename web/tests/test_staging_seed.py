@@ -20,7 +20,7 @@ client = TestClient(app)
 
 SEED = (
     Path(__file__).resolve().parents[2]
-    / "single-user-factory" / "selector" / "seed.sql"
+    / "selector" / "seed.sql"
 )
 
 # Every state /loop can render. A state on the page and not in this list is a
@@ -254,7 +254,7 @@ def test_the_fixture_never_names_the_live_journal(seeded):
 
 PREVIEW_TRACKER = (
     Path(__file__).resolve().parents[2]
-    / "single-user-factory" / "selector" / "preview-sources" / "tracker.sh"
+    / "selector" / "preview-sources" / "tracker.sh"
 )
 
 BOARD_COLUMNS = [

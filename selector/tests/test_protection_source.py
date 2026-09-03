@@ -21,7 +21,7 @@ PROTECTION = SELECTOR / "guardrail-sources" / "protection.sh"
 
 # Two paths, so "it reported the one that changed" is distinguishable from "it
 # reported everything it was given".
-PATHS = ["lab/single-user-factory/loop", "lab/single-user-factory/selector"]
+PATHS = ["loop", "selector"]
 
 RULES_JSON = """[
   {"type": "deletion"},

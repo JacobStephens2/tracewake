@@ -3,10 +3,10 @@ import re
 import sys
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parents[1]  # lab/webapp
+BASE = Path(__file__).resolve().parents[1]  # web/
 sys.path.insert(0, str(BASE))
 # The shared throwaway-test-database harness lives with the Journal it tests.
-sys.path.insert(0, str(BASE.parent / "single-user-factory" / "selector"))
+sys.path.insert(0, str(BASE.parent / "selector"))
 
 import pytest
 

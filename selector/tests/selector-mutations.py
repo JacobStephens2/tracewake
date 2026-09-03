@@ -29,7 +29,7 @@ DISPATCH_SUITE = "tests/test_dispatch.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
 WATCHER_SUITE = "tests/test_watcher.py"
-BOARD_SUITE = "../../webapp/tests/test_queue_board.py"
+BOARD_SUITE = "../web/tests/test_queue_board.py"
 
 # The write protection over the executed paths (#165). Two targets, because
 # the guardrail is two things: the command that reads the forge and the tree,
@@ -45,17 +45,17 @@ ISSUE_SOURCE = "issue-sources/github.sh"
 ISSUE_SOURCE_SUITE = "tests/test_issue_source.py"
 
 # The window (#156). Its path is relative to the Selector, and its suite is
-# the dashboard's - run from the webapp directory, which mutation-check.sh
-# handles by naming both.
-WINDOW = "../../webapp/app.py"
-WINDOW_SUITE = "../../webapp/tests/test_loop_page.py"
+# the window's own - run from `web/`, which mutation-check.sh handles by
+# naming both.
+WINDOW = "../web/app.py"
+WINDOW_SUITE = "../web/tests/test_loop_page.py"
 
 # The push (#159). The stream is Journal SQL and lives with the Journal; the
 # region it re-fetches is a template, which is a mutation target like any
 # other - a swap that drops its own trigger is one attribute deleted.
 JOURNAL = "journal.py"
-LIVE_REGION = "../../webapp/templates/_loop_live.html"
-LIVENESS_SUITE = "../../webapp/tests/test_liveness.py"
+LIVE_REGION = "../web/templates/_loop_live.html"
+LIVENESS_SUITE = "../web/tests/test_liveness.py"
 
 # The throwaway-database harness (#178). Its guards are not about what the
 # Selector picks - they are about the suite's own residue not accumulating
@@ -67,8 +67,8 @@ TESTDB_SUITE = "tests/test_testdb.py"
 # own: history's claim is what it does NOT read, and a mutation checked
 # against test_loop_page.py - which drives a page that reads the tracker on
 # every request - would be checked by tests that cannot tell the difference.
-HISTORY_REGION = "../../webapp/templates/_history_live.html"
-HISTORY_SUITE = "../../webapp/tests/test_run_history.py"
+HISTORY_REGION = "../web/templates/_history_live.html"
+HISTORY_SUITE = "../web/tests/test_run_history.py"
 
 # The notifier (#280, ADR 0018). Two targets and two suites, because it is two
 # things: which rows are worth an email and what they say (`notices.py`,
@@ -85,13 +85,13 @@ NOTIFIER_SUITE = "tests/test_notifier.py"
 # readers and the naming rules directly, and also holds the sweep - the guard
 # that no shipping module spells a kind outside events.py. The seed fixture is
 # a mutation target of its own because it impersonates the writer, and the
-# suite that grades it is the dashboard's.
+# suite that grades it is the window's.
 EVENTS = "events.py"
 EVENTS_SUITE = "tests/test_events.py"
 SEED = "seed.sql"
-SEED_SUITE = "../../webapp/tests/test_staging_seed.py"
-RUNS_REGION = "../../webapp/templates/_runs.html"
-LOOP_CSS = "../../webapp/static/loop.css"
+SEED_SUITE = "../web/tests/test_staging_seed.py"
+RUNS_REGION = "../web/templates/_runs.html"
+LOOP_CSS = "../web/static/loop.css"
 
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends

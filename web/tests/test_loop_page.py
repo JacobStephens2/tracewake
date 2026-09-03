@@ -963,7 +963,7 @@ PROTECTED = {
     "ref": "master",
     "ref_head": "44a596d0cbb3",
     "rules": ["deletion", "non_fast_forward", "pull_request"],
-    "paths": ["lab/single-user-factory/loop", "lab/single-user-factory/selector"],
+    "paths": ["loop", "selector"],
     "unreviewed": [],
     "protected": True,
     "detail": None,
@@ -1003,11 +1003,11 @@ def test_the_chip_names_an_executed_path_that_is_ahead_of_the_protected_ref(db):
     with journal.connect(db) as conn:
         _guardrail(
             conn,
-            unreviewed=["lab/single-user-factory/selector/cycle.py"],
+            unreviewed=["selector/cycle.py"],
             protected=False,
             detail=(
                 "1 executed path(s) differ from master: "
-                "lab/single-user-factory/selector/cycle.py"
+                "selector/cycle.py"
             ),
         )
     cell = chip(client.get("/loop").text)

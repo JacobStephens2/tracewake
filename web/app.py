@@ -28,7 +28,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE = Path(__file__).resolve().parent
-PROJECT = BASE.parent / "single-user-factory"
+# The repository root. The window renders the project it is part of - the
+# ADRs, the lessons page, the notes - so the project is one directory up
+# from `web/` rather than a sibling checkout to be found.
+PROJECT = BASE.parent
 ADR_DIR = PROJECT / "docs" / "adr"
 
 # The Selector Journal's writer/reader module lives with the Selector; this
@@ -45,13 +48,18 @@ import preview  # noqa: E402
 
 app = FastAPI(title="lab.etadventures.com")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
-# The single-user-factory project's own files (lessons, notes, ADRs) served
-# static; the dynamic home is the FastAPI app itself.
-app.mount(
-    "/single-user-factory",
-    StaticFiles(directory=PROJECT, html=True),
-    name="single-user-factory",
-)
+# The project's own files served static; the dynamic home is the FastAPI app
+# itself. Three mounts rather than one at the repository root, because the
+# root now holds `.git/` and every credential-shaped thing a checkout
+# carries, and StaticFiles serves whatever is under the directory it is
+# given. Naming the three content trees is the difference between serving
+# the documents and serving the repository.
+for _mount in ("docs", "notes", "site"):
+    app.mount(
+        f"/{_mount}",
+        StaticFiles(directory=PROJECT / _mount, html=True),
+        name=_mount,
+    )
 templates = Jinja2Templates(directory=BASE / "templates")
 
 def _static_base(request: Request) -> str:

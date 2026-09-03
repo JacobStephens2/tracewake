@@ -141,9 +141,9 @@ def test_shipping_code_spells_kinds_only_in_the_vocabulary():
     """
     import re
     selector = Path(__file__).resolve().parents[1]
-    webapp = selector.parents[1] / "webapp"
+    web = selector.parent / "web"
     shipping = sorted(p for p in selector.glob("*.py") if p.name != "events.py")
-    shipping += [webapp / "app.py", webapp / "preview.py"]
+    shipping += [web / "app.py", web / "preview.py"]
     pattern = re.compile(
         r"""["'](cycle|run|issue|box|guardrail)\.([a-z][a-z-]*)["']"""
     )
@@ -451,7 +451,7 @@ def test_a_box_reading_is_one_record_whichever_kind_wrote_it():
 def test_a_guardrail_reading_is_one_record_whichever_kind_wrote_it():
     kind, payload = events.guardrail_observed(
         cycle=7, ref="master", ref_head="abc123", rules=["pull_request"],
-        paths=["lab/single-user-factory/loop"], unreviewed=[],
+        paths=["loop"], unreviewed=[],
         protected=True, detail=None)
     reading = events.guardrail_record(row(kind, payload))
     assert (reading.readable, reading.protected) == (True, True)
