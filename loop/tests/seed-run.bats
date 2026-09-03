@@ -274,9 +274,9 @@ JSON
     write_classification_task
     run_the_seed --task 648 --task-repo Educational-Travel-Adventures/tourbot \
         --area "dashboards and reports" \
-        --check "check-inventory.sh --checkout . --inventory inventory.md --scope 'mtourbot/reports/*'"
+        --check "./grade.sh --checkout . --inventory inventory.md --scope 'reports/*'"
     [ "$status" -eq 0 ]
-    plan | grep -qF "check-inventory.sh --checkout . --inventory inventory.md --scope 'mtourbot/reports/*'"
+    plan | grep -qF "./grade.sh --checkout . --inventory inventory.md --scope 'reports/*'"
 }
 
 @test "a Plan with no check says so rather than saying nothing" {

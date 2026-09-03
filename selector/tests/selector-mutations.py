@@ -903,6 +903,13 @@ MUTATIONS = {
         "if completed.returncode != 0:",
         "if False:",
     ),
+    # The mail surface gets a default back, so an instance that configured no
+    # notify command starts anyway, runs a script that is not there, and
+    # advances its cursor past every notice it was supposed to deliver.
+    "an-unconfigured-mail-surface-gets-a-default": (NOTIFIER, NOTIFIER_SUITE,
+        'or _missing("SELECTOR_NOTIFY_COMMAND", "the mail surface")',
+        'or str(HERE / "notify-sources" / "mail.sh")',
+    ),
     # --- The Journal Event vocabulary --------------------------------------
     # A legacy row's spelling stops being normalized, so a pre-vocabulary
     # dispatch failure reads back with no ended_by and the notifier calls it

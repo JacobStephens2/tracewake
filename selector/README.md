@@ -15,7 +15,7 @@ the Loop's only channel to an operator who is not looking at the page.
 ## The cycle
 
 ```bash
-cd lab/single-user-factory/selector
+cd selector
 .venv/bin/python cycle.py --dry-run    # reason, journal, change nothing
 .venv/bin/python cycle.py              # and act on it
 ```
@@ -912,11 +912,12 @@ Detection precedes notification, or the mail is a guess.
   delivery survive a restart, the once-per-thing record, and the failure that
   loses nothing. `--once` drains and exits; `--dry-run --since <id>` prints
   what the Journal would have said and writes nothing.
-- `notify-sources/email.sh` - the default `SELECTOR_NOTIFY_COMMAND`: one
-  email, subject on argv and body on stdin, handed to the status dashboard's
-  own mailer in the dashboard's venv. Email only, never SMS (ADR 0018). It
-  holds no credential of its own - the dashboard's already-rendered runtime
-  env is where the relay's are.
+  `SELECTOR_NOTIFY_COMMAND` is the mail surface: one command, subject on argv
+  and body on stdin. It has no default - which relay, whose credentials and to
+  whom are facts about an instance, not about Tracewake - so an unset one stops
+  the notifier by name before it has read a row, rather than letting it advance
+  its cursor past a backlog it could not deliver. Email only, never SMS (ADR
+  0018).
 - `schema.sql` - the pause flag and the append-only `journal.events` table in
   local Postgres. NOTIFY on insert and the append-only guard both live in
   schema triggers, so every append path behaves the same, including a hand
@@ -927,7 +928,7 @@ Detection precedes notification, or the mail is a guess.
   the unix socket, zero credentials.
 - `testdb.py` - the shared throwaway-test-database harness: create a random
   database, apply `schema.sql`, drop it afterwards. Used by this suite and by
-  `lab/webapp/tests/` (the dashboard side). Needs a Postgres role matching
+  `web/tests/` (the window's side). Needs a Postgres role matching
   the OS user with CREATEDB. It also keeps the books on its own residue, for
   the reason in **Throwaway databases that outlive their run** below.
 - `tests/` - suites at their boundaries. `test_events.py` drives the
@@ -975,7 +976,7 @@ Detection precedes notification, or the mail is a guess.
   against real databases on the real instance, including a second process
   driven through `throwaway_db()` to stand in for a concurrent run.
 
-The window is `lab/webapp`'s `/loop` page, which imports `journal.py` from
+The window is `web`'s `/loop` page, which imports `journal.py` from
 here and renders at request time.
 
 ### Throwaway databases that outlive their run (#178)
@@ -1037,7 +1038,7 @@ table), and the trigger carries a `delay:` so a cycle writing a dozen rows in
 a second costs one re-render rather than a dozen tracker reads.
 
 Three things about it are easy to get wrong and are pinned by
-`lab/webapp/tests/test_liveness.py`:
+`web/tests/test_liveness.py`:
 
 - **`ready` before anything else.** The LISTEN is established inside the
   handler, after the response headers are out. A client that acted the moment
@@ -1121,7 +1122,7 @@ cell) and `terminal_base.html` (the shell and the stream script), and differ
 in the `runs` list they pass in and the region each re-fetches -
 `/loop/history/live` rather than `/loop/live`, because a history page pointed
 at the other one would swap in a queue board it never rendered and reach the
-tracker to build it. `lab/webapp/tests/test_run_history.py` is the suite;
+tracker to build it. `web/tests/test_run_history.py` is the suite;
 its first assertion is that no tracker command was asked anything.
 
 **Seeing it move in a preview.** An Attended Preview reads `selector_staging`,
@@ -1155,7 +1156,7 @@ Journal and an active-by-default pause flag back from the playbook.
 ## Running the tests
 
 ```bash
-cd lab/single-user-factory/selector
+cd selector
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```
@@ -1217,7 +1218,7 @@ branch without knowing. The unit carries `RuntimeMaxSec=4h` and is deliberately
 ### Running a cycle inside a preview
 
 ```bash
-lab/single-user-factory/selector/preview-cycle.sh --dry-run
+selector/preview-cycle.sh --dry-run
 ```
 
 **Use the wrapper, not `python cycle.py`.** The containment ADR 0016 builds is
@@ -1253,7 +1254,7 @@ disposable. Note before you read the strip against it: the budget cell says
 `8 of 4`, because the fixture packs every outcome state into the last hours
 and each needs its own dispatch. Unreachable in life - the cap refuses the
 fifth - and explained where the fixture packs them. Every seeded row wears the
-shape today's writer writes: `lab/webapp/tests/test_staging_seed.py` grades
+shape today's writer writes: `web/tests/test_staging_seed.py` grades
 each payload's key set against `events.py`'s constructors, and the seeded
 kinds must cover the whole vocabulary, so the fixture cannot drift from the
 writer it impersonates.
@@ -1269,7 +1270,7 @@ psql -d selector_staging -f schema.sql -f seed.sql
 `run.dispatched` or a `run.outcome` row, so a preview reading real data shows
 a page with no Run cards and proves nothing about a branch that changed how
 Run cards look. The fixture covers every state `/loop` and `/loop/history`
-render, and `lab/webapp/tests/test_staging_seed.py` fails when it stops
+render, and `web/tests/test_staging_seed.py` fails when it stops
 covering one - **adding a Journal-backed state to either page means adding it
 to `seed.sql` in the same change.** Pause is the exception because it is
 control state and can be exercised directly through the button.

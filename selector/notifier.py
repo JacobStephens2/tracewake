@@ -35,12 +35,12 @@ outward reach here follows (ADR 0004):
 
     $SELECTOR_NOTIFY_COMMAND <subject> [link]      # body on stdin
 
-The shipped default is `notify-sources/email.sh`, which hands the notice to
-the status dashboard's mailer - the same Mandrill relay, the same credentials,
-the same target as every other alert this VM sends. The body is on stdin
-rather than in an argument for the reason the issue comments are: it is
-multi-line text, and an argument would put the whole of it in this VM's
-process listing.
+There is no default. How an instance sends mail - which relay, whose
+credentials, to whom - is the instance's fact and not the product's, so an
+unset `SELECTOR_NOTIFY_COMMAND` stops the notifier by name rather than being
+filled in with somebody's. The body is on stdin rather than in an argument for
+the reason the issue comments are: it is multi-line text, and an argument
+would put the whole of it in the controller's process listing.
 """
 from __future__ import annotations
 
@@ -64,9 +64,25 @@ HERE = Path(__file__).resolve().parent
 log = logging.getLogger("selector.notifier")
 
 
+class NotConfigured(Exception):
+    """A required instance value is not set. Raised at start, before any row is
+    read, so the notifier refuses to run rather than running blind: a notifier
+    with nowhere to send advances its cursor past every notice it was supposed
+    to deliver and the backlog is gone."""
+
+
 class NotifyFailed(Exception):
     """The mail surface refused. The cursor is not advanced and the process
     exits non-zero, so systemd restarts it and the notice is sent again."""
+
+
+def _missing(name: str, what: str) -> "str":
+    """Stop, naming the variable. Never returns; typed as `str` so it reads as
+    the value it stands in for at the one call site that has one."""
+    raise NotConfigured(
+        f"{name} is not set, and there is no default for it: {what} is a fact"
+        " about this instance, not about Tracewake."
+    )
 
 
 @dataclass(frozen=True)
@@ -82,9 +98,13 @@ class NotifierConfig:
             # `or` rather than a default argument, the idiom the rest of the
             # Selector reads env with: an override set to the empty string is
             # an unset override, not a command named "" that cannot be run.
+            # No default. `or` rather than a plain read for the reason
+            # the rest of the Selector uses it: an override set to the empty
+            # string is an unset override, not a command named "" that cannot
+            # be run - and here both mean the same refusal.
             notify_command=(
                 env("SELECTOR_NOTIFY_COMMAND")
-                or str(HERE / "notify-sources" / "email.sh")
+                or _missing("SELECTOR_NOTIFY_COMMAND", "the mail surface")
             ),
             # An SMTP call that answers in seconds or not at all. Long enough
             # for a slow relay, short enough that a wedged one cannot hold the
@@ -354,7 +374,13 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
-    config = NotifierConfig.from_env()
+    try:
+        config = NotifierConfig.from_env()
+    except NotConfigured as exc:
+        # Before the Journal is opened and before a cursor exists: nothing has
+        # been read, so nothing has been passed over.
+        log.error("%s", exc)
+        return 1
     with journal.connect() as conn:
         try:
             sent = asyncio.run(serve(

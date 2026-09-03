@@ -38,9 +38,10 @@ WorkingDirectory=/srv/orchestration/lab/single-user-factory/selector
 # second is the load-bearing one:
 #
 #   - it needs no 1Password token of its own. The only secret in play is the
-#     SMTP credential, and the mail command it execs (notify-sources/email.sh)
-#     runs the dashboard's own mailer, which reads the dashboard's own
-#     already-rendered runtime env.
+#     SMTP credential, and it never touches it: the mail surface is one
+#     command named by SELECTOR_NOTIFY_COMMAND, supplied by the instance in
+#     the environment files below along with whatever credentials that command
+#     reads. There is no default, and an unset one stops the notifier by name.
 #   - it is a long-lived process. `op inject` resolves once per launch, so a
 #     daemon started through the wrapper would hold whatever the vault said
 #     weeks ago; the env files below are re-read on every restart, and the

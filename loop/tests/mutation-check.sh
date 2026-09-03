@@ -5,18 +5,11 @@
 #   tests/mutation-check.sh [--only <script>] [bats-command]
 #
 # Deliberately breaks one thing at a time - a bound of the Termination Contract
-# in run.sh, a guard in check-inventory.sh - runs that script's suite against
-# the broken copy, and reports how many tests went red. Anything whose removal
-# leaves the suite green is something the suite does not actually verify, and on
-# a single-operator project with no adversarial reviewer that is the
-# highest-value verification available (spec issue #73).
-#
-# The check script is here for a second reason on top of that one. It is the
-# only thing that can say the first task's work did not land, and spec issue #73
-# asks specifically that the thing it guards be broken deliberately and the
-# check confirmed to fail. Its suite does that from the subject side - occurrences
-# added after the inventory was written, entries pointing at lines that no longer
-# hold the symbol - and these mutations do it from the check's own side.
+# in run.sh, a guard in the credential inventory - runs that script's suite
+# against the broken copy, and reports how many tests went red. Anything whose
+# removal leaves the suite green is something the suite does not actually
+# verify, and on a project with one reviewer that is the highest-value
+# verification available (spec issue #73).
 #
 # Every mutation must be caught. Each script is restored on the way out,
 # including on interrupt, because a half-mutated script left on disk is worse
@@ -33,7 +26,6 @@ loop_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 subjects=(
     "run.sh|tests/loop.bats|tests/mutations.py"
     "contract.sh|tests/loop.bats|tests/contract-mutations.py"
-    "check-inventory.sh|tests/check-inventory.bats|tests/check-mutations.py"
     "assert-credentials.sh|tests/assert-credentials.bats|tests/credential-mutations.py"
     "seed-run.sh|tests/seed-run.bats|tests/seed-mutations.py"
     "propose.sh|tests/propose.bats|tests/propose-mutations.py"

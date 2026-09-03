@@ -338,9 +338,9 @@ trap cleanup EXIT INT TERM
 # The Loop's own scripts, mounted read-only alongside the repository. The Plan
 # names a completeness check for an Iteration to grade itself against, and the
 # first Run found it unreachable: a sandbox mounts the workspace and nothing
-# else, so `check-inventory.sh` was outside the session's allowed directories and
-# every Iteration recorded it as blocked. Backpressure an Iteration cannot reach
-# is not backpressure.
+# else, so a check that lived beside the Loop's scripts was outside the
+# session's allowed directories and every Iteration recorded it as blocked.
+# Backpressure an Iteration cannot reach is not backpressure.
 #
 # Read-only. The check is what says the work did not land, and an agent that
 # could edit it could make it say otherwise - which is the one thing a Run's own

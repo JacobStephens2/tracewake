@@ -26,7 +26,7 @@ under Grok Build. If a Run fails on a host it needed, the fix is a line in
 `loop_execution_boundary_egress_common` (or the current agent's set) saying what
 broke without it - not widening the profile. The posture, the probes and what
 was deliberately left off are in
-`lab/single-user-factory/notes/loop-execution-boundary-evidence.md`.
+`../notes/loop-execution-boundary-evidence.md`.
 
 ## What is here
 
@@ -41,10 +41,8 @@ was deliberately left off are in
 | `task-sources/github.sh` | The task source as one substitutable command. One task, by number. |
 | `pr-sources/github.sh` | The pull-request surface as one substitutable command. |
 | `notify-sources/github-pr-comment.sh` | The notification surface. A comment on the proposal (#110). |
-| `check-inventory.sh` | The first task's grade. Derives its own denominator. |
 | `assert-credentials.sh` | What the box holds, and what it may not. Both directions (#81). |
 | `tests/loop.bats` | The Loop's offline suite. No model, no network, no spend. |
-| `tests/check-inventory.bats` | The check's offline suite, seamed separately (#80). |
 | `tests/seed-run.bats` | The seed step's offline suite, seamed separately (#82). |
 | `tests/fake-agent.sh` | The scripted agent the suite drives the real Run through. |
 | `tests/fake-task-source.sh` | The scripted task source, so the seed step's suite reaches no network. |
@@ -230,19 +228,19 @@ Run is one command and re-running one is the same command again. The first Run's
 seeding, in full:
 
 ```
-seed-run.sh --repo ~/tourbot --task 648 --area 'dashboards and reports' \
-    --check "/home/loop/loop/check-inventory.sh --checkout . \
-             --inventory documentation/tblEmailMessage-inventory.md \
-             --scope 'mtourbot/reports/*'"
+seed-run.sh --repo ~/widgets --task 648 --area 'dashboards and reports' \
+    --check "/home/loop/widgets/tools/grade.sh --checkout . \
+             --inventory documentation/inventory.md \
+             --scope 'reports/*'"
 ```
 
-**An absolute path, and `~` will not do.** The Loop's directory is mounted into
-each Iteration's microVM at its host path, but the guest's `HOME` is
-`/home/agent`, so `~/loop/check-inventory.sh` resolves to nothing an Iteration
-can run. The first Run was seeded with a `~` and every Iteration recorded the
-check as unreachable until one of them worked the real path out by hand. Nothing
-validates the check command - it is free text the operator writes and the Plan
-carries - so this is a rule rather than a guard.
+**An absolute path, and `~` will not do.** The workspace is mounted into each
+Iteration's microVM at its host path, but the guest's `HOME` is `/home/agent`,
+so a `~`-relative check resolves to nothing an Iteration can run. The first Run
+was seeded with a `~` and every Iteration recorded the check as unreachable
+until one of them worked the real path out by hand. Nothing validates the check
+command - it is free text the operator writes and the Plan carries - so this is
+a rule rather than a guard.
 
 **This is not issue intake, and the difference is load-bearing** (ADR 0010). It
 is a human handing over a task he authored, and that authorship is what makes
@@ -305,47 +303,39 @@ refused, because a Run is already recorded in the Progress Log.
 
 ## The completeness check
 
-The first task (Tourbot issue 648) is a classification exercise, and a
-classification exercise has no test suite to grade it. `check-inventory.sh` is
-the grade:
+A task with a test suite is graded by its suite. A task without one - a
+classification exercise, an audit, a migration inventory - needs something
+mechanical to say the work did not land, and on a project with one reviewer
+that is the highest-value signal there is. So the Loop takes one: whatever
+command the operator names at `seed-run.sh --check` is written into the Plan,
+and an Iteration runs it to find out what is left.
 
-```
-check-inventory.sh --checkout <tourbot> --inventory <path/to/inventory.md> \
-                   [--scope 'mtourbot/reports/*']
-```
+The check itself belongs to the task, not to Tracewake. It lives in the target
+repository beside the work it grades, which is what lets a PHP target and a
+Python target each be graded by their own thing. Two properties are worth
+copying from the one this Loop was built against, because both were learned by
+losing a Run to their absence:
 
-It derives every occurrence of `tblEmailMessage` from the checkout, reads the
-inventory, and exits `2` naming each occurrence the inventory does not account
-for - with the line that produced it, because "six are missing" is not something
-an Iteration can act on. `0` when the inventory is complete. `1` when it could
-not run, which includes deriving a denominator of zero: a wrong `--symbol` or a
-mistyped `--scope` produces a check with nothing to check, and reporting success
-for that would be a check that passes hardest when it is most broken.
+**Derive the denominator, never read it from the task.** A ticket that says "78
+files and 276 occurrences" was right when it was written. A check that trusted
+that number passes on work that missed everything added since. Derive it from
+the checkout every time, and print how it was arrived at - the symbol, the
+scope, the exclusions and the count each removed - so the number can be audited
+rather than taken. ADR 0008 records the decision.
 
-**It never reads a count from the task.** Issue 648 says "78 files and 276
-occurrences"; against `tourbot` master on 2026-08-25 the same search answers 359
-across the tracked tree and 303 in application code. A check that trusted the
-ticket would pass on an inventory that had missed everything landed since it was
-written. ADR 0008 records that decision
-and the two things that follow from it - exclusions declared in the script
-rather than supplied by the caller, and both exclusions and scope printed with
-the count each removed, so the denominator can be audited rather than taken.
+**Refuse to grade rather than grade wrongly.** A denominator of zero - a wrong
+symbol, a mistyped scope - must exit non-zero, not report success: a check that
+passes hardest when it is most broken is worse than no check. So must an
+inventory that parses to zero entries, because "the work was not done" and "the
+check could not read the work" must not produce the same output.
 
-Same script, both roles: an Iteration runs it to find out what is left, and the
-operator runs it afterwards to decide whether the Run's proposal is acceptable.
-Nothing in `run.sh` knows about it, deliberately - the Loop is task-agnostic, and
-the command belongs in the Plan beside the task, where `seed-run.sh --check` puts
-it.
-It reaches no network and writes nothing to the checkout, so it behaves the same
-inside the Execution Boundary on `deny-all` egress as it does here. It needs no
-host on the allowlist.
-
-Two ways it refuses to grade rather than grading wrongly, both of which cost a
-Run nothing and would otherwise be silent: a denominator of zero exits 1, and an
-inventory that parses to zero entries says the shape is wrong instead of
-reporting that nothing was classified. The second matters because "the work was
-not done" and "the check could not read the work" would otherwise produce the
-same output.
+Same command, both roles: an Iteration runs it to find out what is left, and the
+operator runs it afterwards to decide whether the Proposal is acceptable.
+Nothing in `run.sh` knows about it, deliberately - the Loop is task-agnostic,
+and the command belongs in the Plan beside the task, where `seed-run.sh --check`
+puts it. It should reach no network and write nothing to the checkout, so that
+it behaves the same inside the Execution Boundary on `deny-all` egress as it
+does on a laptop, and needs no host on the allowlist.
 
 ## The credential inventory
 
@@ -401,12 +391,12 @@ On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
 bats tests/
 ```
 
-Two hundred and ninety-three tests, no model and no network. Fifty-eight drive `run.sh`
-unmodified and assert only what a Run externally produces - exit code, reported
-bound, Progress Log contents, git history, and what it told the operator.
-Thirty-two drive `check-inventory.sh` against small fixture checkouts. Forty-eight
-drive `assert-credentials.sh` against a constructed box - a home directory, a system
-root and a scripted fake `sbx`, all three of which a tmpdir can hold.
+Two hundred and eighty-nine tests, no model and no network. Fifty-eight drive
+`run.sh` unmodified and assert only what a Run externally produces - exit code,
+reported bound, Progress Log contents, git history, and what it told the
+operator. Fifty-six drive `assert-credentials.sh` against a constructed box - a
+home directory, a system root and a scripted fake `sbx`, all three of which a
+tmpdir can hold.
 Forty-one drive `seed-run.sh` against a scripted fake task source, and assert
 what the Plan ends up saying, what the Progress Log is left ready for, and what
 seeding twice does. Twenty-nine drive `propose.sh` against a real `git push` to
@@ -421,22 +411,17 @@ split the list. Thirteen drive
 something the suite asserts rather than something the file says, and nine drive
 `notify-sources/github-pr-comment.sh` through the same fake, which is how the
 comment landing on the proposal rather than on an issue is asserted rather than
-stated. Twenty-six
+stated. Forty-six
 drive `agents/claude.sh` through a scripted fake `sbx` and assert what an
 Iteration does to the boundary, and thirty-seven do the same for
 `agents/grok.sh` - a sibling suite rather than a parameterisation, ADR 0012.
 None of them names an internal function or depends on the order of steps.
 
-The check is seamed and tested on its own rather than only through a Run because
-it is itself the honest failure signal, and a component that is the failure
-signal should not have its correctness established only through another
-component (spec issue #73, Seam B).
-
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
-Contract, each guard of the check, each credential family, each guard of the
-seed step, each thing holding Proposal-Only Output up, each property of the
-boundary, each thing that makes a notification honest - and confirms the suite
-goes red. A hundred and twenty-five deliberate breaks. The eleven covering
+Contract, each credential family, each guard of the seed step, each thing
+holding Proposal-Only Output up, each property of the boundary, each thing that
+makes a notification honest - and confirms the suite goes red. A hundred and
+twenty deliberate breaks. The eleven covering
 `propose.sh` - four of them on the `Closes #n` line and the default-branch
 derivation it turns on - were re-run whole for #163 and all eleven were
 caught; the twenty-three covering
@@ -445,10 +430,9 @@ twenty-five were caught; the five covering the notification surface were re-run
 whole for #110; the rest were caught when they were written, and each
 subject's set can be re-run on its own. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
-and fails rather than reporting a false pass. `--only check-inventory.sh` runs
+and fails rather than reporting a false pass. `--only run.sh` runs
 one subject's set. The evidence is in
 `../notes/loop-termination-contract-evidence.md`,
-`../notes/loop-completeness-check-evidence.md`,
 `../notes/loop-credentials-evidence.md` and `../notes/loop-seed-evidence.md`.
 
 `shellcheck -x *.sh agents/*.sh task-sources/*.sh pr-sources/*.sh notify-sources/*.sh tests/*.sh`

@@ -398,8 +398,8 @@ done < <(
 )
 
 # Reported rather than silent. An exclusion nobody can see is an exclusion
-# nobody can audit, which is the same reason check-inventory.sh prints its own
-# with the count each removed.
+# nobody can audit, which is the same reason the seed reports the criteria
+# count it derived rather than just using it.
 if ((${#repository_keys[@]} > 0)); then
     observe "$(printf '%d private key(s) skipped as upstream repository content: %s' \
         "${#repository_keys[@]}" "$(printf '%s ' "${repository_keys[@]}")")"

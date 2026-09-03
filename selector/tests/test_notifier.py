@@ -370,3 +370,23 @@ def test_a_dry_run_prints_what_it_would_send_and_changes_nothing(db, notifier):
     assert "Proposal ready: acme/widgets#312" in result.stdout
     assert notifier.subjects() == []
     assert cursor(db) == before
+
+
+# --- The mail surface is the instance's, not the product's -------------------
+
+
+def test_an_unconfigured_mail_surface_stops_the_notifier_by_name(db, notifier):
+    """No shipped default: how this instance sends mail is the instance's fact.
+
+    The mail surface used to default to a script that reached into ETA's
+    status dashboard for its relay and its credentials, which is exactly the
+    kind of company fact this repository does not hold. With the default gone,
+    an unset `SELECTOR_NOTIFY_COMMAND` has to stop the notifier saying which
+    variable is missing - because the alternative is a notifier that starts,
+    advances its cursor past every notice, and tells nobody.
+    """
+    result = notifier.run(SELECTOR_NOTIFY_COMMAND="")
+
+    assert result.returncode != 0
+    assert "SELECTOR_NOTIFY_COMMAND" in result.stderr
+    assert notifier.subjects() == []

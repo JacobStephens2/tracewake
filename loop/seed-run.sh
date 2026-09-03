@@ -267,8 +267,8 @@ task_rest="$(printf '%s\n' "${task_body}" | task_sections rest | trim_blank_line
 
 # A criterion is a list item. The count is reported so that "the Plan carries the
 # acceptance criteria" is something the operator can see rather than assume, and
-# a heading with nothing under it is refused for the same reason a denominator of
-# zero is refused in check-inventory.sh: an empty result and a broken read must
+# a heading with nothing under it is refused for the same reason a completeness
+# check refuses a denominator of zero: an empty result and a broken read must
 # not produce the same output.
 # Only the outermost level of the list. A criterion with sub-bullets under it is
 # one criterion, and counting its children as criteria of their own would make
