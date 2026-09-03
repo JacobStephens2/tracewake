@@ -1,0 +1,7 @@
+# The suites' virtualenvs and caches. Recreated from requirements-dev.txt;
+# never tracked, because the interpreter and the wheels are the operator's
+# machine and not the product.
+/selector/.venv/
+/web/.venv/
+**/__pycache__/
+.pytest_cache/
