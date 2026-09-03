@@ -18,7 +18,7 @@ set -euo pipefail
 
 WORKTREE="${LAB_PREVIEW_WORKTREE:-/srv/lab-webapp-staging}"
 LEASE="${LAB_PREVIEW_LEASE:-/var/lib/lab-preview/lease.json}"
-RESTART="${LAB_PREVIEW_RESTART_COMMAND:-sudo systemctl restart lab-webapp-staging}"
+RESTART="${LAB_PREVIEW_RESTART_COMMAND:-sudo systemctl restart tracewake-web-staging}"
 # Run after every checkout, not once at provision time. git restores tracked
 # files at the parent directory's default label, and /srv is var_t - so each
 # preview hands back the faked tracker and box scripts, the edges that keep a
@@ -34,13 +34,13 @@ MAX_AGE="${LAB_PREVIEW_MAX_AGE_SECONDS:-14400}"
 # WHETHER. Both are needed: a lease alone reads as free when it is corrupt or
 # missing, which is precisely when a running preview would be taken out from
 # under whoever is looking at it.
-STATUS_COMMAND="${LAB_PREVIEW_STATUS_COMMAND:-systemctl is-active --quiet lab-webapp-staging}"
+STATUS_COMMAND="${LAB_PREVIEW_STATUS_COMMAND:-systemctl is-active --quiet tracewake-web-staging}"
 # Whether the preview THIS run started came up. The same systemctl question as
 # STATUS_COMMAND, asked at the other end of the script, and deliberately not
 # the same variable: before the restart the question is "is somebody else
 # holding one", after it the question is "is mine up", and a test that fakes
 # one has to be able to leave the other alone.
-READY_COMMAND="${LAB_PREVIEW_READY_COMMAND:-systemctl is-active --quiet lab-webapp-staging}"
+READY_COMMAND="${LAB_PREVIEW_READY_COMMAND:-systemctl is-active --quiet tracewake-web-staging}"
 # How long the unit has to stay up before this says it started. The unit is
 # Type=simple, so systemd reports the start job done at exec and a process
 # that dies a moment later - 203/EXEC on a mislabelled venv, an import error
@@ -229,7 +229,7 @@ if (( ready == 0 )); then
     cat >&2 <<EOF
 the unit did not stay up after checking out ${sha:0:7} on $branch.
 
-  journalctl -u lab-webapp-staging -n 30
+  journalctl -u tracewake-web-staging -n 30
 
 Nothing is being served, so nobody is looking at the wrong branch. The lease
 names what was checked out; the next preview takes it without --force.

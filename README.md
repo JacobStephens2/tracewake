@@ -41,14 +41,14 @@ spend. The two Python suites need a Postgres role matching the OS user with
 `CREATEDB`; they create and drop a throwaway database per run.
 
 ```bash
-# The Loop - 321 tests, bats
+# The Loop - 289 tests, bats
 cd loop && bats tests/
 
-# The Selector - 279 tests, pytest
+# The Selector - 280 tests, pytest
 cd selector && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 
-# The window - 139 tests, pytest
+# The window - 163 tests, pytest
 cd web && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```

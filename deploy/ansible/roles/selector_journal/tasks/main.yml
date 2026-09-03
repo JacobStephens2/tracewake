@@ -1,6 +1,6 @@
 # The Selector Journal's Postgres (ADR 0015): local instance, peer auth over
 # the unix socket, zero credentials. The schema itself lives at
-# lab/single-user-factory/selector/schema.sql and is idempotent.
+# selector/schema.sql and is idempotent.
 
 - name: postgresql 16 server (module stream)
   ansible.builtin.dnf:
@@ -58,5 +58,5 @@
   become_user: conductor
   ansible.builtin.command: >
     psql -d selector -v ON_ERROR_STOP=1
-    -f {{ srv_dir }}/lab/single-user-factory/selector/schema.sql
+    -f {{ srv_dir }}/selector/schema.sql
   changed_when: false

@@ -11,7 +11,7 @@ Two facts, deliberately kept apart:
 - **Being a preview** is `LAB_PREVIEW_LEASE` being set at all. It comes from
   the unit file, so the live app cannot acquire it by accident and a preview
   cannot lose it by deleting a file.
-- **Which branch** comes from the lease `scripts/lab-preview.sh` writes. That
+- **Which branch** comes from the lease `web/lab-preview.sh` writes. That
   file can go missing or be half-written, and when it does the banner says so
   and stays up.
 """

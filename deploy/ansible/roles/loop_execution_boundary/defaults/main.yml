@@ -20,7 +20,7 @@ loop_execution_boundary_sbx_version: 0.39.0-1~ubuntu.24.04~noble
 # (`sbx create` offers claude, codex, copilot, cursor, docker-agent, droid,
 # gemini, kiro, opencode, shell), though `xai` IS a supported secret service.
 # The full statement, and the evidence under it, is in
-# lab/single-user-factory/notes/loop-execution-boundary-evidence.md.
+# notes/loop-execution-boundary-evidence.md.
 
 # The keyring path, because three tasks name it and the repository line embeds
 # it - a second literal would drift silently the day one of them moved. The
@@ -71,7 +71,7 @@ loop_execution_boundary_agent: "{{ loop_agent_name | default('claude') }}"
 # The allowlist, and the reason each entry is on it. Every host here was
 # observed being reached from inside the boundary rather than reasoned about;
 # the dump, the probes and the hosts deliberately left OFF are in
-# lab/single-user-factory/notes/loop-execution-boundary-evidence.md, section
+# notes/loop-execution-boundary-evidence.md, section
 # "Narrowing to deny-all (issue #100)".
 #
 # `need` is not decoration. An allowlist whose entries carry no reason is one

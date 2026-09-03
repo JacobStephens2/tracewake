@@ -334,22 +334,22 @@ spent looks Eligible without it and that is the one card an operator would act
 on.
 
 Note what this needs of the process serving the page: `gh` on its `PATH`, and
-`gh`'s own auth. `lab-webapp.service` sets the PATH and nothing else - the
+`gh`'s own auth. `tracewake-web.service` sets the PATH and nothing else - the
 tracker read is authenticated by conductor's `~/.config/gh/hosts.yml`, which
 is the operator's read of the operator's tracker (ADR 0014). It deliberately
 does not get the vault environment the Selector's own unit gets: that would
 hand a page-serving process every production credential on the box to get a
 queue listing.
 
-`lab-webapp.service` is not installed by Ansible - the tracked copy under
+`tracewake-web.service` is not installed by Ansible - the tracked copy under
 `deploy/systemd/` is the source and the live unit is a hand-installed copy of
 it. So unlike every other change to this page, the board needs a deploy step
 and not just a restart:
 
 ```bash
-sudo install -m 0644 /srv/orchestration/deploy/systemd/lab-webapp.service \
-    /etc/systemd/system/lab-webapp.service
-sudo systemctl daemon-reload && sudo systemctl restart lab-webapp
+sudo install -m 0644 /srv/orchestration/deploy/systemd/tracewake-web.service \
+    /etc/systemd/system/tracewake-web.service
+sudo systemctl daemon-reload && sudo systemctl restart tracewake-web
 ```
 
 Skip it and the page still serves - with five columns of "tracker command
@@ -362,15 +362,15 @@ A cycle is one command, and nothing about it needed a human to begin with -
 so what makes the Selector unattended is a timer, a lock, and enough on the
 page to tell a Selector that is quiet from one that is dead (#156).
 
-**The timer.** `scripts/selector-cycle.timer` fires
-`scripts/selector-cycle.service` every thirty minutes, around the clock. Both
+**The timer.** `deploy/systemd/tracewake-selector-cycle.timer` fires
+`deploy/systemd/tracewake-selector-cycle.service` every thirty minutes, around the clock. Both
 are installed by `ansible/roles/timers`, which copies every `scripts/*.service`
 and `scripts/*.timer` wholesale. The venv the unit execs is built by
-`ansible/roles/selector_cycle`, and the fcontext that makes it executable by
+`deploy/ansible/roles/selector_cycle`, and the fcontext that makes it executable by
 systemd is declared in `ansible/roles/selinux_labels`; without it the unit
 dies 203/EXEC with no traceback.
 
-**Installed is not enabled, and that is on purpose.** `selector-cycle` is the
+**Installed is not enabled, and that is on purpose.** `tracewake-selector-cycle` is the
 one timer deliberately absent from `orchestration_timers`. Every other timer
 on this box reads something and reports; this one *spends* - each cycle can
 seed a branch, start a Run on the box, and comment on and relabel issues on
@@ -385,7 +385,7 @@ selector_dispatch_enabled: true
 
 Flipping it is a one-line reviewable change - the shape ADR 0014 already asks
 for when widening the labeler allowlist - and the play prints which way it left
-the timer. Out of band it is `sudo systemctl enable --now selector-cycle.timer`.
+the timer. Out of band it is `sudo systemctl enable --now tracewake-selector-cycle.timer`.
 Setting it back to `false` stops a running timer, not merely a future one.
 
 **The gate is flipped and the timer is running** (#261, 2026-08-30): it fired
@@ -1146,9 +1146,9 @@ sends mail: with dispatch off there are no Runs to report and it sits idle,
 and with dispatch on it is the only thing that says a Run failed. Gating it
 would mean the switch that turns unattended work on also has to remember to
 turn the alarm on. It runs from this working tree, so a code change lands with
-`sudo systemctl restart selector-notifier`.
+`sudo systemctl restart tracewake-selector-notifier`.
 
-`ansible/roles/selector_journal` owns the Selector state: PostgreSQL 16,
+`deploy/ansible/roles/selector_journal` owns the Selector state: PostgreSQL 16,
 socket-only (`listen_addresses = ''`), a peer-auth `conductor` role with
 CREATEDB, the `selector` database, schema applied. A rebuilt VM gets the
 Journal and an active-by-default pause flag back from the playbook.
@@ -1198,15 +1198,15 @@ the guard triggers first.
 
 ## Previewing a branch (the Attended Preview)
 
-`lab-webapp.service` runs from `/srv/orchestration` on `master`, so without a
+`tracewake-web.service` runs from `/srv/orchestration` on `master`, so without a
 preview the only way to see a branch's `/loop` is to merge it. ADR 0016 rules
 on the alternative and names it an **Attended Preview**: a second instance at
 `lab-staging.etadventures.com`, serving one unmerged branch, permissible on
 this VM because somebody is looking at it.
 
 ```bash
-scripts/lab-preview.sh --help
-scripts/lab-preview.sh feat/queue-board
+web/lab-preview.sh --help
+web/lab-preview.sh feat/queue-board
 ```
 
 One preview at a time, held by a lease the banner renders (branch, short SHA,

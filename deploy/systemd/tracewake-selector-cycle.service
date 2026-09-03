@@ -1,6 +1,6 @@
 [Unit]
 Description=One Selector cycle: pick and dispatch the lowest eligible ready-for-agent tourbot issue
-Documentation=https://github.com/Educational-Travel-Adventures/orchestration/blob/master/lab/single-user-factory/selector/README.md
+Documentation=https://github.com/JacobStephens2/tracewake/blob/main/selector/README.md
 After=network-online.target postgresql.service
 Wants=network-online.target
 # The Journal is not optional: a cycle that cannot append cannot hold its own
@@ -26,7 +26,7 @@ OnFailure=notify-unit-failure@%n.service
 Type=oneshot
 User=conductor
 Group=conductor
-WorkingDirectory=/srv/orchestration/lab/single-user-factory/selector
+WorkingDirectory=/srv/tracewake/selector
 
 # Through the op-inject wrapper, not bare. A systemd unit starts with an empty
 # environment, and the tracker command is `gh api graphql` - which without
@@ -42,10 +42,16 @@ WorkingDirectory=/srv/orchestration/lab/single-user-factory/selector
 #
 # git/editor write resets scripts/*.sh to var_t; systemd cannot exec that
 # (203/EXEC). Re-apply the existing fcontext. `+` is root despite User=.
+#
+# The wrapper below is the INSTANCE's, not the product's: it is what resolves
+# this instance's credentials into the cycle's environment, and it lives in
+# the instance's own tree beside the vault manifest it reads. `tracewake_
+# controller` is what fills its path in; the ETA path is written here until
+# it does.
 ExecStartPre=+/bin/sh -c '/usr/sbin/restorecon -v /srv/orchestration/scripts/*.sh'
 ExecStart=/srv/orchestration/scripts/with-orchestration-env.sh \
-    /srv/orchestration/lab/single-user-factory/selector/.venv/bin/python \
-    /srv/orchestration/lab/single-user-factory/selector/cycle.py
+    /srv/tracewake/selector/.venv/bin/python \
+    /srv/tracewake/selector/cycle.py
 
 # A dispatching cycle holds the process for the length of the Run. The
 # Termination Contract bounds a Run at 90 minutes and the Selector's own

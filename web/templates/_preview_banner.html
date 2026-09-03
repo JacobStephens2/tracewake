@@ -12,7 +12,7 @@
   looking at it.
   {%- if preview.unreadable %}
   Its lease is unreadable, so this page cannot say which branch it is serving;
-  re-run <code>scripts/lab-preview.sh</code> to restore it.
+  re-run <code>web/lab-preview.sh</code> to restore it.
   {%- else %}
   Branch <b>{{ preview.branch or "unknown" }}</b>
   at <code>{{ preview.sha or "unknown" }}</code>,

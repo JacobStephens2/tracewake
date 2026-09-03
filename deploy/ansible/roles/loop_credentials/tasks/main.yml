@@ -133,6 +133,6 @@
     msg: >-
       No GitHub token at {{ loop_credentials_dir }}/github-token. The box can
       sign but cannot push. Run
-      lab/single-user-factory/wizards/loop-github-credentials.sh from the
+      wizards/loop-github-credentials.sh from the
       orchestration VM as conductor.
   when: not loop_github_token.stat.exists

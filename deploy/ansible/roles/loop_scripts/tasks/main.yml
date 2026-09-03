@@ -5,7 +5,7 @@
   become: true
   become_user: loop
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../lab/single-user-factory/loop/"
+    src: "{{ playbook_dir }}/../../loop/"
     dest: "{{ loop_scripts_dir }}/"
     # Preserved rather than set: run.sh, the agent adapter, the task source and
     # the pull-request command are all executable and all checked for it by
@@ -41,6 +41,6 @@
   ansible.builtin.debug:
     msg: >-
       {{ loop_scripts_workspace }} was not cloned - the box has no GitHub token
-      yet. Run lab/single-user-factory/wizards/loop-github-credentials.sh, then
+      yet. Run wizards/loop-github-credentials.sh, then
       apply this play again.
   when: loop_scripts_clone is failed

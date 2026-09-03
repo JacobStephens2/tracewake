@@ -328,7 +328,7 @@ class TestItSaysStartedOnlyWhenItStarted(PreviewTestCase):
     def test_it_says_where_to_look_when_the_unit_did_not_come_up(self):
         result = self.run_start_that_never_comes_up()
         self.assertIn("journalctl", result.stderr)
-        self.assertIn("lab-webapp-staging", result.stderr)
+        self.assertIn("tracewake-web-staging", result.stderr)
 
     def test_a_unit_that_dies_during_the_window_is_caught(self):
         """The property is that it STAYED up, not that it was up once. A

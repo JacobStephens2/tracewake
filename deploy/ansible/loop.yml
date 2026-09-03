@@ -19,11 +19,11 @@
 # It stops short of all three credentials that arrive through a browser, which
 # are the spec's human-only steps and are runnable walkthroughs rather than
 # prose:
-#   `sbx login`        lab/single-user-factory/wizards/loop-sbx-login.sh (#78)
+#   `sbx login`        wizards/loop-sbx-login.sh (#78)
 #   the GitHub token,
 #   and registering
-#   the signing key    lab/single-user-factory/wizards/loop-github-credentials.sh (#81)
-#   the agent's login  lab/single-user-factory/wizards/loop-claude-login.sh (#83)
+#   the signing key    wizards/loop-github-credentials.sh (#81)
+#   the agent's login  wizards/loop-claude-login.sh (#83)
 - name: Configure the Loop's box
   hosts: loop
   gather_facts: true

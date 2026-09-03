@@ -12,7 +12,7 @@
 # `Starting sandboxd daemon...` and answered; the Docker sign-in and the
 # `balanced` policy both survived, and a microVM booted (guest kernel 7.0.12
 # against the host's 6.8.0-124-generic). The evidence is in
-# lab/single-user-factory/notes/loop-execution-boundary-evidence.md.
+# notes/loop-execution-boundary-evidence.md.
 #
 # What it IS for is the part auto-start does not cover: SUPERVISION. Auto-start
 # fires when a command is typed, so it repairs a dead daemon only at the next

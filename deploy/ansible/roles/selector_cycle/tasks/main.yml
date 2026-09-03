@@ -14,8 +14,8 @@
 
 - name: selector venv + deps
   ansible.builtin.pip:
-    requirements: "{{ srv_dir }}/lab/single-user-factory/selector/requirements.txt"
-    virtualenv: "{{ srv_dir }}/lab/single-user-factory/selector/.venv"
+    requirements: "{{ srv_dir }}/selector/requirements.txt"
+    virtualenv: "{{ srv_dir }}/selector/.venv"
     # The system interpreter, not 3.11 as status-dashboard pins. This is
     # what the live venv and the lab webapp's venv were both built with,
     # and the webapp imports the Selector's own modules - so a rebuild
@@ -32,5 +32,5 @@
 # that role's restorecon list does not cover because the venv is built here.
 - name: label the venv bin_t so systemd can exec it
   ansible.builtin.command: >-
-    restorecon -R {{ srv_dir }}/lab/single-user-factory/selector/.venv/bin
+    restorecon -R {{ srv_dir }}/selector/.venv/bin
   changed_when: false

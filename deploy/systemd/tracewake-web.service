@@ -5,8 +5,8 @@ After=network.target postgresql.service
 [Service]
 User=conductor
 Group=conductor
-WorkingDirectory=/srv/orchestration/lab/webapp
-ExecStart=/srv/orchestration/lab/webapp/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8100
+WorkingDirectory=/srv/tracewake/web
+ExecStart=/srv/tracewake/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8100
 
 # The queue board reads the tracker at request time (#158) through
 # `tracker-sources/github.sh`, which is `gh` and `jq`. A systemd unit starts

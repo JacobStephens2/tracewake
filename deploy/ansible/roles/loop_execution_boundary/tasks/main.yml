@@ -103,7 +103,7 @@
 # Presence of a package is not presence of a working boundary. Ask the binary
 # its version as the account a Run uses, which also proves the group membership
 # above resolved. Not a proof that a sandbox *boots* - that needs `sbx login`,
-# which is a browser step no play can take (see lab/single-user-factory/wizards/loop-sbx-login.sh).
+# which is a browser step no play can take (see wizards/loop-sbx-login.sh).
 #
 # Skipped under --check, like every command task in this play. Proof is an apply.
 - name: The boundary runs as the Loop's account

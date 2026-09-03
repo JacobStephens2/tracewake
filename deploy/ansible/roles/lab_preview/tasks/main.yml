@@ -20,7 +20,7 @@
     home: /var/lib/lab-preview
 
 - name: lease directory
-  # Written by conductor (scripts/lab-preview.sh), read by labstage.
+  # Written by conductor (web/lab-preview.sh), read by labstage.
   ansible.builtin.file:
     path: /var/lib/lab-preview
     state: directory
@@ -71,7 +71,7 @@
   become_user: conductor
   ansible.builtin.command: >
     psql -d selector_staging -v ON_ERROR_STOP=1
-    -f {{ srv_dir }}/lab/single-user-factory/selector/{{ item }}
+    -f {{ srv_dir }}/selector/{{ item }}
   loop:
     - schema.sql
     - seed.sql
@@ -129,8 +129,8 @@
 
 - name: staging venv + deps
   ansible.builtin.pip:
-    requirements: /srv/lab-webapp-staging/lab/webapp/requirements.txt
-    virtualenv: /srv/lab-webapp-staging/lab/webapp/.venv
+    requirements: /srv/lab-webapp-staging/web/requirements.txt
+    virtualenv: /srv/lab-webapp-staging/web/.venv
     virtualenv_command: /usr/bin/python3.11 -m venv
   become: true
   become_user: conductor
@@ -156,9 +156,9 @@
     and 'already defined' not in (staging_sefc.stdout + staging_sefc.stderr)
   loop:
     # systemd execs the venv's uvicorn directly; var_t is 203/EXEC.
-    - { t: bin_t, p: "/srv/lab-webapp-staging/lab/webapp/\\.venv/bin(/.*)?" }
+    - { t: bin_t, p: "/srv/lab-webapp-staging/web/\\.venv/bin(/.*)?" }
     # The faked tracker and box edges the unit names in its environment.
-    - { t: bin_t, p: "/srv/lab-webapp-staging/lab/single-user-factory/selector/.*\\.sh" }
+    - { t: bin_t, p: "/srv/lab-webapp-staging/selector/.*\\.sh" }
 
 # The venv is created above, so the relabel has to follow it rather than the
 # rules: restorecon only labels files that already exist.
@@ -168,8 +168,8 @@
 
 - name: staging systemd unit
   ansible.builtin.copy:
-    src: "{{ srv_dir }}/deploy/systemd/lab-webapp-staging.service"
-    dest: /etc/systemd/system/lab-webapp-staging.service
+    src: "{{ srv_dir }}/deploy/systemd/tracewake-web-staging.service"
+    dest: /etc/systemd/system/tracewake-web-staging.service
     mode: "0644"
     remote_src: true
   notify: reload systemd
@@ -180,6 +180,6 @@
 # the four-hour RuntimeMaxSec exists to prevent.
 - name: staging unit is installed, disabled, and not running
   ansible.builtin.systemd:
-    name: lab-webapp-staging
+    name: tracewake-web-staging
     enabled: false
     daemon_reload: true   # the handler has not flushed yet on a first run

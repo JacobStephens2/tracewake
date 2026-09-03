@@ -19,7 +19,7 @@ motivated one. An attended Run may run on any posture, because somebody is
 watching it. An unattended one may not.
 
 As of 2026-08-24 `loop.etadventures.com` is on `deny-all` plus an allowlist,
-declared in `ansible/roles/loop_execution_boundary/defaults/main.yml` and
+declared in `deploy/ansible/roles/loop_execution_boundary/defaults/main.yml` and
 reconciled by `ansible-playbook loop.yml`. It is two hosts common to every agent
 plus whatever the current agent needs - nothing under Claude Code, three hosts
 under Grok Build. If a Run fails on a host it needed, the fix is a line in
@@ -385,7 +385,7 @@ is not a decision to take unattended.
 
 ## Running the suite
 
-On the Loop's box, where `ansible/roles/loop_shell_suite` installs the harness:
+On the Loop's box, where `deploy/ansible/roles/loop_shell_suite` installs the harness:
 
 ```
 bats tests/
@@ -490,7 +490,7 @@ guest is a commit in the checkout on the host.
 
 **The guest is not the vendor's stock image.** It is `loop-php:1`: the vendor's
 `claude` image with PHP and Composer added, built and snapshotted on the box by
-`ansible/roles/loop_guest_template` and never pushed anywhere. Spec #151's story
+`deploy/ansible/roles/loop_guest_template` and never pushed anywhere. Spec #151's story
 33 is why - a tourbot Iteration on the stock image has no test runner, so `/tdd`
 degrades from red-green-refactor to an Iteration asserting that a test would
 have failed. The story pre-agreed a fallback to the stock image if the work ran
@@ -598,13 +598,13 @@ role's structure moves for either.
 ## What this directory does not do
 
 - **Place the box's credentials.** The signing key is generated on the box by
-  `ansible/loop.yml` (role `loop_credentials`) and git is configured to sign with
+  `deploy/ansible/loop.yml` (role `loop_credentials`) and git is configured to sign with
   it. The three that arrive through a browser are walkthroughs rather than
   prose: `../wizards/loop-sbx-login.sh` (#78),
   `../wizards/loop-github-credentials.sh` (#81), and the agent's own login -
   `../wizards/loop-claude-login.sh` (#83) or `../wizards/loop-grok-login.sh`
   (#84).
-- **Get itself onto the box.** `ansible/loop.yml` does that now, role
+- **Get itself onto the box.** `deploy/ansible/loop.yml` does that now, role
   `loop_scripts`, alongside `loop_agent` for the pinned agent - so a change here
   reaches `loop.etadventures.com` by re-applying the play, not by an rsync
   somebody remembers.

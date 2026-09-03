@@ -34,7 +34,7 @@
 # box (`loop_scripts`), so the box's copy may still be the previous one when
 # this is read. The controller's is the one this apply is deploying.
 loop_guest_template_adapter: >-
-  {{ playbook_dir }}/../lab/single-user-factory/loop/agents/{{ loop_guest_template_agent }}.sh
+  {{ playbook_dir }}/../../loop/agents/{{ loop_guest_template_agent }}.sh
 
 # The agent kit the guest is built for, and it stays `claude` under the custom
 # image. That is worth stating because it is easy to assume `-t` replaces it: it
