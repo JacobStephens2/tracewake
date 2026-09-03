@@ -1,9 +1,9 @@
 # Single-User Factory
 
 The language of a lightweight software factory with one trusted operator, and of
-the unattended loop that resolves its requests. Sibling to
-[ETA Factory](../../eta-factory/CONTEXT.md), which is company-governed and
-defends a different threat model.
+the unattended loop that resolves its requests. Sibling to the ETA Factory -
+a separate, company-governed system defending a different threat model, whose
+own CONTEXT.md lives in ETA's tree and not in this repository.
 
 The evidence behind the loop terms and the trust and boundary terms is
 [the Ralph research](research/2026-08-24-ralph-loop-and-isolation.md), a
