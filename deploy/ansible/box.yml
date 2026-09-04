@@ -1,4 +1,1 @@
-# The box playbook: configures the Loop's box.
-# Serves one target with that target's own token, workspace and image (issue #5).
-# An alias for loop.yml.
-- import_playbook: loop.yml
+loop.yml

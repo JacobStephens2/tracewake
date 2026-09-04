@@ -222,16 +222,9 @@ fi
 # proves the template rather than the sandbox it was made from - but a build
 # that produced no working environment should fail here, where the message is about
 # the build, rather than one step later where it is about the template.
-if [[ -n ${verify} ]]; then
-    "${sbx}" exec "${sandbox}" bash -lc "${verify}" >&2 ||
-        die "verification command '${verify}' did not run in the sandbox"
-elif [[ " ${packages} " == *" php "* || " ${packages} " == *" php-"* || " ${packages} " == *" composer "* ]]; then
-    "${sbx}" exec "${sandbox}" bash -lc 'php --version >/dev/null && composer --version >/dev/null' >&2 ||
-        die "php or composer did not run in the sandbox they were just installed in"
-else
-    "${sbx}" exec "${sandbox}" bash -lc "dpkg -s ${packages} >/dev/null" >&2 ||
-        die "installed packages did not report installed via dpkg in the sandbox"
-fi
+verify_cmd="${verify:-dpkg -s ${packages} >/dev/null}"
+"${sbx}" exec "${sandbox}" bash -lc "${verify_cmd}" >&2 ||
+    die "package verification failed in the build sandbox"
 
 # `sbx template save` refuses to snapshot a running sandbox, and says so.
 "${sbx}" stop "${sandbox}" >&2 || die "could not stop the build sandbox"

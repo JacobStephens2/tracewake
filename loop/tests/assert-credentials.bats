@@ -32,10 +32,7 @@ setup() { setup_credential_fixture; }
     printf 'github_pat_22EXAMPLEEXAMPLEEXAMPLE\n' >"${token2}"
     chmod 0600 "${token2}"
 
-    local unsets=() name
-    while IFS= read -r name; do unsets+=(-u "${name}"); done < <(credential_env_names)
-    run env "${unsets[@]}" \
-        "${ASSERT}" --home "${BOX_HOME}" --system-root "${BOX_ROOT}" --sbx "${FAKE_SBX}" \
+    run_assert \
         --token-file "${BOX_HOME}/.config/loop/github-token" \
         --token-file "${token2}"
     [ "$status" -eq 0 ]
@@ -48,10 +45,7 @@ setup() { setup_credential_fixture; }
     printf 'ghp_classic_not_fine_grained\n' >"${token2}"
     chmod 0600 "${token2}"
 
-    local unsets=() name
-    while IFS= read -r name; do unsets+=(-u "${name}"); done < <(credential_env_names)
-    run env "${unsets[@]}" \
-        "${ASSERT}" --home "${BOX_HOME}" --system-root "${BOX_ROOT}" --sbx "${FAKE_SBX}" \
+    run_assert \
         --token-file "${BOX_HOME}/.config/loop/github-token" \
         --token-file "${token2}"
     [ "$status" -eq 2 ]
@@ -78,11 +72,7 @@ repo = "org/widgets"
 token_file = "${token2}"
 EOF
 
-    local unsets=() name
-    while IFS= read -r name; do unsets+=(-u "${name}"); done < <(credential_env_names)
-    run env "${unsets[@]}" \
-        "${ASSERT}" --home "${BOX_HOME}" --system-root "${BOX_ROOT}" --sbx "${FAKE_SBX}" \
-        --targets "${targets_file}"
+    run_assert --targets "${targets_file}"
     [ "$status" -eq 0 ]
     [ "$(field CREDENTIALS_HELD)" = "5" ]
 }

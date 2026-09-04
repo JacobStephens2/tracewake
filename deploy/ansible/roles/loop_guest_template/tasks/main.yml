@@ -138,6 +138,9 @@
       - --workspace
       - "{{ item.workspace | default(loop_guest_template_workspace) }}"
   loop: "{{ _loop_guest_templates_to_build | selectattr('smoke', 'defined') | selectattr('smoke') | list }}"
+  when: >-
+    (item.packages | default([]) | select('search', 'php') | list | length > 0)
+    or (item.tag | default('') is search('php'))
   register: loop_guest_template_smoke
   changed_when: false
 

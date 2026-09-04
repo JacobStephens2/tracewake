@@ -223,9 +223,26 @@ home="$(cd -- "${home}" && pwd)"
 
 if [[ -n ${targets_file} ]]; then
     [[ -f ${targets_file} ]] || die "targets file not found: ${targets_file}"
+    read_tokens_from_toml() {
+        python3 -c '
+import sys
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        sys.exit(1)
+with open(sys.argv[1], "rb") as f:
+    data = tomllib.load(f)
+for target in data.get("target", []):
+    if "token_file" in target:
+        print(target["token_file"])
+' "$1" 2>/dev/null || grep -E '^[[:space:]]*token_file[[:space:]]*=' "$1" | sed -E 's/^[[:space:]]*token_file[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/'
+    }
     while IFS= read -r line; do
         [[ -n ${line} ]] && token_files+=("${line}")
-    done < <(grep -E '^[[:space:]]*token_file[[:space:]]*=' "${targets_file}" | sed -E 's/^[[:space:]]*token_file[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/')
+    done < <(read_tokens_from_toml "${targets_file}")
 fi
 
 if ((${#token_files[@]} == 0)); then
@@ -527,14 +544,18 @@ for i in "${!token_files[@]}"; do
         state[${tkey}]="held"
         detail[${tkey}]="${token_file}"
         mode="$(mode_of "${token_file}")"
+        tkey_label="${token_file}"
+        if ((${#token_files[@]} > 1)); then
+            tkey_label="${tkey} (${token_file})"
+        fi
     if [[ ${mode} != "0600" && ${mode} != "0400" ]]; then
-        violation "github-token: ${token_file} is mode ${mode}; it must be readable only by its owner"
+        violation "github-token: ${tkey_label} is mode ${mode}; it must be readable only by its owner"
     fi
     # A classic token cannot be scoped to one repository - its scopes are
     # account-wide - so its presence contradicts the acceptance criterion even
     # though the file is in the right place with the right mode.
     if ! grep -q '^github_pat_' -- "${token_file}"; then
-        violation "github-token: ${token_file} does not hold a fine-grained token (github_pat_...); a classic token cannot be repository-scoped"
+        violation "github-token: ${tkey_label} does not hold a fine-grained token (github_pat_...); a classic token cannot be repository-scoped"
     fi
     fi
 done
