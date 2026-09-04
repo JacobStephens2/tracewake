@@ -49,16 +49,16 @@ import preview  # noqa: E402
 app = FastAPI(title="lab.etadventures.com")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 # The project's own files served static; the dynamic home is the FastAPI app
-# itself. Three mounts rather than one at the repository root, because the
-# root now holds `.git/` and every credential-shaped thing a checkout
-# carries, and StaticFiles serves whatever is under the directory it is
-# given. Naming the three content trees is the difference between serving
-# the documents and serving the repository.
-for _mount in ("docs", "notes", "site"):
+# itself. One mount per content tree rather than one at the repository root,
+# because the root now holds `.git/` and every credential-shaped thing a
+# checkout carries, and StaticFiles serves whatever is under the directory it
+# is given. Naming the content trees is the difference between serving the
+# documents and serving the repository.
+for _tree in ("docs", "notes", "research", "site"):
     app.mount(
-        f"/{_mount}",
-        StaticFiles(directory=PROJECT / _mount, html=True),
-        name=_mount,
+        f"/{_tree}",
+        StaticFiles(directory=PROJECT / _tree, html=True),
+        name=_tree,
     )
 templates = Jinja2Templates(directory=BASE / "templates")
 

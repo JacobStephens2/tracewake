@@ -12,7 +12,7 @@
 -- Every state the page can render appears below exactly once, and every kind
 -- the Selector writes appears in the shape today's writer writes it - the
 -- payload key sets are graded against `events.py`'s constructors by
--- `lab/webapp/tests/test_staging_seed.py`, so a fixture row cannot drift from
+-- `web/tests/test_staging_seed.py`, so a fixture row cannot drift from
 -- the writer it impersonates. Adding a state to the page, or a kind to the
 -- vocabulary, means adding it here in the same change.
 --
@@ -496,11 +496,11 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'ref', 'master', 'ref_head', '44a596d0cbb3',
         'rules', jsonb_build_array('deletion', 'non_fast_forward',
                                    'pull_request'),
-        'paths', jsonb_build_array('lab/single-user-factory/loop',
-                                   'lab/single-user-factory/selector',
-                                   'scripts/selector-cycle.service',
-                                   'scripts/selector-cycle.timer',
-                                   'scripts/with-orchestration-env.sh'),
+        'paths', jsonb_build_array('loop',
+                                   'selector',
+                                   'deploy/systemd/tracewake-selector-cycle.service',
+                                   'deploy/systemd/tracewake-selector-cycle.timer',
+                                   'deploy/systemd/tracewake-selector-notifier.service'),
         'unreviewed', jsonb_build_array(),
         'protected', true, 'detail', null));
 

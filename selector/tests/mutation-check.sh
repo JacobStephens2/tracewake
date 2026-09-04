@@ -62,12 +62,28 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # strip is the Journal's window and its guards are the Selector's guards
 # rendered, so they belong to this check rather than to a second one nobody
 # would remember to run.
-targets=(cycle.py control.py dispatch.py watcher.py board.py journal.py
-         notices.py notifier.py testdb.py ../web/app.py
-         guardrail-sources/protection.sh
-         issue-sources/github.sh
-         ../web/templates/_loop_live.html
-         ../web/templates/_history_live.html)
+#
+# DERIVED from the table rather than written out beside it. The list used to
+# be a hand-kept array, and it had drifted: `events.py`, `seed.sql`,
+# `../web/templates/_runs.html` and `../web/static/loop.css` are all mutated
+# by the table and were in no backup. Two things follow from a file being
+# mutated with no backup, and both are silent - it is left broken on disk when
+# the run ends, and it stays broken INTO THE NEXT MUTATION, whose suite then
+# goes red for a reason that has nothing to do with the mutation under test
+# and is reported as caught. A runner that reports false passes is worse than
+# no runner, and the only way to keep the two lists in step is to have one.
+mapfile -t targets < <(python3 "${mutations}" --list | cut -f2 | LC_ALL=C sort -u)
+((${#targets[@]} > 0)) || {
+    printf 'mutation-check.sh: %s named no targets\n' "${mutations}" >&2
+    exit 2
+}
+for target in "${targets[@]}"; do
+    [[ -f ${selector_dir}/${target} ]] || {
+        printf 'mutation-check.sh: %s names %s, which does not exist\n' \
+            "${mutations}" "${target}" >&2
+        exit 2
+    }
+done
 backup_dir="$(mktemp -d)"
 # Backed up under a flattened name - `../web/app.py` would otherwise
 # write outside the backup directory, which is a mutation runner quietly

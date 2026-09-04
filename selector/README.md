@@ -347,7 +347,7 @@ it. So unlike every other change to this page, the board needs a deploy step
 and not just a restart:
 
 ```bash
-sudo install -m 0644 /srv/orchestration/deploy/systemd/tracewake-web.service \
+sudo install -m 0644 /srv/tracewake/deploy/systemd/tracewake-web.service \
     /etc/systemd/system/tracewake-web.service
 sudo systemctl daemon-reload && sudo systemctl restart tracewake-web
 ```
@@ -363,12 +363,13 @@ so what makes the Selector unattended is a timer, a lock, and enough on the
 page to tell a Selector that is quiet from one that is dead (#156).
 
 **The timer.** `deploy/systemd/tracewake-selector-cycle.timer` fires
-`deploy/systemd/tracewake-selector-cycle.service` every thirty minutes, around the clock. Both
-are installed by `ansible/roles/timers`, which copies every `scripts/*.service`
-and `scripts/*.timer` wholesale. The venv the unit execs is built by
-`deploy/ansible/roles/selector_cycle`, and the fcontext that makes it executable by
-systemd is declared in `ansible/roles/selinux_labels`; without it the unit
-dies 203/EXEC with no traceback.
+`deploy/systemd/tracewake-selector-cycle.service` every thirty minutes, around
+the clock. Installing them is the instance's job today - ETA's `timers` role
+copies units wholesale out of its own tree - and giving this repository a role
+that installs its own units is the units-and-roles ticket. The venv the unit
+execs is built by `deploy/ansible/roles/selector_cycle`, and on an SELinux box
+the fcontext that makes it executable by systemd is declared in the instance's
+`selinux_labels`; without it the unit dies 203/EXEC with no traceback.
 
 **Installed is not enabled, and that is on purpose.** `tracewake-selector-cycle` is the
 one timer deliberately absent from `orchestration_timers`. Every other timer
@@ -1198,8 +1199,9 @@ the guard triggers first.
 
 ## Previewing a branch (the Attended Preview)
 
-`tracewake-web.service` runs from `/srv/orchestration` on `master`, so without a
-preview the only way to see a branch's `/loop` is to merge it. ADR 0016 rules
+`tracewake-web.service` runs from the instance's checkout on its default
+branch, so without a preview the only way to see a branch's `/loop` is to merge
+it. ADR 0016 rules
 on the alternative and names it an **Attended Preview**: a second instance at
 `lab-staging.etadventures.com`, serving one unmerged branch, permissible on
 this VM because somebody is looking at it.

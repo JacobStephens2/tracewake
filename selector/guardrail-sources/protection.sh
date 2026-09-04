@@ -39,8 +39,8 @@
 #
 # Configuration, all environment:
 #
-#   SELECTOR_PROTECTED_REPO    Educational-Travel-Adventures/orchestration
-#   SELECTOR_PROTECTED_REF     master        the ref the paths are deployed from
+#   SELECTOR_PROTECTED_REPO    JacobStephens2/tracewake
+#   SELECTOR_PROTECTED_REF     main          the ref the paths are deployed from
 #   SELECTOR_PROTECTED_REMOTE  origin
 #   SELECTOR_PROTECTED_TREE    the repository this script is in
 #   SELECTOR_PROTECTED_PATHS   guardrail-sources/paths.txt
@@ -52,8 +52,13 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-repo="${SELECTOR_PROTECTED_REPO:-Educational-Travel-Adventures/orchestration}"
-ref="${SELECTOR_PROTECTED_REF:-master}"
+# The product's own repository and default branch, because `paths.txt` beside
+# this script declares paths in THIS tree: a default naming any other
+# repository would compare every declared path against a ref that does not
+# have it, and report a guardrail that is red for the wrong reason. An
+# instance that guards a second tree overrides both.
+repo="${SELECTOR_PROTECTED_REPO:-JacobStephens2/tracewake}"
+ref="${SELECTOR_PROTECTED_REF:-main}"
 remote="${SELECTOR_PROTECTED_REMOTE:-origin}"
 # Two levels up: guardrail-sources -> selector -> the repository root.
 # The deployed tree is the one this script is deployed in, which is what makes

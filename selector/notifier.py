@@ -52,14 +52,12 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import NoReturn
 
 import psycopg
 
 import journal
 import notices
-
-HERE = Path(__file__).resolve().parent
 
 log = logging.getLogger("selector.notifier")
 
@@ -76,9 +74,10 @@ class NotifyFailed(Exception):
     exits non-zero, so systemd restarts it and the notice is sent again."""
 
 
-def _missing(name: str, what: str) -> "str":
-    """Stop, naming the variable. Never returns; typed as `str` so it reads as
-    the value it stands in for at the one call site that has one."""
+def _missing(name: str, what: str) -> NoReturn:
+    """Stop, naming the variable. Called from the right-hand side of an `or`,
+    where a value would go - `NoReturn` is what says no value ever comes
+    back."""
     raise NotConfigured(
         f"{name} is not set, and there is no default for it: {what} is a fact"
         " about this instance, not about Tracewake."
@@ -95,13 +94,10 @@ class NotifierConfig:
     def from_env(cls) -> "NotifierConfig":
         env = os.environ.get
         return cls(
-            # `or` rather than a default argument, the idiom the rest of the
-            # Selector reads env with: an override set to the empty string is
-            # an unset override, not a command named "" that cannot be run.
-            # No default. `or` rather than a plain read for the reason
-            # the rest of the Selector uses it: an override set to the empty
-            # string is an unset override, not a command named "" that cannot
-            # be run - and here both mean the same refusal.
+            # No default, and `or` rather than a plain read: it is the idiom
+            # the rest of the Selector reads env with, and here it says that
+            # an override set to the empty string is an unset override rather
+            # than a command named "" that cannot be run. Both refuse.
             notify_command=(
                 env("SELECTOR_NOTIFY_COMMAND")
                 or _missing("SELECTOR_NOTIFY_COMMAND", "the mail surface")

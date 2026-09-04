@@ -908,7 +908,7 @@ MUTATIONS = {
     # advances its cursor past every notice it was supposed to deliver.
     "an-unconfigured-mail-surface-gets-a-default": (NOTIFIER, NOTIFIER_SUITE,
         'or _missing("SELECTOR_NOTIFY_COMMAND", "the mail surface")',
-        'or str(HERE / "notify-sources" / "mail.sh")',
+        'or "notify-sources/mail.sh"',
     ),
     # --- The Journal Event vocabulary --------------------------------------
     # A legacy row's spelling stops being normalized, so a pre-vocabulary
