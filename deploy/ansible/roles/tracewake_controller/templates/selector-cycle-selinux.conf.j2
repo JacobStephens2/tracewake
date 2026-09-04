@@ -1,0 +1,5 @@
+[Service]
+# Re-apply SELinux fcontext so systemd can exec scripts under SELinux.
+# Git/editor write resets scripts to var_t; systemd cannot exec that (203/EXEC).
+# '+' runs as root despite User=.
+ExecStartPre=+/bin/sh -c '/usr/sbin/restorecon -R -v {{ tracewake_selinux_restorecon_path }}'

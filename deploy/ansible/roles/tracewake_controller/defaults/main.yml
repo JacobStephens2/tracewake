@@ -1,0 +1,42 @@
+---
+# Defaults for tracewake_controller.
+#
+# An instance is an env file plus a targets file; nothing here names an operator,
+# a company, a host, or a repository (issue #3).
+
+tracewake_dir: /srv/tracewake
+tracewake_user: conductor
+tracewake_group: conductor
+tracewake_user_home: /var/lib/conductor
+tracewake_env_file: /etc/tracewake/tracewake.env
+tracewake_journal_db: selector
+
+# Unattended dispatch gate. When false, the timer is stopped and disabled.
+# When true, the timer runs and dispatches every 30 minutes.
+tracewake_dispatch_enabled: false
+
+# Wrapper script (e.g. for credential injection). When empty, cycle.py is run directly.
+tracewake_cycle_wrapper: ""
+
+# Arguments passed to cycle.py by tracewake-selector-cycle.service.
+# Set to "--dry-run" to test cycles without dispatching.
+tracewake_cycle_args: ""
+
+# Additional instance environment files to load in units.
+tracewake_extra_env_files: []
+
+# Alert failure service.
+tracewake_on_failure: "notify-unit-failure@%n.service"
+
+# Window service settings
+tracewake_web_enabled: true
+tracewake_web_port: 8100
+
+# Attended Preview window settings (ADR 0016).
+tracewake_staging_user: labstage
+tracewake_staging_group: labstage
+tracewake_staging_dir: /srv/tracewake-staging
+tracewake_staging_journal_db: selector_staging
+
+# Relabel path when SELinux is enforcing.
+tracewake_selinux_restorecon_path: "{{ tracewake_dir }}/selector"

@@ -9,8 +9,7 @@ Requires=postgresql.service
 
 # In [Unit], NOT [Service]. systemd silently ignores OnFailure= in [Service] -
 # it logs `Unknown key name 'OnFailure' in section 'Service', ignoring` and the
-# unit otherwise looks perfectly configured. nonprod-migration-drift.service
-# shipped that way and its alert was dead from the day it was added.
+# unit otherwise looks perfectly configured.
 #
 # Story 31 is what this line is for: the Selector's own failures - a tracker
 # that did not answer, a Seeding refusal, a box that started no Run, a label
@@ -18,40 +17,32 @@ Requires=postgresql.service
 # and a quiet queue look identical from the dashboard.
 #
 # Verify rather than trust:
-#     systemctl show selector-cycle.service -p OnFailure --value
+#     systemctl show tracewake-selector-cycle.service -p OnFailure --value
 # Empty output means the directive did not register.
-OnFailure=notify-unit-failure@%n.service
+OnFailure={{ tracewake_on_failure | default('notify-unit-failure@%n.service') }}
 
 [Service]
 Type=oneshot
-User=conductor
-Group=conductor
-WorkingDirectory=/srv/tracewake/selector
+User={{ tracewake_user | default('conductor') }}
+Group={{ tracewake_group | default('conductor') }}
+WorkingDirectory={{ tracewake_dir | default('/srv/tracewake') }}/selector
 
-# Through the op-inject wrapper, not bare. A systemd unit starts with an empty
+# Through the instance's environment file. A systemd unit starts with an empty
 # environment, and the tracker command is `gh api graphql` - which without
 # GH_TOKEN fails as an authentication error on every cycle, forever, while the
 # unit itself looks healthy.
+EnvironmentFile=-{{ tracewake_env_file | default('/etc/tracewake/tracewake.env') }}
+{% for env in tracewake_extra_env_files | default([]) %}
+EnvironmentFile=-{{ env }}
+{% endfor %}
+
+# The interpreter is named explicitly rather than relying on the shebang.
+# Passing the script as an argument means it only has to be readable.
 #
-# The interpreter is named explicitly rather than relying on the shebang: the
-# fcontext rule that labels this repository's scripts bin_t only matches
-# `scripts/*.sh`, so cycle.py lands as var_t and systemd refuses to exec it
-# (203/EXEC, no traceback). The venv's bin/ is labelled bin_t by
-# ansible/roles/selinux_labels, and passing the script as an argument means it
-# only has to be readable.
-#
-# git/editor write resets scripts/*.sh to var_t; systemd cannot exec that
-# (203/EXEC). Re-apply the existing fcontext. `+` is root despite User=.
-#
-# The wrapper below is the INSTANCE's, not the product's: it is what resolves
-# this instance's credentials into the cycle's environment, and it lives in
-# the instance's own tree beside the vault manifest it reads. `tracewake_
-# controller` is what fills its path in; the ETA path is written here until
-# it does.
-ExecStartPre=+/bin/sh -c '/usr/sbin/restorecon -v /srv/orchestration/scripts/*.sh'
-ExecStart=/srv/orchestration/scripts/with-orchestration-env.sh \
-    /srv/tracewake/selector/.venv/bin/python \
-    /srv/tracewake/selector/cycle.py
+# If an instance resolves its environment through a wrapper script (e.g.
+# an op-inject launcher), that wrapper is set via tracewake_cycle_wrapper.
+ExecStart={{ (tracewake_cycle_wrapper ~ ' ') if tracewake_cycle_wrapper | default('') else '' }}{{ tracewake_dir | default('/srv/tracewake') }}/selector/.venv/bin/python \
+    {{ tracewake_dir | default('/srv/tracewake') }}/selector/cycle.py{{ (' ' ~ tracewake_cycle_args) if tracewake_cycle_args | default('') else '' }}
 
 # A dispatching cycle holds the process for the length of the Run. The
 # Termination Contract bounds a Run at 90 minutes and the Selector's own

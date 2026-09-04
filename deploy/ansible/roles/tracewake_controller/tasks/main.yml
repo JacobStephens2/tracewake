@@ -1,0 +1,212 @@
+---
+# Configure a Tracewake controller: Journal, virtualenvs, units, and timer.
+#
+# Distro-neutral: installs on RedHat/Rocky and Debian/Ubuntu hosts alike,
+# with SELinux relabeling and drop-in present only where SELinux is enforcing.
+
+# --- 1. PostgreSQL & Journal (ADR 0015) --------------------------------------
+
+- name: PostgreSQL server package (RedHat)
+  ansible.builtin.dnf:
+    name: "@postgresql:16/server"
+    state: present
+  when: ansible_facts.os_family == "RedHat"
+
+- name: Initialize PostgreSQL database (RedHat)
+  ansible.builtin.command: /usr/bin/postgresql-setup --initdb
+  args:
+    creates: /var/lib/pgsql/data/PG_VERSION
+  when: ansible_facts.os_family == "RedHat"
+
+- name: PostgreSQL and Python packages (Debian)
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - postgresql-contrib
+      - python3
+      - python3-venv
+      - python3-pip
+    state: present
+  when: ansible_facts.os_family == "Debian"
+
+- name: PostgreSQL service enabled and started
+  ansible.builtin.systemd:
+    name: postgresql
+    enabled: true
+    state: started
+
+- name: Determine PostgreSQL configuration file paths
+  become: true
+  become_user: postgres
+  ansible.builtin.command: psql -tAc "{{ item }}"
+  register: pg_paths
+  loop:
+    - "SHOW config_file"
+    - "SHOW hba_file"
+  changed_when: false
+  check_mode: false
+
+- name: Unix socket only — no TCP listener
+  ansible.builtin.lineinfile:
+    path: "{{ pg_paths.results[0].stdout.strip() }}"
+    regexp: '^#?listen_addresses ='
+    line: "listen_addresses = ''\t\t# unix socket only: peer auth, no TCP (ADR 0015)"
+  notify: restart postgresql
+  when: pg_paths.results is defined and (pg_paths.results[0].stdout | default('') | trim != '')
+
+- name: Peer auth on unix socket
+  ansible.builtin.lineinfile:
+    path: "{{ pg_paths.results[1].stdout.strip() }}"
+    regexp: '^local\s+all\s+all\s'
+    line: "local   all             all                                     peer"
+  notify: restart postgresql
+  when: pg_paths.results is defined and (pg_paths.results[1].stdout | default('') | trim != '')
+
+- name: Journal database role with CREATEDB
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: >
+    psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ tracewake_user }}'" | grep -q 1
+    && echo exists || createuser --createdb {{ tracewake_user }}
+  register: journal_role
+  changed_when: journal_role.stdout != 'exists'
+
+- name: Journal database owned by tracewake user
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: >
+    psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ tracewake_journal_db }}'" | grep -q 1
+    && echo exists || createdb -O {{ tracewake_user }} {{ tracewake_journal_db }}
+  register: journal_db
+  changed_when: journal_db.stdout != 'exists'
+
+- name: Journal schema applied (idempotent DDL)
+  become: true
+  become_user: "{{ tracewake_user }}"
+  ansible.builtin.command: >
+    psql -d {{ tracewake_journal_db }} -v ON_ERROR_STOP=1
+    -f {{ tracewake_dir }}/selector/schema.sql
+  changed_when: false
+
+# --- 2. Virtual environments ------------------------------------------------
+
+- name: Selector virtual environment and dependencies
+  ansible.builtin.pip:
+    requirements: "{{ tracewake_dir }}/selector/requirements.txt"
+    virtualenv: "{{ tracewake_dir }}/selector/.venv"
+    virtualenv_command: /usr/bin/python3 -m venv
+  become: true
+  become_user: "{{ tracewake_user }}"
+
+- name: Window virtual environment and dependencies
+  ansible.builtin.pip:
+    requirements: "{{ tracewake_dir }}/web/requirements.txt"
+    virtualenv: "{{ tracewake_dir }}/web/.venv"
+    virtualenv_command: /usr/bin/python3 -m venv
+  become: true
+  become_user: "{{ tracewake_user }}"
+
+# --- 3. Systemd units installation ------------------------------------------
+
+- name: Units already on the box, for check mode to reason about
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: ['tracewake-*.service', 'tracewake-*.timer']
+  register: installed_units
+  when: ansible_check_mode
+
+- name: Installed units by bare name
+  ansible.builtin.set_fact:
+    tracewake_units_on_box: "{{ installed_units.files | default([]) | map(attribute='path') | map('basename') | list }}"
+
+- name: Install systemd units
+  ansible.builtin.template:
+    src: "{{ role_path }}/../../../systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - tracewake-selector-cycle.service
+    - tracewake-selector-cycle.timer
+    - tracewake-selector-notifier.service
+    - tracewake-web.service
+    - tracewake-web-staging.service
+  notify: daemon reload
+
+# --- 4. SELinux relabeling and drop-in ---------------------------------------
+
+- name: Determine if SELinux is enforcing
+  ansible.builtin.set_fact:
+    tracewake_selinux_enforcing: >-
+      {{ ansible_selinux is defined and ansible_selinux
+         and (ansible_selinux.status | default('')) == 'enabled'
+         and (ansible_selinux.mode | default('')) == 'enforcing' }}
+
+- name: Relabel virtualenv bin_t so systemd can exec it under SELinux
+  ansible.builtin.command: >-
+    restorecon -R {{ tracewake_dir }}/selector/.venv/bin {{ tracewake_dir }}/web/.venv/bin
+  when: tracewake_selinux_enforcing | bool
+  changed_when: false
+
+- name: Ensure cycle service drop-in directory exists for SELinux
+  ansible.builtin.file:
+    path: /etc/systemd/system/tracewake-selector-cycle.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: tracewake_selinux_enforcing | bool
+
+- name: Install SELinux restorecon drop-in for cycle service
+  ansible.builtin.template:
+    src: selector-cycle-selinux.conf.j2
+    dest: /etc/systemd/system/tracewake-selector-cycle.service.d/selinux.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: tracewake_selinux_enforcing | bool
+  notify: daemon reload
+
+- name: Remove SELinux restorecon drop-in when not enforcing
+  ansible.builtin.file:
+    path: /etc/systemd/system/tracewake-selector-cycle.service.d/selinux.conf
+    state: absent
+  when: not (tracewake_selinux_enforcing | bool)
+  notify: daemon reload
+
+# --- 5. Handlers & units state ----------------------------------------------
+
+- name: Flush handlers before unit state management
+  ansible.builtin.meta: flush_handlers
+
+- name: The window service
+  ansible.builtin.systemd:
+    name: tracewake-web.service
+    enabled: "{{ tracewake_web_enabled | default(true) | bool }}"
+    state: "{{ 'started' if tracewake_web_enabled | default(true) | bool else 'stopped' }}"
+  when: not ansible_check_mode or 'tracewake-web.service' in tracewake_units_on_box
+
+- name: The Selector's email notifier, enabled unconditionally
+  ansible.builtin.systemd:
+    name: tracewake-selector-notifier.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode or 'tracewake-selector-notifier.service' in tracewake_units_on_box
+
+- name: The Selector's cycle timer, gated on dispatch enabled
+  ansible.builtin.systemd:
+    name: tracewake-selector-cycle.timer
+    enabled: "{{ tracewake_dispatch_enabled | bool }}"
+    state: "{{ 'started' if tracewake_dispatch_enabled | bool else 'stopped' }}"
+  when: not ansible_check_mode or 'tracewake-selector-cycle.timer' in tracewake_units_on_box
+
+- name: Say which way unattended dispatch was left
+  ansible.builtin.debug:
+    msg: >-
+      tracewake-selector-cycle.timer is
+      {{ 'ENABLED - the Selector will dispatch Runs on its own every 30 minutes'
+         if tracewake_dispatch_enabled | bool
+         else 'installed and disabled; set tracewake_dispatch_enabled=true to turn
+               unattended dispatch on' }}
