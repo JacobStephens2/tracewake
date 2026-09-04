@@ -1,0 +1,11 @@
+---
+# Configure the Tracewake controller. Which host is the instance's inventory's
+# business; see examples/inventory.yml. Dry-run first:
+#   ansible-playbook controller.yml --check --diff
+#   ansible-playbook controller.yml            # apply
+- name: Configure the Tracewake controller
+  hosts: "{{ target_hosts | default('controller') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - tracewake_controller

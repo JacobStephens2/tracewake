@@ -1,29 +1,29 @@
 [Unit]
 Description=Tracewake's window, Attended Preview (ADR 0016)
-Documentation=file:///srv/tracewake/docs/adr/0016-unreviewed-code-is-not-model-output-and-attendedness-separates-them.md
+Documentation=file://{{ tracewake_dir }}/docs/adr/0016-unreviewed-code-is-not-model-output-and-attendedness-separates-them.md
 After=network.target postgresql.service
 
 [Service]
-# NOT conductor. This process serves unreviewed branch code, and `labstage`
+# NOT the main user. This process serves unreviewed branch code, and `labstage`
 # is what stops it reaching anything: no CONNECT on the live `selector`
 # database, no SSH key, no vault environment. A runtime identity only - the
 # worktree below stays conductor:srvwrite and labstage only reads it.
-User=labstage
-Group=labstage
-WorkingDirectory=/srv/lab-webapp-staging/web
-ExecStart=/srv/lab-webapp-staging/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8101
+User={{ tracewake_staging_user }}
+Group={{ tracewake_staging_group }}
+WorkingDirectory={{ tracewake_staging_dir }}/web
+ExecStart={{ tracewake_staging_dir }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8101
 
 # Enumerated, never an EnvironmentFile. A later edit that added one would hand
 # unreviewed code whatever the file held, quietly.
-Environment=SELECTOR_JOURNAL_DSN=dbname=selector_staging
+Environment=SELECTOR_JOURNAL_DSN=dbname={{ tracewake_staging_journal_db }}
 Environment=LAB_PREVIEW_LEASE=/var/lib/lab-preview/lease.json
 # Read by the banner so it quotes the bound below rather than a copy of it.
 Environment=LAB_PREVIEW_MAX_AGE_SECONDS=14400
 # Tracker and box edges faked, so a cycle run inside a preview reaches nothing
 # outside this VM (ADR 0016).
-Environment=SELECTOR_TRACKER_COMMAND=/srv/lab-webapp-staging/selector/preview-sources/tracker.sh
-Environment=SELECTOR_BOX_COMMAND=/srv/lab-webapp-staging/selector/preview-sources/box.sh
-Environment=SELECTOR_ISSUE_COMMAND=/srv/lab-webapp-staging/selector/preview-sources/issue.sh
+Environment=SELECTOR_TRACKER_COMMAND={{ tracewake_staging_dir }}/selector/preview-sources/tracker.sh
+Environment=SELECTOR_BOX_COMMAND={{ tracewake_staging_dir }}/selector/preview-sources/box.sh
+Environment=SELECTOR_ISSUE_COMMAND={{ tracewake_staging_dir }}/selector/preview-sources/issue.sh
 
 # An Attended Preview is permissible because somebody is looking at it. This
 # is the half of that which does not depend on anybody remembering: four hours
