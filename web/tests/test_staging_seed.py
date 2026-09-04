@@ -125,7 +125,8 @@ def _constructor_shapes():
     import events
     samples = [
         events.cycle_started(repo="r", label="l", allowlist=["a"],
-                             daily_cap=4, dry_run=False),
+                             daily_cap=4, review_cap=20, landing="propose",
+                             dry_run=False),
         events.cycle_skipped(reason="cycle-in-progress"),
         events.cycle_picked(cycle=1, number=2, title="t", url="u", area="a",
                             check="c"),

@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import events
+import targets
 from events import MAX_ATTEMPTS, NO_PROPOSAL, is_failure, outcome_name
 
 # How close to expiry the box's credential has to be before it is worth an
@@ -67,7 +68,11 @@ _DEFAULT_CREDENTIAL_WARN_HOURS = 2.0
 # silent about stays silent, which is the whole point of #280.
 _DEFAULT_MAX_AGE_HOURS = 72.0
 
-_DEFAULT_LOOP_URL = "https://lab.etadventures.com/loop"
+# Deliberately no default for the window's URL: where an instance's window is
+# published is a fact about that instance, not about Tracewake (issue #3). A
+# notice that linked to somebody else's host would be worse than one with no
+# link, so an unset value stops the notifier by name at start rather than
+# mailing a wrong address.
 
 
 @dataclass(frozen=True)
@@ -84,7 +89,12 @@ class NoticeConfig:
                 env("SELECTOR_CREDENTIAL_WARN_HOURS")
                 or _DEFAULT_CREDENTIAL_WARN_HOURS
             ),
-            loop_url=env("SELECTOR_LOOP_URL") or _DEFAULT_LOOP_URL,
+            loop_url=(
+                env("SELECTOR_LOOP_URL")
+                or targets.missing(
+                    "SELECTOR_LOOP_URL", "where this instance's window is"
+                )
+            ),
             max_age_hours=float(
                 env("SELECTOR_NOTIFY_MAX_AGE_HOURS") or _DEFAULT_MAX_AGE_HOURS
             ),

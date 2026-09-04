@@ -220,7 +220,31 @@ finish() {
 
 TOTAL_STAGES=7
 
-LOOP_HOST="${LOOP_HOST:-loop.etadventures.com}"
+# Required, and deliberately without a default (issue #3): a hostname or a
+# repository is a fact about an instance, and a wizard that defaulted to
+# somebody else's would walk an operator through minting a token and then
+# push it there.
+#
+# One helper rather than a check per variable, because the message is the
+# useful part - it says what the value IS, which is what tells an operator
+# which line to write.
+need_env() {
+    local name="$1" what="$2"
+    if [[ -z ${!name:-} ]]; then
+        printf '%s is not set, and there is no default for it: %s is a fact about this instance, not about Tracewake.\n' \
+            "${name}" "${what}" >&2
+        exit 1
+    fi
+    printf '%s' "${!name}"
+}
+
+LOOP_HOST="$(need_env LOOP_HOST "where the box of this instance is")"
+# Read here rather than where it is used, four hundred lines down. Both are
+# required, and finding out about the second one after the operator has minted
+# a token in a browser is a walkthrough that wastes the one thing it exists to
+# spend carefully.
+NEGATIVE_PROBE_REPO="$(need_env LOOP_TOKEN_NEGATIVE_PROBE_REPO \
+    "a repository this token must NOT be able to see - the probe that proves the scope stops at one repository")"
 
 # Nothing this wizard captures is persisted on this side, so there is no .env to
 # upsert into. Pointed at /dev/null deliberately rather than left at the library
@@ -229,7 +253,13 @@ LOOP_HOST="${LOOP_HOST:-loop.etadventures.com}"
 ENV_FILE=/dev/null
 
 wizard_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-role_defaults="${wizard_dir}/../../../ansible/roles/loop_credentials/defaults/main.yml"
+# Where the values below are declared. The role's defaults carry the ones that
+# are the product's (the credentials directory, the key path); the ones that
+# name a person, a host or a repository are the instance's and live in its own
+# inventory, which is what TRACEWAKE_INSTANCE_VARS points at (issue #3).
+# `examples/inventory.yml` is the shape of that file.
+role_defaults="${wizard_dir}/../deploy/ansible/roles/loop_credentials/defaults/main.yml"
+instance_vars="${TRACEWAKE_INSTANCE_VARS:-}"
 assert_script="${wizard_dir}/../loop/assert-credentials.sh"
 
 # The key title, the target repository, the author email and the account they
@@ -242,14 +272,19 @@ assert_script="${wizard_dir}/../loop/assert-credentials.sh"
 # an unreadable file is exactly the second copy this avoids, and it would be
 # discovered by a token minted for the wrong repository.
 role_default() {
-    local key="$1" value=""
-    [[ -f ${role_defaults} ]] ||
-        { warn "cannot read ${role_defaults}"; exit 1; }
-    value="$(sed -nE "s/^${key}:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p" \
-        "${role_defaults}" | head -n1)"
-    [[ -n ${value} ]] ||
-        { warn "${role_defaults} declares no ${key}"; exit 1; }
-    printf '%s' "${value}"
+    local key="$1" value="" file=""
+    for file in "${instance_vars}" "${role_defaults}"; do
+        [[ -n ${file} && -f ${file} ]] || continue
+        value="$(sed -nE "s/^${key}:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p" \
+            "${file}" | head -n1)"
+        [[ -n ${value} ]] || continue
+        printf '%s' "${value}"
+        return 0
+    done
+    warn "no ${key} is declared in ${instance_vars:-<TRACEWAKE_INSTANCE_VARS unset>} or ${role_defaults}"
+    note "It names a person, a host or a repository, so it is an instance value:"
+    note "declare it in your inventory and point TRACEWAKE_INSTANCE_VARS at it."
+    exit 1
 }
 
 SIGNING_KEY_TITLE="$(role_default loop_signing_key_title)"
@@ -356,8 +391,8 @@ say "The second step only you can take: GitHub has no API that mints a"
 say "fine-grained token, so this is a browser form or it is nothing."
 printf '\n'
 open_url "https://github.com/settings/personal-access-tokens/new"
-step "Token name: loop.etadventures.com"
-step "Resource owner: Educational-Travel-Adventures"
+step "Token name: ${LOOP_HOST}"
+step "Resource owner: ${TARGET_REPO%%/*}"
 step "Expiration: your call. When it lapses a Run fails at its push, loudly,"
 step "  with everything it did still on the box."
 step "Repository access: 'Only select repositories' → ${TARGET_REPO}"
@@ -449,10 +484,18 @@ fi
 # The negative probe is the one that matters. A token that can see a second
 # repository is wider than the acceptance criterion, and nothing later in this
 # wizard would notice.
-other="Educational-Travel-Adventures/orchestration"
+# Any repository the token must NOT see. Which one is the instance's to say -
+# "a repository this operator owns and this token is not for" has no
+# product-wide answer - but THAT there is one is not optional. Required rather
+# than skippable, because this is the probe that actually enforces ADR 0009's
+# blast radius, and a check that quietly does not run is worse than one that
+# was never written: the walkthrough would still print a tick beside the
+# positive probe and the operator would read the pair as "the scope holds".
+other="${NEGATIVE_PROBE_REPO}"
 code="$(api_status "repos/${other}")"
 if [[ ${code} == "404" ]]; then
-    printf '  %s✓%s %s  invisible (404) - the scope holds\n' "$GREEN" "$RESET" "${other}"
+    printf '  %s✓%s %s  invisible (404) - the scope holds\n' \
+        "$GREEN" "$RESET" "${other}"
 else
     printf '\n'
     warn "${other} answered ${code}. The token can see a repository it should not."
@@ -498,7 +541,7 @@ rm -rf ${PROOF_DIR}
 mkdir -p ${PROOF_DIR}
 cd ${PROOF_DIR}
 git init -q -b ${BRANCH}
-printf 'Throwaway. Proof for issue #81 that a commit made on loop.etadventures.com\narrives attributed and Verified. Delete this branch.\n' > LOOP-VERIFIED-PROOF.md
+printf 'Throwaway. Proof that a commit made on the box arrives attributed and\nVerified. Delete this branch.\n' > LOOP-VERIFIED-PROOF.md
 git add LOOP-VERIFIED-PROOF.md
 git commit -q -m 'Loop: prove a Verified commit on a throwaway branch'
 git log -1 --format='%H %an <%ae> %G? %GK'
@@ -646,13 +689,12 @@ say "their activity everywhere - not just the Loop's proposals. It is"
 say "deliberately off (ADR 0013, amended)."
 printf '\n'
 step "Nothing to click here. Confirm the Selector's notifier is deployed"
-step "  (orchestration#280) - until it is, a finished Run is visible on"
-step "  lab.etadventures.com/loop and on the proposal itself, but no email"
-step "  arrives."
+step "  - until it is, a finished Run is visible on this instance's window"
+step "  and on the proposal itself, but no email arrives."
 printf '\n'
 
-if ! confirm "Is the Selector's email notifier live (orchestration#280 closed)?"; then
-    SKIPPED+=("the Selector email notifier (orchestration#280) - until it ships, watch lab.etadventures.com/loop; no email announces a finished Run")
+if ! confirm "Is the Selector's email notifier live?"; then
+    SKIPPED+=("the Selector email notifier - until it ships, watch this instance's window; no email announces a finished Run")
 fi
 
 finish

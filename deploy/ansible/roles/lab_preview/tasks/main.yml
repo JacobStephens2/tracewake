@@ -1,5 +1,5 @@
 # The Attended Preview (ADR 0016): a second lab-webapp serving one unmerged
-# branch at lab-staging.etadventures.com, so a /loop change can be looked at
+# branch at the instance's Attended Preview, so a /loop change can be looked at
 # without being merged first.
 #
 # The ruling permits it because a preview is attended. The containment below
@@ -113,7 +113,7 @@
 - name: staging worktree
   # A git worktree of the shared checkout, NOT the shared checkout itself:
   # sixteen systemd units exec from {{ srv_dir }}, including the status
-  # dashboard that gates lab.etadventures.com, so checking that tree out to a
+  # dashboard that gates the instance's window, so checking that tree out to a
   # branch is a fleet-wide change rather than a preview.
   become: true
   become_user: conductor

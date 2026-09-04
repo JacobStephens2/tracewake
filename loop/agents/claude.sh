@@ -98,7 +98,13 @@ metered_env_names=(
 # Selector's box card reports which boundary the box would build (#156), and a
 # status card that read it out of this file by pattern would be a second place
 # to be wrong the day the create moved.
-guest_template=loop-php:1
+# Per target, and defaulted to the image this adapter was calibrated against
+# (issue #3): a PHP target and a Python target run their own suites inside the
+# boundary, so the image is a fact about the target rather than about the
+# adapter. The Selector sets it from the target's stanza and box-sources/ssh.sh
+# carries it across the hop; the default is what a box configured for one
+# target has always used.
+guest_template="${LOOP_GUEST_TEMPLATE:-loop-php:1}"
 
 die() {
     printf 'claude.sh: %s\n' "$*" >&2

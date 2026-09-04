@@ -18,7 +18,7 @@ githubusercontent, which is a boundary against a runaway agent and not against a
 motivated one. An attended Run may run on any posture, because somebody is
 watching it. An unattended one may not.
 
-As of 2026-08-24 `loop.etadventures.com` is on `deny-all` plus an allowlist,
+As of 2026-08-24 the box this was measured on is on `deny-all` plus an allowlist,
 declared in `deploy/ansible/roles/loop_execution_boundary/defaults/main.yml` and
 reconciled by `ansible-playbook loop.yml`. It is two hosts common to every agent
 plus whatever the current agent needs - nothing under Claude Code, three hosts
@@ -343,7 +343,7 @@ Every isolation argument in spec #73 rests on one sentence about what this box
 holds. `assert-credentials.sh` is that sentence, asserted:
 
 ```
-ssh root@loop.etadventures.com 'su - loop -s /bin/bash -c "bash -s"' \
+ssh root@"${LOOP_HOST}" 'su - loop -s /bin/bash -c "bash -s"' \
     < assert-credentials.sh
 ```
 
@@ -606,5 +606,5 @@ role's structure moves for either.
   (#84).
 - **Get itself onto the box.** `deploy/ansible/loop.yml` does that now, role
   `loop_scripts`, alongside `loop_agent` for the pinned agent - so a change here
-  reaches `loop.etadventures.com` by re-applying the play, not by an rsync
+  reaches the box by re-applying the play, not by an rsync
   somebody remembers.

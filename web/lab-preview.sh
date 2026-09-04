@@ -26,7 +26,14 @@ RESTART="${LAB_PREVIEW_RESTART_COMMAND:-sudo systemctl restart tracewake-web-sta
 # and no traceback). The role's restorecon fixes the tree once; the first
 # preview undoes it.
 RELABEL="${LAB_PREVIEW_RELABEL_COMMAND:-sudo restorecon -R}"
-URL="${LAB_PREVIEW_URL:-https://lab-staging.etadventures.com}"
+# Required, and deliberately without a default (issue #3): where an instance
+# publishes its Attended Preview is a fact about that instance. A default here
+# would print somebody else's URL to whoever ran a preview of their own.
+URL="${LAB_PREVIEW_URL:-}"
+[[ -n ${URL} ]] || {
+    printf 'lab-preview.sh: LAB_PREVIEW_URL is not set, and there is no default for it: where this instance publishes its Attended Preview is a fact about this instance, not about Tracewake.\n' >&2
+    exit 1
+}
 # Matches RuntimeMaxSec on the unit: past this the preview is not running, so
 # its lease is not held by anything.
 MAX_AGE="${LAB_PREVIEW_MAX_AGE_SECONDS:-14400}"

@@ -52,21 +52,21 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import NoReturn
 
 import psycopg
 
 import journal
 import notices
+import targets
 
 log = logging.getLogger("selector.notifier")
 
 
-class NotConfigured(Exception):
-    """A required instance value is not set. Raised at start, before any row is
-    read, so the notifier refuses to run rather than running blind: a notifier
-    with nowhere to send advances its cursor past every notice it was supposed
-    to deliver and the backlog is gone."""
+# `targets.NotConfigured` and `targets.missing` are what this file refuses
+# with - one definition of "a required instance value is absent", shared with
+# the cycle's preflight. Named through `targets.` at each use rather than
+# aliased here: an alias would be a second name for one thing, and a reader
+# tracing the refusal would have to find out they were the same.
 
 
 class NotifyFailed(Exception):
@@ -74,14 +74,6 @@ class NotifyFailed(Exception):
     exits non-zero, so systemd restarts it and the notice is sent again."""
 
 
-def _missing(name: str, what: str) -> NoReturn:
-    """Stop, naming the variable. Called from the right-hand side of an `or`,
-    where a value would go - `NoReturn` is what says no value ever comes
-    back."""
-    raise NotConfigured(
-        f"{name} is not set, and there is no default for it: {what} is a fact"
-        " about this instance, not about Tracewake."
-    )
 
 
 @dataclass(frozen=True)
@@ -100,7 +92,9 @@ class NotifierConfig:
             # than a command named "" that cannot be run. Both refuse.
             notify_command=(
                 env("SELECTOR_NOTIFY_COMMAND")
-                or _missing("SELECTOR_NOTIFY_COMMAND", "the mail surface")
+                or targets.missing(
+                    "SELECTOR_NOTIFY_COMMAND", "the mail surface"
+                )
             ),
             # An SMTP call that answers in seconds or not at all. Long enough
             # for a slow relay, short enough that a wedged one cannot hold the
@@ -372,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         config = NotifierConfig.from_env()
-    except NotConfigured as exc:
+    except targets.NotConfigured as exc:
         # Before the Journal is opened and before a cursor exists: nothing has
         # been read, so nothing has been passed over.
         log.error("%s", exc)

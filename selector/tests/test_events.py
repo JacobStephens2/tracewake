@@ -345,11 +345,16 @@ def test_a_watch_failure_is_one_row_naming_the_error():
 def test_the_cycle_rows_spell_their_settled_shapes():
     kind, payload = events.cycle_started(
         repo="acme/widgets", label="ready-for-agent",
-        allowlist=("JacobStephens2",), daily_cap=4, dry_run=False)
+        allowlist=("an-operator",), daily_cap=4, review_cap=20,
+        landing="propose", dry_run=False)
     # No `cycle` key: the row's own id IS the cycle id every later row names.
     assert (kind, "cycle" in payload) == ("cycle.started", False)
+    # The target's settings travel with the cycle that ran under them (issue
+    # #3): a Journal holding the reasoning but not the configuration would
+    # leave "why that repository, under whose Handover?" answerable only from
+    # a file that has since changed.
     assert set(payload) == {"repo", "label", "allowlist", "daily_cap",
-                            "dry_run"}
+                            "review_cap", "landing", "dry_run"}
 
     kind, payload = events.cycle_skipped(reason="cycle-in-progress")
     assert (kind, set(payload)) == ("cycle.skipped", {"reason"})
@@ -403,7 +408,8 @@ def test_the_skip_and_the_loud_skip_rows():
 def test_the_cycle_card_rows_read_back_as_records():
     kind, payload = events.cycle_started(
         repo="acme/widgets", label="ready-for-agent",
-        allowlist=("JacobStephens2",), daily_cap=4, dry_run=True)
+        allowlist=("an-operator",), daily_cap=4, review_cap=20,
+        landing="propose", dry_run=True)
     started = events.cycle_started_record(row(kind, payload, id=51))
     assert (started.id, started.repo, started.dry_run) == (
         51, "acme/widgets", True)

@@ -186,7 +186,7 @@ finish() {
 #
 # This is the third and last of the spec's human-only steps, alongside the
 # Docker sign-in (#78) and registering the signing key (#81). Claude Code's
-# subscription login opens a browser and loop.etadventures.com is headless -
+# subscription login opens a browser and the box is headless -
 # but unlike the other two there is no --password-stdin route, because what is
 # being established is an OAuth session rather than a token you can paste.
 #
@@ -223,7 +223,14 @@ finish() {
 
 TOTAL_STAGES=5
 
-LOOP_HOST="${LOOP_HOST:-loop.etadventures.com}"
+# Required, and deliberately without a default (issue #3): the box's hostname
+# is a fact about an instance, and a wizard that defaulted to somebody else's
+# would walk an operator through minting a credential and then place it there.
+LOOP_HOST="${LOOP_HOST:-}"
+[[ -n ${LOOP_HOST} ]] || {
+    printf 'LOOP_HOST is not set, and there is no default for it: where the box of this instance is, is a fact about this instance, not about Tracewake.\n' >&2
+    exit 1
+}
 CREDENTIALS_PATH="/home/loop/.claude/.credentials.json"
 
 # Nothing this wizard captures is persisted - the credential is established on
@@ -315,7 +322,7 @@ step "It prints a URL. Open it on your own machine and approve."
 step "Paste the code it gives you back into the terminal."
 step "Then type:  /exit"
 printf '\n'
-warn "You are on loop.etadventures.com, not this VM. Nothing else lives there,"
+warn "You are on ${LOOP_HOST}, not this VM. Nothing else lives there,"
 warn "but it is the box an unattended agent runs on - do not ask it to do work."
 printf '\n'
 pause "Press Enter to open the terminal on the box."

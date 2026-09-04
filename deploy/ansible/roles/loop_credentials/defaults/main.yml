@@ -3,15 +3,21 @@
 # the author email against the account's verified addresses, so this is not
 # cosmetic: get it wrong and the commit lands as an unattributed name with no
 # avatar, however well it is signed.
-loop_commit_author_name: Jacob Stephens
-loop_commit_author_email: jstephens@etadventures.com
+# Deliberately undefined (issue #3): a person's name and address are facts
+# about an instance, not about Tracewake, and an apply that ran with somebody
+# else's would land commits attributed to them. Set both in the instance's
+# inventory - `examples/inventory.yml` shows the shape - and ansible fails
+# naming the variable if they are absent.
+# loop_commit_author_name:
+# loop_commit_author_email:
 
 # The GitHub account a Loop commit must land as. Not cosmetic and not the same
 # fact as the email above: the email is what git writes into the commit, and
 # this is what GitHub is expected to resolve it to. The walkthrough compares
 # them, because "some account" and "the operator's account" are different
 # acceptance criteria.
-loop_github_account: JacobStephens2
+# Undefined for the same reason as the two above.
+# loop_github_account:
 
 # The dedicated signing key. Generated ON the box (ADR 0005) and never copied
 # anywhere - the operator's laptop key never leaves the laptop, and this one
@@ -20,7 +26,8 @@ loop_signing_key_path: /home/loop/.ssh/loop_signing_ed25519
 
 # The comment baked into the public key. GitHub ignores it and `ssh-keygen -l`
 # prints it, so it is the fastest way to tell on the box which key this is.
-loop_signing_key_comment: loop@loop.etadventures.com
+# Undefined: it embeds the box's hostname.
+# loop_signing_key_comment:
 
 # The title the key is registered under on the operator's GitHub account. ADR
 # 0005 makes the key itself the discriminator between a Loop commit and a
@@ -28,7 +35,9 @@ loop_signing_key_comment: loop@loop.etadventures.com
 # so it is declared here, where the wizard reads it, rather than typed into a
 # browser from memory. Changing it here changes what the walkthrough tells you
 # to type; it does not rename a key already registered.
-loop_signing_key_title: Loop - loop.etadventures.com
+# Undefined: it embeds the box's hostname, and it is what the operator sees
+# in their own GitHub key list.
+# loop_signing_key_title:
 
 # Where the box keeps what only it holds. Not /etc: these are the Run account's
 # credentials, and root does not need to be able to hand them to anything.
@@ -37,4 +46,7 @@ loop_credentials_dir: /home/loop/.config/loop
 # The repository a Run may propose to. The fine-grained token is scoped to it
 # and to nothing else; the wizard checks the token can see it and cannot see
 # more than it should.
-loop_target_repository: Educational-Travel-Adventures/tourbot
+# Undefined: naming a repository here would scope every instance's box token
+# to one company's tree. Declared per target in `targets.toml`, and per box in
+# the instance's inventory.
+# loop_target_repository:

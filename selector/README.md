@@ -1,7 +1,7 @@
 # The Selector
 
-The Selector (issue #151's spec; vocabulary in `../CONTEXT.md`) drains
-tourbot's `ready-for-agent` queue unattended. This directory is its home.
+The Selector (issue #151's spec; vocabulary in `../CONTEXT.md`) drains a
+target repository's Handover queue unattended. This directory is its home.
 
 What exists is **a cycle that picks, dispatches and does the bookkeeping**
 (issues #153, #154, #155) on top of the **Selector Journal** (ADR 0015, issue
@@ -46,7 +46,8 @@ so the cheap, quiet reasons are tested first. An issue that is blocked anyway
 is not shouted at for a gap.
 
 **Caps.** One Run in flight, `SELECTOR_DAILY_CAP` (4) dispatches per rolling
-24 hours. Rolling rather than calendar: "four a day" is a spend bound, and a
+24 hours. (A target's `review_cap` is declared and journaled; the cap the
+cycle enforces is still the daily one until the draining Cycle lands.) Rolling rather than calendar: "four a day" is a spend bound, and a
 calendar boundary would let eight Runs happen inside three hours across
 midnight. A cap that halts a cycle still lets it reason and journal first, so
 the Journal answers "what would it have picked?" as well as "what did it?".
@@ -62,20 +63,62 @@ The singleton `selector.control` row is deliberately outside
 `journal.events`. The flag is control input. The Journal records the paused
 decision downstream, but it does not become a work source (ADR 0015).
 
-**Configuration**, all environment, all with working defaults:
+## Configuration
+
+An instance is **an env file plus a targets file**, and nothing in the code
+knows the name of a company, a host, a person or a repository (issue #3).
+`examples/` at the repository root carries one real instance's values for both,
+with no secrets in them, and `tests/test_configuration.py` grades every default
+in the shipping tree against it.
+
+**The targets file** (`TRACEWAKE_TARGETS_FILE`, TOML) declares one stanza per
+repository this instance works. A second target is a second stanza - not a
+second controller, a second timer or a second Journal.
+
+| key | default | what it is |
+| --- | --- | --- |
+| `repo` | required | `owner/name` on the tracker |
+| `work_repo` | required | the controller's own clone, where Seeding happens |
+| `box_repo` | required | the box's clone, where the Run works |
+| `token_file` | required | the fine-grained token for THIS repository, on the box |
+| `guest_template` | required | the `sbx` image each Iteration's microVM is built from |
+| `labeler_allowlist` | required | whose labelling counts as a Handover |
+| `labels.ready` | `ready-for-agent` | the Handover |
+| `labels.needs_info` | `needs-info` | where a loud skip sends an issue |
+| `labels.review` | `awaiting-review` | a green Proposal waiting on the operator |
+| `labels.human` | `ready-for-human` | a give-up, or red checks |
+| `review_cap` | `20` | how many Proposals may wait in review |
+| `landing` | `propose` | what a finished Run does with its work |
+
+A required value that is absent stops the cycle **at preflight** - before the
+tracker is read - with the value named, and journals `cycle.failed`. For a
+target's value the file and the stanza's position are named too. Both halves
+are checked, and the instance's first: an absent `SELECTOR_BOX_HOST` is not
+caught by the script that reads it until the cycle has already read the queue,
+seeded a branch and pushed it, because `observe_box` treats a box it cannot
+read as a status failure and carries on by design. That is the point of the move: a loader that filled a
+gap in with something plausible would put the old problem back with an extra
+file in front of it, and the first sign would be a comment on a stranger's
+issue.
+
+`cycle.py` works every declared target in turn, each with its own
+`cycle.started`/`cycle.finished` pair; `--target owner/name` works one.
+
+**The instance file** is environment, and the values that name a host, an
+address or a command have no default at all:
 
 | variable | default | what it is |
 | --- | --- | --- |
+| `TRACEWAKE_TARGETS_FILE` | required | the targets file |
+| `SELECTOR_BOX_HOST` | required | where the box is, as `ssh` takes it |
+
+| `SELECTOR_LOOP_URL` | required | where this instance publishes its window |
+| `SELECTOR_NOTIFY_COMMAND` | required | the mail surface (see below) |
+| `SELECTOR_PROTECTED_REPO` | required | the repository holding the guardrail's rules |
+| `SELECTOR_PROTECTED_REF` | required | the ref the executed paths are deployed from |
 | `SELECTOR_TRACKER_COMMAND` | `tracker-sources/github.sh` | the labeled queue, read |
-| `SELECTOR_TASK_REPO` | `Educational-Travel-Adventures/tourbot` | |
-| `SELECTOR_LABEL` | `ready-for-agent` | the Handover |
-| `SELECTOR_NEEDS_INFO_LABEL` | `needs-info` | where a loud skip sends an issue |
-| `SELECTOR_REVIEW_LABEL` | `awaiting-review` | a green Proposal waiting on the operator |
-| `SELECTOR_HUMAN_LABEL` | `ready-for-human` | a give-up, or red checks |
-| `SELECTOR_LABELER_ALLOWLIST` | `JacobStephens2` | comma-separated |
 | `SELECTOR_DAILY_CAP` | `4` | dispatches per rolling 24h |
 | `SELECTOR_JOURNAL_DSN` | `dbname=selector` | |
-| `SELECTOR_WORK_REPO` | `/var/lib/conductor/selector-work/tourbot` | the checkout Seeding happens in |
 | `SELECTOR_WORK_REMOTE` | `origin` | |
 | `SELECTOR_BRANCH_PREFIX` | `loop/` | |
 | `SELECTOR_SEED_COMMAND` | `../loop/seed-run.sh` | the Loop's own seed step |
@@ -104,23 +147,24 @@ Two timeouts because the two waits are nothing like each other: everything
 except the Run should answer in seconds, and giving a comment or a fetch the
 Run's budget would let one wedged call hold a cycle open for two hours.
 
-`box-sources/ssh.sh` reads four more: `SELECTOR_BOX_HOST`
-(`root@loop.etadventures.com`), `SELECTOR_BOX_USER` (`loop`),
-`SELECTOR_BOX_REPO` (`/home/loop/tourbot`) and `SELECTOR_BOX_LOOP`
-(`/home/loop/loop`). `box-sources/facts.sh` shares the first, second and
-fourth of those, and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it
-asks for the guest template.
+`box-sources/ssh.sh` reads four more: `SELECTOR_BOX_HOST` (required),
+`SELECTOR_BOX_USER` (`loop`), `SELECTOR_BOX_REPO` (the target's, set from its
+stanza) and `SELECTOR_BOX_LOOP` (`/home/loop/loop`). It also carries two
+per-target values across the hop rather than reading them -
+`LOOP_GITHUB_TOKEN_FILE` and `LOOP_GUEST_TEMPLATE` - because what consumes
+them is the Run. `box-sources/facts.sh` shares the first, second and fourth,
+and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it asks for the guest
+template.
 
 `guardrail-sources/protection.sh` shares none of those - it reaches GitHub and
 this checkout rather than the box - and reads five of its own:
-`SELECTOR_PROTECTED_REPO` (`Educational-Travel-Adventures/orchestration`),
-`SELECTOR_PROTECTED_REF` (`master`, the ref the executed paths are deployed
-from), `SELECTOR_PROTECTED_REMOTE` (`origin`), `SELECTOR_PROTECTED_TREE` (the
-repository the script itself is deployed in) and `SELECTOR_PROTECTED_PATHS`
-(`guardrail-sources/paths.txt`).
+`SELECTOR_PROTECTED_REPO` (required), `SELECTOR_PROTECTED_REF` (required, the
+ref the executed paths are deployed from), `SELECTOR_PROTECTED_REMOTE`
+(`origin`), `SELECTOR_PROTECTED_TREE` (the repository the script itself is
+deployed in) and `SELECTOR_PROTECTED_PATHS` (`guardrail-sources/paths.txt`).
 
-Widening the allowlist is one entry here plus a note in ADR 0014, which is
-what story 35 asks for.
+Widening a target's allowlist is one entry in its stanza plus a note in ADR
+0014, which is what story 35 asks for.
 
 ## Dispatch
 
@@ -269,20 +313,19 @@ same three properties hold: complete or nothing, this Run's or none, and
 exactly one row however many times the cumulative log is re-read
 (`journal.contract_seen` is what makes a restarted watch idempotent too).
 
-**The work checkout is not created for you.** Seeding commits the Plan, so the
-checkout needs an identity to commit as - the operator's, because that is
-whose Handover this is. On this VM `conductor`'s global git config already
-carries it, signing key included, so the clone is the whole of the setup:
+**A target's work checkout is not created for you.** Seeding commits the Plan,
+so the checkout needs an identity to commit as - the operator's, because that
+is whose Handover this is. Where the controller's git config already carries
+one, signing key included, the clone is the whole of the setup:
 
 ```bash
-git clone https://github.com/Educational-Travel-Adventures/tourbot \
-    /var/lib/conductor/selector-work/tourbot
+git clone <the target repository> <the stanza's work_repo>
 ```
 
-It is deliberately **not** `/srv/orchestration/tourbot`. That checkout is
-shared with the operators who work in it from their own code-server, and a
-dispatch that switched its branch out from under one of them would be the
-Selector reaching into somebody else's working tree.
+It should deliberately **not** be a checkout anybody works in. A shared tree -
+one an operator has open in their own editor - is one a dispatch would switch
+the branch of out from under them, which is the Selector reaching through the
+glass.
 
 ## The queue board
 
@@ -309,7 +352,7 @@ concurrently and each bounded by `SELECTOR_BOARD_TIMEOUT_SECONDS` - this one
 happens inside a request, and a tracker that is not answering has to make its
 column say so rather than hold the page open. A label whose read fails shows
 the failure in its own column; the other four still render. Measured against
-the live tourbot queue on 2026-08-27: about three seconds for all three,
+a live GitHub queue on 2026-08-27: about three seconds for all three,
 which is what a `/loop` request now costs, and why the bound is ten seconds
 rather than the minute a cycle would allow.
 
@@ -1203,7 +1246,7 @@ the guard triggers first.
 branch, so without a preview the only way to see a branch's `/loop` is to merge
 it. ADR 0016 rules
 on the alternative and names it an **Attended Preview**: a second instance at
-`lab-staging.etadventures.com`, serving one unmerged branch, permissible on
+the instance's staging URL, serving one unmerged branch, permissible on
 this VM because somebody is looking at it.
 
 ```bash
@@ -1227,8 +1270,8 @@ selector/preview-cycle.sh --dry-run
 on the `labstage` account that runs the web process: no `CONNECT` on the live
 `selector` database, no SSH key, no vault environment. It does not extend to
 your shell. You are `conductor`, which holds the token, the SSH key and write
-on the live Journal, so a bare `cycle.py` in the preview tree reads the real
-tourbot queue and dispatches a real Run against it.
+on the live Journal, so a bare `cycle.py` in the preview tree reads the
+instance's real queue and dispatches a real Run against it.
 
 `preview-cycle.sh` points every outward reach at `preview-sources/` - a canned
 queue of three issues covering eligible, blocked and missing-section; a box
@@ -1239,13 +1282,15 @@ fetches nothing; issue bookkeeping that writes nothing - and the Journal at
 the live Journal, because a cycle appends and those appends would be permanent.
 
 **"Every outward reach" includes two that are not commands**, and they are the
-easy ones to miss. `SELECTOR_WORK_REPO` defaults to a real tourbot checkout,
-and `dispatch.py`'s `push()` runs `git push --set-upstream origin <branch>`
-against it *before* the box is ever reached - so faking the tracker and the
-box while leaving that alone still puts a branch on the real repository.
+easy ones to miss. `TRACEWAKE_TARGETS_FILE` names the instance's real targets,
+and a target's `work_repo` is a checkout `dispatch.py`'s `push()` runs
+`git push --set-upstream origin <branch>` against *before* the box is ever
+reached - so faking the tracker and the box while pointing at the instance's
+own stanzas still puts a branch on the real repository.
 `SELECTOR_SEED_COMMAND` defaults to the Loop's real `seed-run.sh`. The wrapper
-redirects both, at a throwaway work repo whose `origin` is a local bare repo
-under `/var/lib/lab-preview/work`, and
+writes its own targets file and redirects the seed command, at a throwaway
+work repo whose `origin` is a local bare repo under `/var/lib/lab-preview/work`,
+and
 `tests/test_preview_cycle.py::test_no_outward_reach_is_left_on_its_default`
 fails if a new one is ever added and left alone.
 

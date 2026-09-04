@@ -1,5 +1,5 @@
 [Unit]
-Description=One Selector cycle: pick and dispatch the lowest eligible ready-for-agent tourbot issue
+Description=One Selector cycle: pick and dispatch the lowest eligible handed-over issue
 Documentation=https://github.com/JacobStephens2/tracewake/blob/main/selector/README.md
 After=network-online.target postgresql.service
 Wants=network-online.target

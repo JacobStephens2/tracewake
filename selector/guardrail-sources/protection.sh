@@ -39,8 +39,8 @@
 #
 # Configuration, all environment:
 #
-#   SELECTOR_PROTECTED_REPO    JacobStephens2/tracewake
-#   SELECTOR_PROTECTED_REF     main          the ref the paths are deployed from
+#   SELECTOR_PROTECTED_REPO    required      the repository holding the rules
+#   SELECTOR_PROTECTED_REF     required      the ref the paths are deployed from
 #   SELECTOR_PROTECTED_REMOTE  origin
 #   SELECTOR_PROTECTED_TREE    the repository this script is in
 #   SELECTOR_PROTECTED_PATHS   guardrail-sources/paths.txt
@@ -52,13 +52,15 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# The product's own repository and default branch, because `paths.txt` beside
-# this script declares paths in THIS tree: a default naming any other
-# repository would compare every declared path against a ref that does not
-# have it, and report a guardrail that is red for the wrong reason. An
-# instance that guards a second tree overrides both.
-repo="${SELECTOR_PROTECTED_REPO:-JacobStephens2/tracewake}"
-ref="${SELECTOR_PROTECTED_REF:-main}"
+# The shared refusal. Sourced rather than restated: an instance value has no
+# default anywhere in the product, and the sentence that says so belongs in
+# one place (issue #3).
+# shellcheck source-path=SCRIPTDIR source=../require-value.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/require-value.sh"
+require SELECTOR_PROTECTED_REPO
+require SELECTOR_PROTECTED_REF
+repo="${SELECTOR_PROTECTED_REPO}"
+ref="${SELECTOR_PROTECTED_REF}"
 remote="${SELECTOR_PROTECTED_REMOTE:-origin}"
 # Two levels up: guardrail-sources -> selector -> the repository root.
 # The deployed tree is the one this script is deployed in, which is what makes

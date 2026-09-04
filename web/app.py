@@ -1,4 +1,4 @@
-"""lab.etadventures.com — the lab front door.
+"""Tracewake's window — the front door of an instance.
 
 Built with FastAPI + Jinja2 + HTMX: server renders HTML, HTMX swaps in
 server-rendered fragments, no client-side framework and no build step. The
@@ -43,10 +43,14 @@ import control  # noqa: E402
 import cycle  # noqa: E402
 import events  # noqa: E402
 import journal  # noqa: E402
+import targets  # noqa: E402
 
 import preview  # noqa: E402
 
-app = FastAPI(title="lab.etadventures.com")
+# Named for the product, not for the host it is published on: where an
+# instance publishes its window is a fact about that instance (issue #3),
+# and it is carried in SELECTOR_LOOP_URL where a notice needs it.
+app = FastAPI(title="Tracewake")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 # The project's own files served static; the dynamic home is the FastAPI app
 # itself. One mount per content tree rather than one at the repository root,
@@ -709,7 +713,24 @@ def _loop_rows(conn) -> tuple[list[dict], bool]:
     return journal.events(conn), control.is_paused(conn)
 
 
-def _budget(cap: int, spend) -> dict:
+def _config() -> tuple["cycle.Config | None", str | None]:
+    """The first declared target's configuration, or why there is none.
+
+    The window renders one target today - `/` growing a target switcher is
+    the board's own ticket - so it takes the first stanza in the targets
+    file. What it must not do is fail: an instance whose configuration is
+    missing or malformed is exactly when somebody opens the page, so the
+    refusal is carried as a sentence into the board's columns rather than
+    raised as a 500 (issue #3).
+    """
+    try:
+        configs = cycle.Config.load()
+    except targets.NotConfigured as exc:
+        return None, str(exc)
+    return configs[0], None
+
+
+def _budget(cap: int | None, spend) -> dict:
     """Today's cap, and what is left of it.
 
     `remaining` rather than only `spent` because that is the operator's
@@ -723,7 +744,9 @@ def _budget(cap: int, spend) -> dict:
         "spent": spent,
         "cap": cap,
         "window": cycle.CAP_WINDOW_HOURS,
-        "remaining": None if spent is None else max(0, cap - spent),
+        "remaining": (
+            None if spent is None or cap is None else max(0, cap - spent)
+        ),
     }
 
 
@@ -736,10 +759,10 @@ def _loop_context(request: Request) -> dict:
     and another the moment a row landed, which is the failure a live page has
     that a static one cannot.
     """
-    config = cycle.Config.from_env()
+    config, unconfigured = _config()
     empty: tuple[list[dict], bool] = ([], False)
     (events, paused), spend, error = _read_journal(_loop_rows, empty)
-    budget = _budget(config.daily_cap, spend)
+    budget = _budget(config.daily_cap if config else None, spend)
     view = [
         {
             "id": e["id"],
@@ -756,7 +779,10 @@ def _loop_context(request: Request) -> dict:
     # Outside the try above because the two are independent - a Journal that
     # is down does not make the queue unknowable, and a tracker that is down
     # does not hide the history.
-    board_view = queue_board.board(config, spend)
+    board_view = (
+        queue_board.board(config, spend) if config
+        else queue_board.unconfigured(unconfigured)
+    )
     return {
         "events": view,
         "cycles": _cycles(events),
@@ -796,7 +822,7 @@ def _history_context(request: Request) -> dict:
     worked on, since a merged-and-deleted branch takes the forge's copy of the
     work with it and leaves the Journal's untouched.
     """
-    config = cycle.Config.from_env()
+    config, _ = _config()
     empty: tuple[list[dict], int] = ([], 0)
     (events, older), spend, error = _read_journal(_history_rows, empty)
     return {
@@ -807,7 +833,7 @@ def _history_context(request: Request) -> dict:
         # The Runs below the window, counted rather than dropped in silence.
         "older": older,
         "shown": HISTORY_RUNS,
-        "budget": _budget(config.daily_cap, spend),
+        "budget": _budget(config.daily_cap if config else None, spend),
         "error": error,
         "live_url": _path(request, "/loop/history/live"),
         "events_url": _path(request, "/loop/events"),

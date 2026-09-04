@@ -1,0 +1,34 @@
+---
+# The instance's ansible variables, as Educational Travel Adventures runs them.
+#
+# Everything the box roles need that names a person, a host or a repository is
+# here rather than in a role default (issue #3): a role default naming an
+# operator would land that operator's name on somebody else's commits, and one
+# naming a repository would scope every instance's box token to one company's
+# tree.
+#
+# No secret is here. The GitHub token and the model credential are minted on
+# the box by the wizards in `wizards/`; this file only says who the box is for.
+all:
+  hosts:
+    loop.etadventures.com:
+      ansible_user: root
+  vars:
+    # Who a Run's commits are by. GitHub attributes a commit by matching the
+    # author email against the account's verified addresses, so this is not
+    # cosmetic: get it wrong and the commit lands unattributed.
+    loop_commit_author_name: Jacob Stephens
+    loop_commit_author_email: jstephens@etadventures.com
+    loop_github_account: JacobStephens2
+
+    # The dedicated signing key, generated on the box and never copied
+    # anywhere (ADR 0005). The comment is what `ssh-keygen -l` prints; the
+    # title is what the operator sees in their own GitHub key list.
+    loop_signing_key_comment: loop@loop.etadventures.com
+    loop_signing_key_title: Loop - loop.etadventures.com
+
+    # The repository the box's token is scoped to, and the checkout a Run
+    # works in. Both are per target: a second target adds a second token file
+    # and a second checkout beside these, matching its stanza in targets.toml.
+    loop_target_repository: Educational-Travel-Adventures/tourbot
+    loop_scripts_workspace: /home/loop/tourbot

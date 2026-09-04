@@ -26,21 +26,29 @@
 #
 # Configuration, all environment, shared with box-sources/ssh.sh:
 #
-#   SELECTOR_BOX_HOST            root@loop.etadventures.com
+#   SELECTOR_BOX_HOST            required        where the box is
 #   SELECTOR_BOX_USER            loop            the account a Run executes as
-#   SELECTOR_BOX_REPO            /home/loop/tourbot
+#   SELECTOR_BOX_REPO            required        the target's checkout on the box
 #   SELECTOR_BOX_PROGRESS_PATH   PROGRESS.md     relative to the checkout
 #
 # Exit codes: 0 when the log was read, non-zero when it could not be.
 
 set -euo pipefail
 
+# The shared refusal. Sourced rather than restated: an instance value has no
+# default anywhere in the product, and the sentence that says so belongs in
+# one place (issue #3).
+# shellcheck source-path=SCRIPTDIR source=../require-value.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/require-value.sh"
+
 branch="${1:?usage: progress.sh <branch>}"
 : "${branch}"  # named for the reader and for a substitute; unused here.
 
-box_host="${SELECTOR_BOX_HOST:-root@loop.etadventures.com}"
+require SELECTOR_BOX_HOST
+require SELECTOR_BOX_REPO
+box_host="${SELECTOR_BOX_HOST}"
 box_user="${SELECTOR_BOX_USER:-loop}"
-box_repo="${SELECTOR_BOX_REPO:-/home/loop/tourbot}"
+box_repo="${SELECTOR_BOX_REPO}"
 box_progress="${SELECTOR_BOX_PROGRESS_PATH:-PROGRESS.md}"
 
 command -v ssh >/dev/null 2>&1 || {

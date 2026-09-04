@@ -1,0 +1,275 @@
+"""The targets file: what a stanza must carry, and how it refuses.
+
+Issue #3 moves every instance fact out of the code and into two files, and the
+whole value of that move is in the refusals. A loader that filled a missing
+value in with something plausible would put the old problem back with an extra
+file in front of it: the cycle would run, against a repository nobody
+configured, and the first sign would be a comment on a stranger's issue.
+
+So what is tested here is mostly what does NOT happen, and that the message
+names the value when it does.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import targets  # noqa: E402
+from fixtures import targets_toml, write_targets  # noqa: E402
+
+
+def load(tmp_path, *stanzas):
+    path = tmp_path / "targets.toml"
+    return targets.load(Path(write_targets(path, *stanzas)))
+
+
+def refusal(tmp_path, text: str) -> str:
+    path = tmp_path / "targets.toml"
+    path.write_text(text)
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.load(path)
+    return str(raised.value)
+
+
+# --- What a stanza must carry ------------------------------------------------
+
+
+def test_a_complete_stanza_loads(tmp_path):
+    (target,) = load(tmp_path)
+    assert target.repo == "acme/widgets"
+    assert target.labeler_allowlist == ("an-operator",)
+    assert target.work_repo == Path("/nonexistent/work")
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["repo", "work_repo", "box_repo", "token_file", "guest_template",
+     "labeler_allowlist"],
+)
+def test_a_missing_required_value_is_refused_by_name(tmp_path, key):
+    """By name, because "the cycle could not run" costs an operator the same
+    half hour every time. The file and the stanza's position are in the
+    message too: a file with four stanzas needs to say which one is short."""
+    text = "\n".join(
+        line for line in targets_toml().splitlines()
+        if not line.startswith(f"{key} = ")
+    )
+    message = refusal(tmp_path, text)
+    assert key in message
+    assert "targets.toml" in message
+    assert "target 1" in message
+
+
+def test_an_empty_value_is_as_absent_as_a_missing_one(tmp_path):
+    message = refusal(tmp_path, targets_toml(repo=""))
+    assert "repo" in message
+
+
+def test_a_misspelled_key_is_refused_rather_than_ignored(tmp_path):
+    """The failure a typo produces otherwise is a setting that reads as
+    configured and is not: `review-cap` with a hyphen would leave the default
+    in force and nothing would ever say so."""
+    message = refusal(tmp_path, targets_toml() + 'review-cap = 5\n')
+    assert "review-cap" in message
+    assert "review_cap" in message
+
+
+def test_a_file_with_no_target_is_refused(tmp_path):
+    message = refusal(tmp_path, "# nothing here\n")
+    assert "[[target]]" in message
+
+
+def test_the_same_repository_twice_is_refused(tmp_path):
+    message = refusal(tmp_path, targets_toml() + "\n" + targets_toml())
+    assert "acme/widgets" in message
+
+
+def test_an_unreadable_file_names_the_variable_that_points_at_it(tmp_path):
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.load(tmp_path / "not-there.toml")
+    assert targets.TARGETS_FILE_VAR in str(raised.value)
+
+
+def test_no_targets_file_at_all_names_the_variable(monkeypatch):
+    """And says there is no default for it, which is the load-bearing half:
+    a conventional path stood in for here would let an instance that
+    configured nothing work whatever targets happened to be sitting there."""
+    monkeypatch.delenv(targets.TARGETS_FILE_VAR, raising=False)
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.load()
+    assert targets.TARGETS_FILE_VAR in str(raised.value)
+    assert "no default" in str(raised.value)
+
+
+# --- The settings that do have defaults --------------------------------------
+
+
+def test_the_four_labels_default_to_the_vocabulary(tmp_path):
+    (target,) = load(tmp_path)
+    assert (target.labels.ready, target.labels.needs_info) == (
+        "ready-for-agent", "needs-info")
+    assert (target.labels.review, target.labels.human) == (
+        "awaiting-review", "ready-for-human")
+
+
+def test_a_target_may_rename_one_label_without_naming_the_rest(tmp_path):
+    (target,) = load(tmp_path, {"labels": {"review": "second-look"}})
+    assert target.labels.review == "second-look"
+    assert target.labels.ready == "ready-for-agent"
+
+
+def test_a_label_the_product_does_not_read_is_refused(tmp_path):
+    message = refusal(
+        tmp_path, targets_toml() + "\n[target.labels]\nblocked = \"nope\"\n")
+    assert "blocked" in message
+
+
+def test_the_review_cap_defaults_and_may_be_set(tmp_path):
+    (default,) = load(tmp_path)
+    assert default.review_cap == targets.DEFAULT_REVIEW_CAP
+    (set_low,) = load(tmp_path, {"review_cap": 3})
+    assert set_low.review_cap == 3
+
+
+@pytest.mark.parametrize("cap", [0, -1, "twenty"])
+def test_a_cap_that_is_not_a_positive_number_is_refused(tmp_path, cap):
+    """Zero is the interesting one: it reads as "never dispatch", which is
+    pausing - and pausing has its own control, on the page, that a cycle
+    journals a reason for."""
+    message = refusal(tmp_path, targets_toml(review_cap=cap))
+    assert "review_cap" in message
+
+
+def test_landing_defaults_to_propose(tmp_path):
+    (target,) = load(tmp_path)
+    assert target.landing == "propose"
+
+
+def test_a_landing_mode_nothing_implements_is_refused(tmp_path):
+    """`land` is reserved and deliberately refused rather than accepted and
+    ignored: an instance that declared it would believe its Runs were merging
+    themselves."""
+    message = refusal(tmp_path, targets_toml(landing="land"))
+    assert "land" in message
+    assert "propose" in message
+
+
+# --- More than one target ----------------------------------------------------
+
+
+def test_targets_keep_the_order_the_file_declares_them_in(tmp_path):
+    loaded = load(tmp_path, {}, {"repo": "acme/gadgets"})
+    assert [t.repo for t in loaded] == ["acme/widgets", "acme/gadgets"]
+
+
+def test_one_target_may_be_selected_by_repository(tmp_path):
+    loaded = load(tmp_path, {}, {"repo": "acme/gadgets"})
+    (selected,) = targets.select(loaded, "acme/gadgets")
+    assert selected.repo == "acme/gadgets"
+
+
+def test_selecting_a_target_that_is_not_declared_lists_the_ones_that_are(
+    tmp_path,
+):
+    loaded = load(tmp_path)
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.select(loaded, "acme/nothing")
+    assert "acme/widgets" in str(raised.value)
+
+
+def test_a_single_stanza_may_be_written_as_a_table(tmp_path):
+    """`[target]` and `[[target]]` mean the same thing to a reader, and a
+    single-target instance is the common case."""
+    path = tmp_path / "targets.toml"
+    path.write_text(targets_toml().replace("[[target]]", "[target]", 1))
+    (target,) = targets.load(path)
+    assert target.repo == "acme/widgets"
+
+
+# --- What reaches the commands -----------------------------------------------
+
+
+def test_the_per_target_values_the_commands_read_are_the_targets_own(tmp_path):
+    """The box checkout, the repository token and the guest image are read by
+    scripts, and the environment is how a Python caller reaches a script. A
+    second target worked in the same drain must not inherit the first's."""
+    (widgets,) = load(tmp_path, {
+        "repo": "acme/widgets", "box_repo": "/box/widgets",
+        "token_file": "/tokens/widgets", "guest_template": "widgets:2",
+    })
+    assert widgets.environ() == {
+        "SELECTOR_TASK_REPO": "acme/widgets",
+        "SELECTOR_BOX_REPO": "/box/widgets",
+        "LOOP_GITHUB_TOKEN_FILE": "/tokens/widgets",
+        "LOOP_GUEST_TEMPLATE": "widgets:2",
+    }
+
+
+# --- The examples are a configured instance ----------------------------------
+
+
+def test_the_example_targets_file_loads():
+    """`examples/targets.toml` is what an operator copies, and it is read by
+    the configuration guard to learn which values are an instance's. A file
+    that no longer parses would make both of those quietly untrue."""
+    (target,) = targets.load(
+        Path(__file__).resolve().parents[2] / "examples" / "targets.toml")
+    assert target.landing in targets.LANDING_MODES
+    assert target.review_cap >= 1
+    assert target.labeler_allowlist
+
+
+def test_an_allowlist_written_as_a_bare_string_is_refused(tmp_path):
+    """The spelling somebody reaches for first, and the dangerous one: TOML
+    accepts it, and iterating a string would put every character of the
+    account name in the allowlist - which allowlists most of the alphabet."""
+    message = refusal(
+        tmp_path,
+        targets_toml().replace(
+            'labeler_allowlist = ["an-operator"]',
+            'labeler_allowlist = "an-operator"',
+        ),
+    )
+    assert "labeler_allowlist" in message
+
+
+# --- The instance, not just the targets --------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(targets.REQUIRED_INSTANCE_VARS))
+def test_a_missing_instance_value_is_refused_by_name(monkeypatch, name):
+    for present in targets.REQUIRED_INSTANCE_VARS:
+        monkeypatch.setenv(present, "something")
+    monkeypatch.delenv(name)
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.Instance.from_env()
+    assert name in str(raised.value)
+    assert "no default" in str(raised.value)
+
+
+def test_a_configured_instance_reads_back(monkeypatch):
+    monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
+    monkeypatch.setenv("SELECTOR_PROTECTED_REPO", "acme/tracewake")
+    monkeypatch.setenv("SELECTOR_PROTECTED_REF", "main")
+    instance = targets.Instance.from_env()
+    assert (instance.box_host, instance.protected_repo, instance.protected_ref) == (
+        "root@box.invalid", "acme/tracewake", "main")
+
+
+def test_the_example_instance_file_declares_every_required_value():
+    """`examples/tracewake.env` is what an operator copies. One that was
+    short of a required value would send them straight into the refusal the
+    examples exist to save them from."""
+    text = (Path(__file__).resolve().parents[2]
+            / "examples" / "tracewake.env").read_text()
+    declared = {
+        line.split("=", 1)[0].strip()
+        for line in text.splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    assert set(targets.REQUIRED_INSTANCE_VARS) <= declared
+    assert targets.TARGETS_FILE_VAR in declared

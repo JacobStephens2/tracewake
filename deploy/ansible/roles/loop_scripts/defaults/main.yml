@@ -13,7 +13,10 @@ loop_scripts_dir: /home/loop/loop
 # The checkout a Run works in. One repository, the one the box's token is scoped
 # to, cloned once and never updated by this role - see the task's own comment
 # for why updating it would be a way to lose a Run.
-loop_scripts_workspace: /home/loop/tourbot
+# Undefined (issue #3): the checkout is the target's, and its name is the
+# target's repository. It is a target's `box_repo` in `targets.toml`, and the
+# instance's inventory is where the play reads it from.
+# loop_scripts_workspace:
 
 # Named here rather than reached for directly in the task, so the dependency on
 # loop_credentials is written down. Role defaults are play-scoped, so this

@@ -9,16 +9,18 @@
 # vault environment - is on the `labstage` account that runs the web process.
 # It does NOT extend to your shell: you are conductor, and conductor holds the
 # token, the SSH key and write on the live Journal. A bare `python cycle.py`
-# in this tree reads the real tourbot queue and dispatches a real Run.
+# in this tree reads the instance's real queue and dispatches a real Run.
 #
 # So every outward reach is redirected here, and "every" is the load-bearing
 # word. Two of them are not commands and are easy to miss:
 #
-#   SELECTOR_WORK_REPO   defaults to a real tourbot checkout, and dispatch.py's
-#                        push() runs `git push --set-upstream origin <branch>`
-#                        against it BEFORE the box is ever reached. Faking the
-#                        tracker and the box while leaving this alone would
-#                        still put a branch on the real repository.
+#   TRACEWAKE_TARGETS_FILE  names the instance's real targets, and a target's
+#                        `work_repo` is a checkout dispatch.py's push() runs
+#                        `git push --set-upstream origin <branch>` against
+#                        BEFORE the box is ever reached. Faking the tracker
+#                        and the box while pointing at the instance's own
+#                        targets file would still put a branch on the real
+#                        repository, so a preview writes its own.
 #   SELECTOR_SEED_COMMAND  defaults to the Loop's real seed-run.sh.
 #
 # tests/test_preview_cycle.py asserts that no outward reach is left on its
@@ -29,7 +31,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="${LAB_PREVIEW_WORK:-/var/lib/lab-preview/work}"
 
 export SELECTOR_JOURNAL_DSN="${SELECTOR_JOURNAL_DSN:-dbname=selector_staging}"
-export SELECTOR_TASK_REPO="${SELECTOR_TASK_REPO:-example/preview}"
 
 # --- the Journal it may append to -------------------------------------------
 # A cycle appends, and the live Journal is append-only by trigger: anything
@@ -85,6 +86,10 @@ export SELECTOR_SEED_COMMAND="$HERE/preview-sources/seed.sh"
 # runs Runs, once per cycle, on the say-so of unreviewed code. A read is still
 # something leaving the VM.
 export SELECTOR_BOX_FACTS_COMMAND="$HERE/preview-sources/facts.sh"
+# The guardrail read (#165), faked for the same two reasons: it runs `gh api`
+# against the instance's repository and walks the deployed tree, and both are
+# reaches a preview must not make.
+export SELECTOR_GUARDRAIL_COMMAND="$HERE/preview-sources/guardrail.sh"
 
 # --- the repository it may push to ------------------------------------------
 # A local bare repo standing in for origin. dispatch.py pushes unconditionally,
@@ -93,14 +98,29 @@ mkdir -p "$WORK"
 if [[ ! -d "$WORK/origin.git" ]]; then
     git init -q --bare "$WORK/origin.git"
 fi
-if [[ ! -d "$WORK/tourbot/.git" ]]; then
-    git init -q -b master "$WORK/tourbot"
-    git -C "$WORK/tourbot" remote add origin "$WORK/origin.git"
-    git -C "$WORK/tourbot" -c user.email=preview@example.invalid \
+if [[ ! -d "$WORK/work-repo/.git" ]]; then
+    git init -q -b master "$WORK/work-repo"
+    git -C "$WORK/work-repo" remote add origin "$WORK/origin.git"
+    git -C "$WORK/work-repo" -c user.email=preview@example.invalid \
         -c user.name=Preview commit -q --allow-empty -m "preview work repo"
-    git -C "$WORK/tourbot" push -q --set-upstream origin master
+    git -C "$WORK/work-repo" push -q --set-upstream origin master
 fi
-export SELECTOR_WORK_REPO="$WORK/tourbot"
 export SELECTOR_WORK_REMOTE=origin
+
+# --- the target it may work -------------------------------------------------
+# Written here rather than pointed at the instance's own file, for the reason
+# the work checkout is local: a target stanza carries the repository, the
+# checkout that gets pushed and the box's token file, and a preview that read
+# the instance's stanzas would reach every one of them.
+cat > "$WORK/targets.toml" <<TOML
+[[target]]
+repo = "example/preview"
+work_repo = "$WORK/work-repo"
+box_repo = "$WORK/box-repo"
+token_file = "$WORK/token"
+guest_template = "preview-guest:1"
+labeler_allowlist = ["an-operator"]
+TOML
+export TRACEWAKE_TARGETS_FILE="$WORK/targets.toml"
 
 exec "${SELECTOR_PYTHON:-$HERE/.venv/bin/python}" "$HERE/cycle.py" "$@"
