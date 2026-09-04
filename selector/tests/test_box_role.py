@@ -59,5 +59,11 @@ def test_build_guest_template_supports_generic_packages():
 
 def test_per_target_token_mode_permissions():
     """AC 2: Per-target token is placed where only the Run account can read it (mode 0600)."""
-    cred_tasks = CREDENTIALS_TASKS_FILE.read_text()
-    assert "0600" in cred_tasks or "0700" in cred_tasks
+    wizard = (ROOT / "wizards" / "loop-github-credentials.sh").read_text()
+    assert "umask 077" in wizard, "wizard must write token under umask 077"
+    assert "mode 0600" in wizard
+
+    assert_script = (ROOT / "loop" / "assert-credentials.sh").read_text()
+    assert '${mode} != "0600" && ${mode} != "0400"' in assert_script, (
+        "assert-credentials.sh must enforce mode 0600 or 0400 on target tokens"
+    )

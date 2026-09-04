@@ -288,10 +288,10 @@ role_default() {
 }
 
 SIGNING_KEY_TITLE="$(role_default loop_signing_key_title)"
-TARGET_REPO="$(role_default loop_target_repository)"
+TARGET_REPO="${LOOP_TARGET_REPOSITORY:-$(role_default loop_target_repository)}"
 AUTHOR_EMAIL="$(role_default loop_commit_author_email)"
 GITHUB_ACCOUNT="$(role_default loop_github_account)"
-TOKEN_FILE="$(role_default loop_credentials_dir)/github-token"
+TOKEN_FILE="${LOOP_GITHUB_TOKEN_FILE:-$(role_default loop_credentials_dir)/github-token}"
 
 # Every command runs on the box, as `loop` - the account a Run executes as, and
 # therefore the account whose credentials are the ones that matter. The same
