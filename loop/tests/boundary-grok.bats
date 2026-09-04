@@ -251,6 +251,23 @@ calls() {
     [[ "$(calls)" != *" exec "* ]]
 }
 
+@test "a box missing a declared image fails at boundary creation naming the play" {
+    LOOP_GUEST_TEMPLATE="custom-target:1" FAKE_SBX_BEHAVIOUR=create-fails run_an_iteration
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"could not create the Execution Boundary for this Iteration from custom-target:1"* ]]
+    [[ "$output" == *"apply ansible/loop.yml - role loop_guest_template builds it."* ]]
+    [[ "$(calls)" != *" exec "* ]]
+}
+
+@test "an Iteration for a declared target runs inside the boundary against that target's checkout" {
+    local target_repo="${BATS_TEST_TMPDIR}/widgets-checkout"
+    mkdir -p "${target_repo}"
+    WORKSPACE="${target_repo}" run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"create "*" shell ${target_repo}"* ]]
+    [[ "$(calls)" == *"exec --workdir ${target_repo}"* ]]
+}
+
 @test "an Iteration will not run beside the boundary when there is no sbx" {
     LOOP_SBX_COMMAND="${BATS_TEST_TMPDIR}/absent" run_an_iteration
     [ "$status" -eq 1 ]

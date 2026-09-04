@@ -77,14 +77,17 @@ die() {
 usage() {
     cat <<'USAGE'
 assert-credentials.sh [--home <dir>] [--system-root <prefix>] [--sbx <cmd>]
+                      [--targets <file>] [--token-file <path>]
 
-Asserts the Loop's box holds the four credentials it is allowed to hold and
-none of the four families it is not. Exits 0 when clean, 2 naming every
-violation, 1 when the check could not run.
+Asserts the Loop's box holds the three base credentials plus one token per
+target it is allowed to hold and none of the four families it is not.
+Exits 0 when clean, 2 naming every violation, 1 when the check could not run.
 
   --home         the Run account's home directory (default /home/loop)
   --system-root  prefix for absolute system paths, for testing (default none)
   --sbx          the Execution Boundary CLI (default sbx)
+  --targets      path to targets.toml declaring targets and their token files
+  --token-file   path to a target's token file (may be specified multiple times)
   --list-env-names  print every forbidden environment variable name and exit
 
 Run it on the box, as the account a Run executes as:
@@ -95,16 +98,11 @@ USAGE
 
 # --- What the box is allowed to hold ----------------------------------------
 #
-# Four lines, and all four now gate the exit code. The model credential's row
-# was the one that did not, because until #83 no agent was installed and
-# requiring it would have made this script red on a box that was exactly as the
-# spec intended. #83 put the operator's subscription login on the box, so the
-# row gates like the rest of them - which was the whole plan, and the only
-# change it took.
+# Three base credentials, plus one repository token per target (ADR 0009 as
+# amended). All gate the exit code.
 #
 #   name|gating|what it is
-allowed=(
-    "github-token|yes|fine-grained, repository-scoped, contents + pull requests"
+base_allowed=(
     "signing-key|yes|dedicated SSH signing key, registered to the operator"
     "docker-identity|yes|read-only Docker PAT the Execution Boundary requires"
     "model-credential|yes|the operator's Claude Code subscription login"
@@ -189,12 +187,16 @@ metered_secret_services=(anthropic openai xai google groq mistral nebius openrou
 home="/home/loop"
 system_root=""
 sbx_cmd="sbx"
+targets_file=""
+token_files=()
 
 while (($# > 0)); do
     case "$1" in
         --home) home="${2:?--home needs a path}"; shift 2 ;;
         --system-root) system_root="${2:?--system-root needs a path}"; shift 2 ;;
         --sbx) sbx_cmd="${2:?--sbx needs a command}"; shift 2 ;;
+        --targets) targets_file="${2:?--targets needs a path}"; shift 2 ;;
+        --token-file) token_files+=("${2:?--token-file needs a path}"); shift 2 ;;
         # Every forbidden environment variable name, one per line. The offline
         # suite unsets exactly these before each run - it has to be runnable in
         # a vaulted-agent session on the orchestration VM, where several of them
@@ -219,8 +221,46 @@ done
 [[ -d ${home} ]] || die "no such home directory: ${home}"
 home="$(cd -- "${home}" && pwd)"
 
+if [[ -n ${targets_file} ]]; then
+    [[ -f ${targets_file} ]] || die "targets file not found: ${targets_file}"
+    while IFS= read -r line; do
+        [[ -n ${line} ]] && token_files+=("${line}")
+    done < <(grep -E '^[[:space:]]*token_file[[:space:]]*=' "${targets_file}" | sed -E 's/^[[:space:]]*token_file[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/')
+fi
+
+if ((${#token_files[@]} == 0)); then
+    token_files=("${home}/.config/loop/github-token")
+fi
+
+token_file="${token_files[0]}"
 signing_key="${home}/.ssh/loop_signing_ed25519"
-token_file="${home}/.config/loop/github-token"
+
+allowed=()
+declare -A seen_token_keys=()
+token_keys=()
+idx=0
+for tf in "${token_files[@]}"; do
+    idx=$((idx + 1))
+    if ((${#token_files[@]} == 1)); then
+        tkey="github-token"
+        tdesc="fine-grained, repository-scoped, contents + pull requests"
+    else
+        bname="$(basename -- "${tf}")"
+        tkey="github-token:${bname}"
+        if [[ -n ${seen_token_keys["${tkey}"]:-} ]]; then
+            tkey="github-token:${bname}-${idx}"
+        fi
+        tdesc="fine-grained, repository-scoped token at ${tf}"
+    fi
+    seen_token_keys["${tkey}"]=1
+    token_keys+=("${tkey}")
+    allowed+=("${tkey}|yes|${tdesc}")
+done
+
+# The base credentials
+for base_row in "${base_allowed[@]}"; do
+    allowed+=("${base_row}")
+done
 
 # Files whose job is to put a name into every future login's environment. A
 # stray export here is invisible to `env` in this process and present in every
@@ -473,17 +513,20 @@ fi
 declare -A state=()
 declare -A detail=()
 
-# github-token
-if [[ ! -f ${token_file} ]]; then
-    state[github-token]="absent"
-    detail[github-token]="expected at ${token_file}"
-elif [[ ! -s ${token_file} ]]; then
-    state[github-token]="absent"
-    detail[github-token]="${token_file} is empty"
-else
-    state[github-token]="held"
-    detail[github-token]="${token_file}"
-    mode="$(mode_of "${token_file}")"
+# github-token (one per declared target)
+for i in "${!token_files[@]}"; do
+    token_file="${token_files[$i]}"
+    tkey="${token_keys[$i]}"
+    if [[ ! -f ${token_file} ]]; then
+        state[${tkey}]="absent"
+        detail[${tkey}]="expected at ${token_file}"
+    elif [[ ! -s ${token_file} ]]; then
+        state[${tkey}]="absent"
+        detail[${tkey}]="${token_file} is empty"
+    else
+        state[${tkey}]="held"
+        detail[${tkey}]="${token_file}"
+        mode="$(mode_of "${token_file}")"
     if [[ ${mode} != "0600" && ${mode} != "0400" ]]; then
         violation "github-token: ${token_file} is mode ${mode}; it must be readable only by its owner"
     fi
@@ -493,7 +536,8 @@ else
     if ! grep -q '^github_pat_' -- "${token_file}"; then
         violation "github-token: ${token_file} does not hold a fine-grained token (github_pat_...); a classic token cannot be repository-scoped"
     fi
-fi
+    fi
+done
 
 # signing-key
 if [[ ! -f ${signing_key} ]]; then

@@ -208,7 +208,7 @@ loop_dir="$(cd -- "${agent_dir}/.." && pwd)"
 # Choosing a template chooses hosts, and this template's choice is recorded
 # rather than assumed away.
 "${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro" >&2 ||
-    die "could not create the Execution Boundary for this Iteration"
+    die "could not create the Execution Boundary for this Iteration from ${guest_template}. If the box is not holding that image, apply ansible/loop.yml - role loop_guest_template builds it."
 
 # The guest's account, which is `agent` under every `sbx` template. Named
 # alongside its home because the two are always used together, and because the
