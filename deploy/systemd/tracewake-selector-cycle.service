@@ -19,20 +19,20 @@ Requires=postgresql.service
 # Verify rather than trust:
 #     systemctl show tracewake-selector-cycle.service -p OnFailure --value
 # Empty output means the directive did not register.
-OnFailure={{ tracewake_on_failure | default('notify-unit-failure@%n.service') }}
+OnFailure={{ tracewake_on_failure }}
 
 [Service]
 Type=oneshot
-User={{ tracewake_user | default('conductor') }}
-Group={{ tracewake_group | default('conductor') }}
-WorkingDirectory={{ tracewake_dir | default('/srv/tracewake') }}/selector
+User={{ tracewake_user }}
+Group={{ tracewake_group }}
+WorkingDirectory={{ tracewake_dir }}/selector
 
 # Through the instance's environment file. A systemd unit starts with an empty
 # environment, and the tracker command is `gh api graphql` - which without
 # GH_TOKEN fails as an authentication error on every cycle, forever, while the
 # unit itself looks healthy.
-EnvironmentFile=-{{ tracewake_env_file | default('/etc/tracewake/tracewake.env') }}
-{% for env in tracewake_extra_env_files | default([]) %}
+EnvironmentFile=-{{ tracewake_env_file }}
+{% for env in tracewake_extra_env_files %}
 EnvironmentFile=-{{ env }}
 {% endfor %}
 
@@ -41,8 +41,8 @@ EnvironmentFile=-{{ env }}
 #
 # If an instance resolves its environment through a wrapper script (e.g.
 # an op-inject launcher), that wrapper is set via tracewake_cycle_wrapper.
-ExecStart={{ (tracewake_cycle_wrapper ~ ' ') if tracewake_cycle_wrapper | default('') else '' }}{{ tracewake_dir | default('/srv/tracewake') }}/selector/.venv/bin/python \
-    {{ tracewake_dir | default('/srv/tracewake') }}/selector/cycle.py{{ (' ' ~ tracewake_cycle_args) if tracewake_cycle_args | default('') else '' }}
+ExecStart={{ (tracewake_cycle_wrapper ~ ' ') if tracewake_cycle_wrapper else '' }}{{ tracewake_dir }}/selector/.venv/bin/python \
+    {{ tracewake_dir }}/selector/cycle.py{{ (' ' ~ tracewake_cycle_args) if tracewake_cycle_args else '' }}
 
 # A dispatching cycle holds the process for the length of the Run. The
 # Termination Contract bounds a Run at 90 minutes and the Selector's own

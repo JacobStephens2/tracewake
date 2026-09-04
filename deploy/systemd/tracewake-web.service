@@ -3,16 +3,16 @@ Description=Tracewake's window — FastAPI + Jinja2 + HTMX
 After=network.target postgresql.service
 
 [Service]
-User={{ tracewake_user | default('conductor') }}
-Group={{ tracewake_group | default('conductor') }}
-WorkingDirectory={{ tracewake_dir | default('/srv/tracewake') }}/web
-ExecStart={{ tracewake_dir | default('/srv/tracewake') }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port {{ tracewake_web_port | default(8100) }}
+User={{ tracewake_user }}
+Group={{ tracewake_group }}
+WorkingDirectory={{ tracewake_dir }}/web
+ExecStart={{ tracewake_dir }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port {{ tracewake_web_port }}
 
-EnvironmentFile=-{{ tracewake_env_file | default('/etc/tracewake/tracewake.env') }}
-{% for env in tracewake_extra_env_files | default([]) %}
+EnvironmentFile=-{{ tracewake_env_file }}
+{% for env in tracewake_extra_env_files %}
 EnvironmentFile=-{{ env }}
 {% endfor %}
-Environment=PATH={{ tracewake_user_home | default('/home/' ~ (tracewake_user | default('conductor'))) }}/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH={{ tracewake_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 Restart=on-failure
 RestartSec=3

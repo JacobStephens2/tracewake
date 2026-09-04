@@ -14,7 +14,7 @@ Requires=postgresql.service
 # What this catches is the notifier's own failure, and it is the one alert on
 # this box that must not go through the notifier: a relay that refused is
 # exactly the case where the Loop's own mail is not arriving.
-OnFailure={{ tracewake_on_failure | default('notify-unit-failure@%n.service') }}
+OnFailure={{ tracewake_on_failure }}
 
 # In [Unit] as well, and for the same class of reason: these two moved out of
 # [Service] in systemd 229 and are ignored there. They are what stops a
@@ -27,19 +27,19 @@ StartLimitBurst=10
 
 [Service]
 Type=simple
-User={{ tracewake_user | default('conductor') }}
-Group={{ tracewake_group | default('conductor') }}
-WorkingDirectory={{ tracewake_dir | default('/srv/tracewake') }}/selector
+User={{ tracewake_user }}
+Group={{ tracewake_group }}
+WorkingDirectory={{ tracewake_dir }}/selector
 
-EnvironmentFile=-{{ tracewake_env_file | default('/etc/tracewake/tracewake.env') }}
-{% for env in tracewake_extra_env_files | default([]) %}
+EnvironmentFile=-{{ tracewake_env_file }}
+{% for env in tracewake_extra_env_files %}
 EnvironmentFile=-{{ env }}
 {% endfor %}
 
 # The interpreter is named explicitly rather than relying on the shebang.
 # Passing the script as an argument means it only has to be readable.
-ExecStart={{ tracewake_dir | default('/srv/tracewake') }}/selector/.venv/bin/python \
-    {{ tracewake_dir | default('/srv/tracewake') }}/selector/notifier.py
+ExecStart={{ tracewake_dir }}/selector/.venv/bin/python \
+    {{ tracewake_dir }}/selector/notifier.py
 
 # A refused delivery exits non-zero on purpose, with the cursor left where it
 # was, so restarting IS the retry. Ten seconds because the usual cause is a
