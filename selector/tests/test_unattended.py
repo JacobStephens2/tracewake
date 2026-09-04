@@ -206,8 +206,18 @@ def test_a_box_that_cannot_be_read_is_journaled_and_does_not_fail_the_cycle(db, 
 
 def test_a_dry_run_does_not_reach_the_box(db, fakes):
     """`ssh` is on the tripwire PATH, so a dry run that read the box would be
-    caught by it. A dry run reaches the tracker and nothing else."""
+    caught by it. A dry run reaches the tracker and nothing else.
+
+    Both outcomes of the read are asserted absent, not just the successful
+    one. A box read that was attempted and failed journals
+    `box.unreachable`, and a test that only checked for `box.observed` would
+    pass for a dry run that reached the box and was refused - which is the
+    property broken, not preserved. The same holds for the guardrail.
+    """
     result = fakes.run(db, [issue(645)])
     assert result.returncode == 0, result.stderr
     assert fakes.tripped() == ""
     assert events(db, "box.observed") == []
+    assert events(db, "box.unreachable") == []
+    assert events(db, "guardrail.observed") == []
+    assert events(db, "guardrail.unreadable") == []

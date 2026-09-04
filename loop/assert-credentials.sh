@@ -89,7 +89,7 @@ violation, 1 when the check could not run.
 
 Run it on the box, as the account a Run executes as:
 
-  ssh root@loop.etadventures.com 'su - loop -c "…/assert-credentials.sh"'
+  ssh root@<the box> 'su - loop -c "…/assert-credentials.sh"'
 USAGE
 }
 

@@ -46,7 +46,19 @@ def dispatch():
 # exported here so the suites that already read them keep reading them by
 # name.
 
-from fixtures import BODY, hours_ago_iso, issue  # noqa: E402,F401
+from fixtures import ALLOWLISTED_OPERATOR, BODY, TARGET_REPO  # noqa: E402,F401
+from fixtures import hours_ago_iso, issue, write_targets  # noqa: E402,F401
+
+# A configured instance, for the harnesses that run the real cycle.py.
+# Preflight refuses these by name before the tracker is read (issue #3), so a
+# suite that left them unset would be testing the refusal in every test. The
+# values are unreachable on purpose: every command that would use them is
+# scripted, and a real one must fail rather than reach a real machine.
+INSTANCE_ENV = {
+    "SELECTOR_BOX_HOST": "root@box.invalid",
+    "SELECTOR_PROTECTED_REPO": "acme/tracewake",
+    "SELECTOR_PROTECTED_REF": "main",
+}
 
 
 # --- The dry-run harness ----------------------------------------------------
@@ -84,21 +96,33 @@ def fakes(tmp_path):
     class Runner:
         args_file = tmp_path / "tracker.args"
 
+        targets_file = tmp_path / "targets.toml"
+
         def run(self, dsn, issues=(), *, tracker_command=None,
-                dry_run=True, **env):
+                dry_run=True, targets=None, select=None, **env):
+            """One cycle against a canned queue.
+
+            `targets` is a list of stanza overrides when a test cares what
+            the target declares; without it one default target is written,
+            because there is no longer any way to name a repository except
+            through the targets file (issue #3).
+            """
             queue_file.write_text(json.dumps({"issues": list(issues)}))
+            write_targets(self.targets_file, *(targets or ()))
             environ = dict(os.environ)
             environ.update(
                 {
                     "PATH": f"{bin_dir}:{environ['PATH']}",
                     "SELECTOR_JOURNAL_DSN": dsn,
                     "SELECTOR_TRACKER_COMMAND": str(tracker_command or tracker),
-                    "SELECTOR_TASK_REPO": "acme/widgets",
-                    "SELECTOR_LABELER_ALLOWLIST": "JacobStephens2",
+                    "TRACEWAKE_TARGETS_FILE": str(self.targets_file),
+                    **INSTANCE_ENV,
                 }
             )
             environ.update({k: str(v) for k, v in env.items()})
             argv = ["--dry-run"] if dry_run else []
+            if select:
+                argv += ["--target", select]
             return subprocess.run(
                 [sys.executable, str(CYCLE), *argv],
                 capture_output=True,
@@ -306,6 +330,15 @@ def box(tmp_path):
 
     box_command = _script(tmp_path / "box.sh", fill('''
         printf 'box %s\n' "$*" >> "@LOG@"
+        # The per-target values, as the box command actually receives them
+        # (issue #3). Logged rather than assumed: the box checkout, the
+        # repository token and the guest image are read by scripts, so the
+        # environment is the seam, and a drain that worked two targets could
+        # otherwise hand the second one the first's token with nothing saying
+        # so.
+        printf 'box-env repo=%s box_repo=%s token=%s guest=%s\n' \
+            "${SELECTOR_TASK_REPO:-}" "${SELECTOR_BOX_REPO:-}" \
+            "${LOOP_GITHUB_TOKEN_FILE:-}" "${LOOP_GUEST_TEMPLATE:-}" >> "@LOG@"
         # What the box would find on the remote when it fetched: the Plan has
         # to be there BEFORE the Run starts, not pushed afterwards.
         printf 'remote-tree %s\n' \
@@ -402,6 +435,13 @@ def box(tmp_path):
     # watcher sees exactly the rows it saw before.
     progress_command = _script(tmp_path / "progress.sh", fill('''
         printf 'progress %s\n' "$*" >> "@LOG@"
+        # The target's checkout, as the watcher's command actually receives
+        # it. `SELECTOR_BOX_REPO` has no default and lives only in a stanza
+        # (issue #3), so a watch built from the bare environment would run
+        # the real progress.sh with nothing telling it which checkout to
+        # read - every poll of every real Run journaling `run.watch-failed`
+        # while the dispatch beside it worked. Found by review, 2026-09-04.
+        printf 'progress-env box_repo=%s\n' "${SELECTOR_BOX_REPO:-}" >> "@LOG@"
         exec cat "@PROGRESS@"
     '''))
 
@@ -411,16 +451,25 @@ def box(tmp_path):
     class Runner:
         # Assigned after the class body: `bare = bare` inside it would read
         # the class-local name, not the fixture's.
-        def run(self, dsn, issues=(), *, dry_run=False, **env):
+        targets_file = tmp_path / "targets.toml"
+        # The controller-side checkout every stanza this fixture writes points
+        # at, exposed so a test can assert Seeding happened in it.
+        work_repo = work
+
+        def run(self, dsn, issues=(), *, dry_run=False, targets=None, **env):
             queue_file.write_text(json.dumps({"issues": list(issues)}))
+            stanzas = targets or ({},)
+            write_targets(
+                self.targets_file,
+                *({"work_repo": str(work), **over} for over in stanzas),
+            )
             environ = dict(os.environ)
             environ.update(
                 {
                     "SELECTOR_JOURNAL_DSN": dsn,
                     "SELECTOR_TRACKER_COMMAND": str(tracker),
-                    "SELECTOR_TASK_REPO": "acme/widgets",
-                    "SELECTOR_LABELER_ALLOWLIST": "JacobStephens2",
-                    "SELECTOR_WORK_REPO": str(work),
+                    "TRACEWAKE_TARGETS_FILE": str(self.targets_file),
+                    **INSTANCE_ENV,
                     "SELECTOR_SEED_COMMAND": str(seed),
                     "SELECTOR_BOX_COMMAND": str(box_command),
                     "SELECTOR_ISSUE_COMMAND": str(issue_command),

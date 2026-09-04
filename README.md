@@ -20,6 +20,21 @@ decision went the way it did.
 and `docs/adr/` holds the decisions, numbered, with the reasoning that produced
 them.
 
+## Configuring an instance
+
+An instance is **an env file plus a targets file**. Nothing in the code names a
+company, a host, a person or a repository: a value like that has exactly one
+right answer per instance and no right answer in the product, so a missing one
+stops the cycle at preflight with the value named rather than being filled in
+with somebody else's. `selector/tests/test_configuration.py` enforces that
+mechanically against every default in the shipping tree.
+
+`examples/` shows both files filled in, for a real instance, with no secrets;
+`selector/README.md` says what each value does. A second repository worked by
+the same instance is a second `[[target]]` stanza - its own labels, allowlist,
+checkouts, token, guest image, review cap and landing mode - and not a second
+controller. The target repository itself stays unaware that Tracewake exists.
+
 ## Layout
 
 | Path | What lives there |
@@ -31,6 +46,7 @@ them.
 | `deploy/ansible/` | The roles that build a box and a controller. |
 | `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. |
 | `docs/adr/` | The decisions, numbered 0001 upward. |
+| `examples/` | One real instance's configuration - the env file, the targets file, the box's ansible variables and its cloud resource. No secrets. |
 | `notes/` | Evidence: what was run, what it printed, and what that settled. |
 | `research/` | The source-cited investigations the notes and the ADRs rest on. |
 
@@ -44,7 +60,7 @@ spend. The two Python suites need a Postgres role matching the OS user with
 # The Loop - 289 tests, bats
 cd loop && bats tests/
 
-# The Selector - 280 tests, pytest
+# The Selector - 340 tests, pytest
 cd selector && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 
@@ -66,9 +82,9 @@ selector/tests/mutation-check.sh
 
 ## Status
 
-v0 is being assembled. This repository holds the history, the code and the
-suites; the work of lifting ETA's own values out of the code and into
-configuration is tracked in this repository's issues, under
+v0 is being assembled. This repository holds the history, the code, the suites
+and - since issue #3 - the configuration that replaced the defaults. What is
+left is tracked in this repository's issues, under
 [Spec: Tracewake v0](https://github.com/JacobStephens2/tracewake/issues/1).
 
 ## Licence

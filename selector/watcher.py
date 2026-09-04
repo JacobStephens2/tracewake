@@ -50,6 +50,7 @@ import psycopg
 
 import events
 import journal
+import targets
 
 HERE = Path(__file__).resolve().parent
 
@@ -310,14 +311,25 @@ def of_this_run(records: list[dict], watch_started: datetime,
 @dataclass(frozen=True)
 class WatchConfig:
     progress_command: str
+    command_env: dict
     interval_seconds: float
     timeout_seconds: float
     clock_skew_seconds: float
 
     @classmethod
-    def from_env(cls) -> "WatchConfig":
+    def for_target(cls, target) -> "WatchConfig":
+        """Per target, because the Progress Log the watcher reads is in the
+        target's own checkout on the box.
+
+        `SELECTOR_BOX_REPO` has no default and lives only in a target's stanza
+        (issue #3), so a watch built from the bare environment would run
+        `progress.sh` with nothing telling it which checkout to read - and
+        every poll of every real Run would journal `run.watch-failed` while
+        the dispatch beside it worked perfectly.
+        """
         env = os.environ.get
         return cls(
+            command_env=target.environ(),
             progress_command=env(
                 "SELECTOR_BOX_PROGRESS_COMMAND",
                 str(HERE / "box-sources" / "progress.sh"),
@@ -441,6 +453,7 @@ class Watcher:
                 capture_output=True,
                 text=True,
                 timeout=self.config.timeout_seconds,
+                env=targets.overlaid(self.config.command_env),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return self._failed(conn, str(exc))

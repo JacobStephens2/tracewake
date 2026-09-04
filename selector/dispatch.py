@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import events
+import targets
 
 HERE = Path(__file__).resolve().parent
 LOOP = HERE.parent / "loop"
@@ -66,7 +67,18 @@ class DispatchFailed(Exception):
 
 @dataclass(frozen=True)
 class DispatchConfig:
+    """What a dispatch needs, for one target.
+
+    `work_repo` and `command_env` are the target's; everything else is the
+    instance's. `command_env` is the overlay every outward command is run
+    with - the target's box checkout, its repository token and its guest
+    image (issue #3) - laid over the process environment at the call site
+    rather than exported into it, so that two targets worked one after the
+    other cannot inherit each other's.
+    """
+
     work_repo: Path
+    command_env: dict
     remote: str
     branch_prefix: str
     seed_command: str
@@ -80,12 +92,14 @@ class DispatchConfig:
     checks_poll_seconds: int
 
     @classmethod
-    def from_env(cls) -> "DispatchConfig":
+    def for_target(cls, target: targets.Target) -> "DispatchConfig":
         env = os.environ.get
         return cls(
-            work_repo=Path(
-                env("SELECTOR_WORK_REPO", "/var/lib/conductor/selector-work/tourbot")
-            ),
+            # The checkout Seeding happens in, declared per target: the
+            # Selector seeds off the box as the operator (ADR 0010), so it
+            # needs its own clone of each repository it works.
+            work_repo=target.work_repo,
+            command_env=target.environ(),
             remote=env("SELECTOR_WORK_REMOTE", "origin"),
             branch_prefix=env("SELECTOR_BRANCH_PREFIX", "loop/"),
             seed_command=env("SELECTOR_SEED_COMMAND", str(LOOP / "seed-run.sh")),
@@ -158,10 +172,20 @@ def report_fields(text: str) -> dict[str, str]:
 
 
 def _run(argv: list[str], *, timeout: int | None = None,
-         stdin: str | None = None) -> subprocess.CompletedProcess:
+         stdin: str | None = None,
+         overlay: dict | None = None) -> subprocess.CompletedProcess:
+    """One outward command, bounded, with the target's values overlaid.
+
+    `overlay` is `DispatchConfig.command_env` at every call site that has a
+    config; `None` where there is none to have. It is laid over a copy of
+    this process's environment rather than replacing it, because the
+    commands also need what the launcher put there - the credentials, the
+    PATH - and a command run with only the overlay would find neither.
+    """
     try:
         return subprocess.run(
-            argv, input=stdin, capture_output=True, text=True, timeout=timeout
+            argv, input=stdin, capture_output=True, text=True, timeout=timeout,
+            env=targets.overlaid(overlay),
         )
     except OSError as exc:
         raise DispatchFailed(f"could not run {argv[0]}: {exc}") from exc
@@ -352,7 +376,8 @@ def seed(config: DispatchConfig, task_repo: str, number: int, area: str,
     ]
     if check:
         argv += ["--check", check]
-    completed = _run(argv, timeout=config.command_timeout_seconds)
+    completed = _run(argv, timeout=config.command_timeout_seconds,
+                     overlay=config.command_env)
     if completed.returncode != 0:
         raise DispatchFailed(f"Seeding refused #{number}: {_said(completed)}")
     return report_fields(completed.stdout)
@@ -389,6 +414,7 @@ def start_run(config: DispatchConfig, branch: str, task_ref: str) -> dict:
     completed = _run(
         [config.box_command, branch, task_ref],
         timeout=config.run_timeout_seconds,
+        overlay=config.command_env,
     )
     fields = report_fields(completed.stdout)
     if "LOOP_RUN_ENDED_BY" not in fields:
@@ -421,6 +447,7 @@ def comment(config: DispatchConfig, task_repo: str, number: int, body: str) -> N
         [config.issue_command, task_repo, "comment", str(number)],
         timeout=config.command_timeout_seconds,
         stdin=body,
+        overlay=config.command_env,
     )
     if completed.returncode != 0:
         raise DispatchFailed(
@@ -433,6 +460,7 @@ def relabel(config: DispatchConfig, task_repo: str, number: int, *,
     completed = _run(
         [config.issue_command, task_repo, "relabel", str(number), add, remove],
         timeout=config.command_timeout_seconds,
+        overlay=config.command_env,
     )
     if completed.returncode != 0:
         raise DispatchFailed(f"could not relabel #{number}: {_said(completed)}")
@@ -455,6 +483,7 @@ def checks(config: DispatchConfig, task_repo: str, proposal: str) -> dict:
     completed = _run(
         [config.issue_command, task_repo, "checks", proposal],
         timeout=config.command_timeout_seconds,
+        overlay=config.command_env,
     )
     if completed.returncode != 0:
         raise DispatchFailed(

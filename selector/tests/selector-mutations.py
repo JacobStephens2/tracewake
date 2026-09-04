@@ -93,6 +93,22 @@ SEED_SUITE = "../web/tests/test_staging_seed.py"
 RUNS_REGION = "../web/templates/_runs.html"
 LOOP_CSS = "../web/static/loop.css"
 
+# The instance's configuration (issue #3). Its guards are all refusals - a
+# required value that is absent, a key nobody reads, a landing mode nothing
+# implements - and a refusal that stopped refusing would not fail: it would
+# run, against something nobody configured. Two suites, because the loader is
+# driven directly and what reaches the box is only visible through a dispatch.
+TARGETS = "targets.py"
+TARGETS_SUITE = "tests/test_targets.py"
+
+# The box surface: the one place a target's checkout, token and image become
+# something the Run can read. `ssh` forwards no environment, so a value not
+# carried here is silently absent on the box - and every target's Run then
+# uses whatever the box was last configured with.
+BOX_SOURCE = "box-sources/ssh.sh"
+FACTS_SOURCE = "box-sources/facts.sh"
+BOX_SOURCE_SUITE = "tests/test_box_source.py"
+
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
@@ -233,7 +249,7 @@ MUTATIONS = {
     # A hand-back GitHub refused exits 0, so the timer never pages and the
     # issue sits in the queue with nothing on it.
     "return-failure-swallowed": (CYCLE, DISPATCH_SUITE,
-        'return 1 if summary.get("return_failures") else 0', "return 0",
+        "    return 1 if failures else 0", "    return 0",
     ),
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
@@ -637,8 +653,8 @@ MUTATIONS = {
     # An unreadable Journal renders as a full budget, so the page promises
     # four Runs remaining on the strength of rows it never read.
     "an-unknown-budget-reads-as-full": (WINDOW, HISTORY_SUITE,
-        '        "remaining": None if spent is None else max(0, cap - spent),',
-        '        "remaining": cap - (spent or 0),',
+        "            None if spent is None or cap is None else max(0, cap - spent)",
+        "            cap - (spent or 0)",
     ),
     # A Run stops reporting how long it took, which is the one fact about it
     # that exists nowhere else: the box persists no record of a finished Run.
@@ -907,7 +923,9 @@ MUTATIONS = {
     # notify command starts anyway, runs a script that is not there, and
     # advances its cursor past every notice it was supposed to deliver.
     "an-unconfigured-mail-surface-gets-a-default": (NOTIFIER, NOTIFIER_SUITE,
-        'or _missing("SELECTOR_NOTIFY_COMMAND", "the mail surface")',
+        'or targets.missing(\n'
+        '                    "SELECTOR_NOTIFY_COMMAND", "the mail surface"\n'
+        "                )",
         'or "notify-sources/mail.sh"',
     ),
     # --- The Journal Event vocabulary --------------------------------------
@@ -958,8 +976,8 @@ MUTATIONS = {
     # The decision module drags the dispatcher back in, and the purity its
     # docstring claims - drivable with no database - quietly stops being true.
     "notices-drags-the-dispatcher-back-in": (NOTICES, NOTICES_SUITE,
-        "import events\nfrom events import",
-        "import cycle  # noqa: F401\nimport events\nfrom events import",
+        "import events\nimport targets\nfrom events import",
+        "import cycle  # noqa: F401\nimport events\nimport targets\nfrom events import",
     ),
     # The harness stops keeping its books, so a database it failed to drop is
     # gone from the run's memory the moment the drop raises - which is the
@@ -983,6 +1001,89 @@ MUTATIONS = {
     "sweep-takes-a-live-run": (TESTDB, TESTDB_SUITE,
         "        keeper.execute(SCHEMA.read_text())\n",
         "        keeper.execute(SCHEMA.read_text())\n        keeper.close()\n",
+    ),
+
+    # --- The instance is configured, never coded (issue #3) ---------------
+    #
+    # A value absent from the stanza stops being a refusal, so the cycle runs
+    # against a target that is missing its checkout, its token or its image -
+    # and the first sign is a Run that cannot push.
+    "required-target-value-defaulted": (TARGETS, TARGETS_SUITE,
+        "            if not stanza.get(key):",
+        "            if False:",
+    ),
+    # A key nobody reads is accepted silently: `review-cap` spelled with a
+    # hyphen leaves the default in force and nothing says so.
+    "misspelled-target-key-ignored": (TARGETS, TARGETS_SUITE,
+        "        if unknown:",
+        "        if False:",
+    ),
+    # A landing mode nothing implements is accepted, so an instance believes
+    # its Runs are merging themselves while they are opening Proposals.
+    "unimplemented-landing-accepted": (TARGETS, TARGETS_SUITE,
+        "        if landing not in LANDING_MODES:",
+        "        if False:",
+    ),
+    # A review cap of zero - "never dispatch" - is accepted as a cap rather
+    # than refused as a pause nobody journaled a reason for.
+    "review-cap-not-a-number": (TARGETS, TARGETS_SUITE,
+        "        if review_cap < 1:",
+        "        if False:",
+    ),
+    # Two stanzas for one repository are accepted: two review caps and two
+    # work checkouts for one queue.
+    "duplicate-target-accepted": (TARGETS, TARGETS_SUITE,
+        "    if duplicated:",
+        "    if False:",
+    ),
+    # The per-target values stop reaching the commands, so every target's Run
+    # works whatever checkout and token the box happened to be left with.
+    "target-values-do-not-reach-the-box": (TARGETS, DISPATCH_SUITE,
+        '            "SELECTOR_BOX_REPO": self.box_repo,',
+        "",
+    ),
+    # The target's repository token stops crossing the hop, so a Run pushes
+    # with whatever credential the box was last configured with - which on a
+    # box serving two targets is the other target's.
+    "token-file-not-carried": (BOX_SOURCE, BOX_SOURCE_SUITE,
+        'exports=""\nif [[ -n ${LOOP_GITHUB_TOKEN_FILE:-} ]]; then\n    exports+="$(printf \'export LOOP_GITHUB_TOKEN_FILE=%q\' "${LOOP_GITHUB_TOKEN_FILE}")"$\'\\n\'\nfi\n',
+        'exports=""\n',
+    ),
+    # The box's address stops being required, so an instance that configured
+    # none reaches whatever `ssh` makes of an empty host.
+    "box-host-not-required": (BOX_SOURCE, BOX_SOURCE_SUITE,
+        "require SELECTOR_BOX_HOST\n", "",
+    ),
+    # The status read stops reporting the target's image, so the box card
+    # claims every target's Iterations are built inside the box's default.
+    "status-read-ignores-the-targets-image": (FACTS_SOURCE, BOX_SOURCE_SUITE,
+        '"${LOOP_GUEST_TEMPLATE:+$(printf \'export LOOP_GUEST_TEMPLATE=%q\\n\' "${LOOP_GUEST_TEMPLATE}")}")"',
+        '"")"',
+    ),
+    # The watcher stops being handed the target's checkout, so the real
+    # progress.sh has nothing telling it which Progress Log to read and
+    # every poll of every real Run journals `run.watch-failed` beside a
+    # dispatch that worked. Found by review, 2026-09-04.
+    "the-watcher-loses-the-targets-checkout": (WATCHER, WATCHER_SUITE,
+        '                env=targets.overlaid(self.config.command_env),',
+        "",
+    ),
+    # The per-target exports go back to carrying their newline inside a
+    # command substitution, which strips it: the exports and the `exec`
+    # run together on one line and the dispatch starts nothing. Found by
+    # review, 2026-09-04.
+    "the-exports-run-into-the-exec": (BOX_SOURCE, BOX_SOURCE_SUITE,
+        '    exports+="$(printf \'export LOOP_GITHUB_TOKEN_FILE=%q\' "${LOOP_GITHUB_TOKEN_FILE}")"$\'\\n\'',
+        '    exports+="$(printf \'export LOOP_GITHUB_TOKEN_FILE=%q\\n\' "${LOOP_GITHUB_TOKEN_FILE}")"',
+    ),
+    # The one variable that cannot live in a file grows a default, so an
+    # instance that configured nothing works whatever targets happen to be at
+    # a conventional path - which is the whole failure this ticket is about,
+    # reached from underneath the stanza guards above.
+    "targets-file-has-a-default": (TARGETS, TARGETS_SUITE,
+        "        os.environ.get(TARGETS_FILE_VAR)\n        or missing(",
+        "        os.environ.get(TARGETS_FILE_VAR)\n"
+        '        or "/etc/tracewake/targets.toml"\n        or missing(',
     ),
 }
 

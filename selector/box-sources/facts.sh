@@ -63,16 +63,27 @@
 #
 # Configuration, all environment, shared with box-sources/ssh.sh:
 #
-#   SELECTOR_BOX_HOST   root@loop.etadventures.com
+#   SELECTOR_BOX_HOST   required        where the box is
 #   SELECTOR_BOX_USER   loop            the account a Run executes as
 #   SELECTOR_BOX_LOOP   /home/loop/loop
 #   SELECTOR_BOX_AGENT  claude          which adapter is asked
+#   LOOP_GUEST_TEMPLATE optional        the target's guest image, carried across
+#                                       the hop so the adapter reports the image
+#                                       THIS target's Iterations would be built
+#                                       from rather than the box's default
 #
 # Exit codes: 0 when the box answered, non-zero when it could not be read.
 
 set -euo pipefail
 
-box_host="${SELECTOR_BOX_HOST:-root@loop.etadventures.com}"
+# The shared refusal. Sourced rather than restated: an instance value has no
+# default anywhere in the product, and the sentence that says so belongs in
+# one place (issue #3).
+# shellcheck source-path=SCRIPTDIR source=../require-value.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/require-value.sh"
+
+require SELECTOR_BOX_HOST
+box_host="${SELECTOR_BOX_HOST}"
 box_user="${SELECTOR_BOX_USER:-loop}"
 box_loop="${SELECTOR_BOX_LOOP:-/home/loop/loop}"
 box_agent="${SELECTOR_BOX_AGENT:-claude}"
@@ -96,6 +107,7 @@ command -v ssh >/dev/null 2>&1 || {
 remote_command="$(printf 'set -uo pipefail
 loop=%q
 agent=%q
+%s
 if [ -d "${loop}" ]; then
     hash="$(find "${loop}" -type f -exec sha256sum {} + \
         | sed "s| ${loop}/| |" | LC_ALL=C sort -k2 | sha256sum | cut -c1-12)"
@@ -112,7 +124,8 @@ fi
 PATH="${HOME}/.local/bin:${HOME}/.grok/bin:${PATH}"
 version="$("${agent}" --version 2>/dev/null | head -n 1 || true)"
 [ -n "${version}" ] && printf "LOOP_BOX_AGENT_VERSION=%%s\\n" "${version}"
-exit 0' "${box_loop}" "${box_agent}")"
+exit 0' "${box_loop}" "${box_agent}" \
+    "${LOOP_GUEST_TEMPLATE:+$(printf 'export LOOP_GUEST_TEMPLATE=%q\n' "${LOOP_GUEST_TEMPLATE}")}")"
 
 # BatchMode and a connect timeout: this is a status read on a cycle that has
 # work to do, so a box that is not answering must fail fast rather than hold

@@ -8,6 +8,7 @@ the tracker rather than seeding rows, and assert on what the columns say.
 from fastapi.testclient import TestClient
 
 from app import app
+import fixtures
 from conftest import column
 
 client = TestClient(app)
@@ -118,17 +119,23 @@ def test_a_tracker_that_cannot_be_read_does_not_take_the_page_down(db, tracker):
 
 
 def test_the_label_columns_follow_the_labels_the_selector_is_configured_with(
-    db, tracker, monkeypatch
+    db, tracker, monkeypatch, tmp_path
 ):
     """The columns are the tracker's labels, not words this page invented. So
-    a Selector configured for a differently-named review queue gets a board
-    that names it - one that still said `awaiting-review` would be describing
-    a label the tracker does not have."""
-    monkeypatch.setenv("SELECTOR_REVIEW_LABEL", "needs-jacob")
-    tracker.queue("needs-jacob", [tracker.issue(401)])
+    a target whose stanza renames the review queue gets a board that names it
+    - one that still said `awaiting-review` would be describing a label the
+    tracker does not have."""
+    monkeypatch.setenv(
+        "TRACEWAKE_TARGETS_FILE",
+        fixtures.write_targets(
+            tmp_path / "renamed-targets.toml",
+            {"labels": {"review": "second-look"}},
+        ),
+    )
+    tracker.queue("second-look", [tracker.issue(401)])
 
     body = client.get("/loop").text
-    assert "needs-jacob" in column(body, "awaiting-review")
+    assert "second-look" in column(body, "awaiting-review")
     assert "#401" in column(body, "awaiting-review")
 
 

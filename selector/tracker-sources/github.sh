@@ -22,7 +22,7 @@
 # nothing else:
 #
 #   {"issues": [{"number": 646, "title": ..., "url": ..., "state": "OPEN",
-#                "body": ..., "labeledBy": "JacobStephens2",
+#                "body": ..., "labeledBy": "an-operator",
 #                "labeledAt": "2026-08-26T12:00:00Z", "blockedBy": 1,
 #                "blockers": [{"number": 645, "title": ..., "url": ...}],
 #                "openSubIssues": 0,

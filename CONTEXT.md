@@ -75,6 +75,25 @@ to applying `ready-for-agent`, which is why the Selector may seed with nobody at
 a keyboard.
 _Avoid_: approval, sign-off, triage
 
+**Instance**:
+One operator's running Tracewake: a controller, a box, a Journal, and the two
+files that configure them - `tracewake.env` and `targets.toml`. Everything an
+instance knows that Tracewake does not - which tracker, whose Handover counts,
+where the box is, how mail is sent - lives in those two files, and nothing in
+the code has a default for any of it. An instance has no name of its own;
+ETA's is "ETA's Tracewake". `examples/` is one, filled in.
+_Avoid_: deployment, tenant, install, the Loop
+
+**Target**:
+One repository an Instance works, and the stanza that declares it: its labels,
+its labeler allowlist, its work checkout and box checkout, its repository
+token, its guest template, its review cap and its landing mode. A second
+Target is a second stanza, not a second controller. The target repository
+itself carries nothing about Tracewake - everything Tracewake needs to know
+about it is in the stanza.
+_Avoid_: project, tenant, repo (the word `repo` is the stanza's key for the
+Target's `owner/name`, not a synonym for the Target)
+
 **Selector**:
 The deterministic automation, off the box, that turns a Handover into a started
 Run: it reads the tracker as the operator, applies Eligibility, performs

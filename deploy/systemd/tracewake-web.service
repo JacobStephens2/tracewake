@@ -1,5 +1,5 @@
 [Unit]
-Description=lab.etadventures.com — FastAPI + Jinja2 + HTMX
+Description=Tracewake's window — FastAPI + Jinja2 + HTMX
 After=network.target postgresql.service
 
 [Service]

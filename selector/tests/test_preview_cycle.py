@@ -6,10 +6,10 @@ it the only thing standing between a preview cycle and production - so what is
 tested here is not that it redirects the obvious edges, but that it leaves no
 edge on its default.
 
-The trap this catches: dispatch.py's `SELECTOR_WORK_REPO` defaults to a real
-tourbot checkout and `push()` does `git push --set-upstream origin <branch>`.
-A wrapper that faked the tracker and the box and left those alone would still
-push a branch to the real repository.
+The trap this catches: a target's `work_repo` is a checkout `push()` does
+`git push --set-upstream origin <branch>` against, before the box is ever
+reached. A wrapper that faked the tracker and the box but pointed at the
+instance's own targets file would still push a branch to the real repository.
 """
 from __future__ import annotations
 
@@ -33,9 +33,18 @@ OUTWARD = {
     # but it is still an SSH session out of this VM, once per cycle, and the
     # wrapper's promise is that no edge is left on its default.
     "SELECTOR_BOX_FACTS_COMMAND": "box-sources/facts.sh",
+    # The guardrail read (#165): `gh api` against the instance's repository
+    # plus a walk of the deployed tree.
+    "SELECTOR_GUARDRAIL_COMMAND": "guardrail-sources/protection.sh",
     "SELECTOR_SEED_COMMAND": "seed-run.sh",
-    "SELECTOR_WORK_REPO": "/var/lib/conductor/selector-work",
 }
+
+# The targets file is the other half, and it is not a command: it names the
+# repository worked, the checkout pushed and the box's token file, so a
+# preview pointed at the instance's own would reach all three. Asserted
+# separately from OUTWARD because what makes it safe is where it points, not
+# that it differs from a default - there is no default for it.
+TARGETS_VAR = "TRACEWAKE_TARGETS_FILE"
 
 
 class TestTheWrapperRedirectsEveryEdge(unittest.TestCase):
@@ -77,12 +86,33 @@ class TestTheWrapperRedirectsEveryEdge(unittest.TestCase):
                 f"{var} still points at the real thing: {env[var]}",
             )
 
+    def test_it_writes_its_own_targets_file(self):
+        """Not the instance's. A preview that read the real stanzas would
+        work the real repository with the real box's token."""
+        env = self.env_after_wrapper()
+        self.assertIn(TARGETS_VAR, env, "the wrapper declares no targets file")
+        declared = Path(env[TARGETS_VAR])
+        self.assertTrue(declared.is_file(), f"{declared} was not written")
+        self.assertTrue(
+            str(declared).startswith(str(self.work)),
+            f"the targets file is outside the preview's work area: {declared}",
+        )
+
+    def _work_repo(self, env) -> Path:
+        """The target's work checkout, read out of the file the wrapper
+        wrote - which is now the only place it is declared."""
+        for line in Path(env[TARGETS_VAR]).read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "work_repo":
+                return Path(value.strip().strip('"'))
+        self.fail("the wrapper's targets file declares no work_repo")
+
     def test_the_work_repo_pushes_to_a_local_bare_repo(self):
         """`push()` is unconditional - it runs before the box is reached, so
         even a preview that dispatches nothing still pushes. The remote has to
         be somewhere that is not GitHub."""
         env = self.env_after_wrapper()
-        work_repo = Path(env["SELECTOR_WORK_REPO"])
+        work_repo = self._work_repo(env)
         self.assertTrue(work_repo.is_dir(), f"{work_repo} was not created")
         remote = subprocess.run(
             ["git", "-C", str(work_repo), "remote", "get-url",

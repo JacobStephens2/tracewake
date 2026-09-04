@@ -187,7 +187,7 @@ finish() {
 # `sbx` (Docker Sandboxes) is installed and pinned by ansible - `loop.yml`, role
 # `loop_execution_boundary` - but it refuses every command that touches a
 # sandbox until it holds a Docker identity, and the sign-in it documents opens a
-# browser. loop.etadventures.com is headless, so that step cannot happen there.
+# browser. The box is headless, so that step cannot happen there.
 #
 # This wizard takes the other route `sbx login` supports: you create a Docker
 # personal access token in a browser on your own machine, paste it here once,
@@ -207,7 +207,14 @@ finish() {
 
 TOTAL_STAGES=5
 
-LOOP_HOST="${LOOP_HOST:-loop.etadventures.com}"
+# Required, and deliberately without a default (issue #3): the box's hostname
+# is a fact about an instance, and a wizard that defaulted to somebody else's
+# would walk an operator through minting a credential and then place it there.
+LOOP_HOST="${LOOP_HOST:-}"
+[[ -n ${LOOP_HOST} ]] || {
+    printf 'LOOP_HOST is not set, and there is no default for it: where the box of this instance is, is a fact about this instance, not about Tracewake.\n' >&2
+    exit 1
+}
 
 # Nothing this wizard captures is persisted, so there is no .env to upsert into
 # and `ask`'s "[Enter keeps current]" affordance has nothing to offer. Pointed
@@ -305,7 +312,7 @@ open_url "https://app.docker.com/settings/personal-access-tokens"
 step "If that did not open: app.docker.com → your avatar → Account settings →"
 step "  Personal access tokens."
 step "Select 'Generate new token'."
-step "Description: loop.etadventures.com - sbx"
+step "Description: ${LOOP_HOST} - sbx"
 step "Expiration: your call. A short one means re-running this wizard, which is"
 step "  cheap; the boundary stops working when it lapses, loudly."
 step "Access permissions: 'Read-only' is enough - sbx pulls images and proves an"

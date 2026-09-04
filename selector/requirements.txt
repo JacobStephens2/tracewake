@@ -1,1 +1,2 @@
 psycopg[binary]==3.2.13
+tomli==2.2.1; python_version < "3.11"

@@ -31,7 +31,7 @@
 DO $$
 DECLARE
     cycle_id bigint;
-    repo     text := 'Educational-Travel-Adventures/tourbot';
+    repo     text := 'acme/widgets';
 BEGIN
 
 IF EXISTS (SELECT 1 FROM journal.events) THEN
@@ -44,7 +44,8 @@ END IF;
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '5 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -119,7 +120,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '4 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -150,7 +152,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '3 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -182,7 +185,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '2 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -217,7 +221,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '1 hour', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -235,7 +240,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'url', 'https://github.com/' || repo || '/issues/660',
         'branch', 'loop/660-invoice-pdf', 'task_ref', repo || '#660',
         'ended_by', 'dispatch-failed',
-        'error', 'ssh: connect to host loop.etadventures.com port 22: no route to host'));
+        'error', 'ssh: connect to host box.example.invalid port 22: no route to host'));
 
 -- 6. The Run in flight: dispatched, no outcome. This is also the Selector's
 --    own in-flight lock - the next cycle stands halted on it (case 7). The
@@ -244,7 +249,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '30 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -310,7 +316,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '28 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', true))
     RETURNING id INTO cycle_id;
 
@@ -328,7 +335,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '25 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -343,7 +351,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '20 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -371,7 +380,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '15 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -411,7 +421,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '12 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('JacobStephens2'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
 
@@ -466,7 +477,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '45 minutes', 'box.unreachable',
      jsonb_build_object('cycle', cycle_id,
-        'error', 'ssh: connect to host loop.etadventures.com port 22: '
+        'error', 'ssh: connect to host box.example.invalid port 22: '
                  || 'Connection timed out')),
     (now() - interval '15 minutes', 'box.observed',
      jsonb_build_object('cycle', cycle_id,

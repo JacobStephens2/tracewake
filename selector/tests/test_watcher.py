@@ -454,3 +454,17 @@ def test_an_earlier_attempts_contract_is_not_journaled_as_this_ones(
     )
     assert result.returncode == 0, result.stderr
     assert events(db, "run.contract") == []
+
+
+def test_the_watcher_reads_the_targets_own_checkout(db, watched_box):
+    """The Progress Log the watcher reads is in the target's checkout on the
+    box, and `SELECTOR_BOX_REPO` lives only in that target's stanza. A watch
+    built from the bare environment would run the real `progress.sh` with
+    nothing telling it which checkout to read: every poll of every real Run
+    journaling `run.watch-failed`, beside a dispatch that worked perfectly.
+    Found by review, 2026-09-04.
+    """
+    _run_with_a_progress_log(
+        watched_box, db, (FIXTURES / "box-progress-run-648.md").read_text())
+
+    assert "progress-env box_repo=/nonexistent/box" in watched_box.commands()

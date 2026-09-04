@@ -277,7 +277,7 @@ def test_dry_run_touches_nothing_but_the_journal(db, fakes):
 
 
 def test_the_tracker_is_asked_for_the_configured_repo_and_label(db, fakes):
-    fakes.run(db, [issue(645)], SELECTOR_LABEL="ready-for-agent")
+    fakes.run(db, [issue(645)])
     assert fakes.args_file.read_text().strip() == "acme/widgets ready-for-agent"
 
 
@@ -363,3 +363,111 @@ def test_dry_run_is_the_cycle_that_would_have_happened(db, fakes):
     assert finished(db)["dry_run"] is True
     assert not events(db, "run.dispatched"), "a dry run starts no Run"
     assert not events(db, "issue.returned"), "a dry run hands nothing back"
+
+
+# --- The instance is configured, never coded (issue #3) ---------------------
+#
+# The target is a stanza in a file now, and everything about it - which
+# repository, which four labels, whose labelling counts as a Handover, how
+# many Proposals may sit in review, what a finished Run does with its work -
+# comes from there and from nowhere else. What is checked here is that a
+# dry-run cycle honours the stanza and journals it, and that an instance that
+# is short of a required value stops before it has read anything.
+
+
+def test_a_dry_run_works_the_target_the_file_declares(db, fakes):
+    """The whole of a target's declaration, journaled with the cycle that ran
+    under it. A Journal holding the reasoning but not the settings the
+    reasoning ran under leaves "why that repository, under whose Handover?"
+    answerable only from a file that has since changed."""
+    result = fakes.run(db, [issue(645)], targets=[{
+        "repo": "acme/gadgets",
+        "labeler_allowlist": ["an-operator", "a-second-operator"],
+        "review_cap": 7,
+        "landing": "propose",
+    }])
+
+    assert result.returncode == 0, result.stderr
+    started = events(db, "cycle.started")[0]["payload"]
+    assert started["repo"] == "acme/gadgets"
+    assert started["label"] == "ready-for-agent"
+    assert started["allowlist"] == ["an-operator", "a-second-operator"]
+    assert started["review_cap"] == 7
+    assert started["landing"] == "propose"
+    assert fakes.args_file.read_text().strip() == "acme/gadgets ready-for-agent"
+
+
+def test_the_handover_label_is_the_targets_own(db, fakes):
+    """A target that calls its Handover something else gets a cycle that asks
+    the tracker for that label. There is no product-wide `ready-for-agent`
+    the code could fall back on."""
+    fakes.run(db, [issue(645)], targets=[{"labels": {"ready": "hand-over"}}])
+    assert fakes.args_file.read_text().strip() == "acme/widgets hand-over"
+
+
+def test_the_allowlist_is_the_targets_own(db, fakes):
+    """The Handover IS the label, so who may apply it is the whole of who is
+    trusted - and it is declared per target, because one operator's tracker
+    accounts are not another's."""
+    fakes.run(db, [issue(645)], targets=[{"labeler_allowlist": ["somebody-else"]}])
+    assert skips(db) == {645: "labeler-not-allowlisted"}
+
+
+def test_every_declared_target_is_worked_by_one_cycle_run(db, fakes):
+    """A second target is a stanza, not a second controller: one invocation,
+    one Journal, one cycle per target."""
+    result = fakes.run(db, [issue(645)], targets=[
+        {"repo": "acme/widgets"}, {"repo": "acme/gadgets"}])
+
+    assert result.returncode == 0, result.stderr
+    worked = [e["payload"]["repo"] for e in events(db, "cycle.started")]
+    assert worked == ["acme/widgets", "acme/gadgets"]
+    assert len(events(db, "cycle.finished")) == 2
+
+
+def test_one_target_can_be_worked_on_its_own(db, fakes):
+    result = fakes.run(
+        db, [issue(645)],
+        targets=[{"repo": "acme/widgets"}, {"repo": "acme/gadgets"}],
+        select="acme/gadgets",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert [e["payload"]["repo"] for e in events(db, "cycle.started")] == [
+        "acme/gadgets"]
+
+
+def test_a_missing_required_value_stops_the_cycle_before_the_tracker(db, fakes):
+    """At preflight, naming the value. Before the tracker is read and long
+    before anything is dispatched: an instance that is half configured must
+    not do half a cycle, and the half it would do is the half that comments on
+    somebody's issue."""
+    result = fakes.run(db, [issue(645)], targets=[{"box_repo": ""}])
+
+    assert result.returncode == 1
+    assert "box_repo" in result.stderr
+    assert not fakes.args_file.exists(), "the tracker was read anyway"
+    assert [e["kind"] for e in events(db)] == ["cycle.failed"]
+    assert "box_repo" in events(db, "cycle.failed")[0]["payload"]["error"]
+
+
+def test_an_unconfigured_instance_stops_by_naming_the_variable(db, fakes):
+    result = fakes.run(db, [issue(645)], TRACEWAKE_TARGETS_FILE="")
+
+    assert result.returncode == 1
+    assert "TRACEWAKE_TARGETS_FILE" in result.stderr
+    assert not fakes.args_file.exists(), "the tracker was read anyway"
+
+
+def test_a_missing_instance_value_also_stops_before_the_tracker(db, fakes):
+    """The other half of the preflight. An instance value that is absent is
+    not caught by the script that reads it until the cycle has already read
+    the queue, seeded a branch and pushed it - `observe_box` treats a box it
+    cannot read as a status failure and carries on, deliberately - so nothing
+    but the preflight makes "before any tracker read" true of it."""
+    result = fakes.run(db, [issue(645)], SELECTOR_BOX_HOST="")
+
+    assert result.returncode == 1
+    assert "SELECTOR_BOX_HOST" in result.stderr
+    assert not fakes.args_file.exists(), "the tracker was read anyway"
+    assert [e["kind"] for e in events(db)] == ["cycle.failed"]

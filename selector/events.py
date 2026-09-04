@@ -272,12 +272,22 @@ GUARDRAIL_OBSERVED = "guardrail.observed"
 GUARDRAIL_UNREADABLE = "guardrail.unreadable"
 
 
-def cycle_started(*, repo, label, allowlist, daily_cap, dry_run):
+def cycle_started(*, repo, label, allowlist, daily_cap, review_cap, landing,
+                  dry_run):
     """The cycle's opening row. It carries no `cycle` key on purpose: the id
-    this row is appended under IS the cycle id every later row names."""
+    this row is appended under IS the cycle id every later row names.
+
+    It carries the target's own settings - which repository, which Handover
+    label, whose labelling counts, the caps, and what a finished Run does
+    with its work - because they are configuration rather than code (issue
+    #3), and a Journal that recorded the reasoning without the settings the
+    reasoning ran under would leave "why did it pick that?" answerable only
+    by reading a file that has since changed.
+    """
     return CYCLE_STARTED, {
         "repo": repo, "label": label, "allowlist": allowlist,
-        "daily_cap": daily_cap, "dry_run": dry_run,
+        "daily_cap": daily_cap, "review_cap": review_cap, "landing": landing,
+        "dry_run": dry_run,
     }
 
 

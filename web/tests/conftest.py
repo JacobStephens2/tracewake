@@ -45,8 +45,8 @@ def dispatch():
 # The queue board reads the tracker at request time (#158), so from here on
 # every /loop request in this suite reaches a tracker command. Autouse and
 # empty by default, because the alternative is not "no board": it is the real
-# `tracker-sources/github.sh`, which means a live `gh` call against the
-# tourbot tracker from a unit test.
+# `tracker-sources/github.sh`, which means a live `gh` call against whatever
+# tracker this checkout's targets file names, from a unit test.
 
 TRACKER = """#!/usr/bin/env bash
 if [[ -f "{dir}/fail" ]]; then
@@ -71,8 +71,20 @@ def tracker(tmp_path, monkeypatch):
     script.write_text(TRACKER.format(dir=directory))
     script.chmod(0o755)
     monkeypatch.setenv("SELECTOR_TRACKER_COMMAND", str(script))
-    monkeypatch.setenv("SELECTOR_TASK_REPO", "acme/widgets")
-    monkeypatch.setenv("SELECTOR_LABELER_ALLOWLIST", "JacobStephens2")
+    # The window reads its target from the targets file like the cycle does
+    # (issue #3), so the suite writes one. Autouse for the same reason the
+    # tracker is scripted: without it every /loop request in this suite would
+    # be reading whatever this checkout is really configured to work.
+    monkeypatch.setenv(
+        "TRACEWAKE_TARGETS_FILE",
+        fixtures.write_targets(tmp_path / "targets.toml"),
+    )
+    # The window asks the same preflight question the cycle does, so the
+    # suite configures a whole instance. Unreachable values: nothing in this
+    # suite may reach a real box or a real forge.
+    monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
+    monkeypatch.setenv("SELECTOR_PROTECTED_REPO", "acme/tracewake")
+    monkeypatch.setenv("SELECTOR_PROTECTED_REF", "main")
 
     class Tracker:
         issue = staticmethod(fixtures.issue)

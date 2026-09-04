@@ -390,3 +390,42 @@ def test_an_unconfigured_mail_surface_stops_the_notifier_by_name(db, notifier):
     assert result.returncode != 0
     assert "SELECTOR_NOTIFY_COMMAND" in result.stderr
     assert notifier.subjects() == []
+
+
+def test_the_window_url_has_no_default_either(db, notifier):
+    """Where an instance publishes its window is the instance's fact too, and
+    it is the address a person clicks out of an email. A default would send
+    the operator to somebody else's host, which is worse than no link."""
+    result = notifier.run(SELECTOR_LOOP_URL="")
+
+    assert result.returncode != 0
+    assert "SELECTOR_LOOP_URL" in result.stderr
+    assert notifier.subjects() == []
+
+
+def test_the_mail_surface_takes_the_subject_on_argv_and_the_body_on_stdin(
+    db, notifier
+):
+    """The whole of the contract, asserted rather than described: a subject as
+    the first argument, an optional link as the second, and the body on stdin.
+
+    Nothing about a mailer is in it. Stdin for the body is not style - it is
+    multi-line markdown, and an argument would put the whole of every notice
+    in the controller's process listing.
+    """
+    notifier.run()
+    append(db, "run.outcome", OUTCOME)
+
+    notifier.run()
+
+    delivered = notifier.delivered()
+    # The scripted surface echoes $1, $2 and stdin under three labels, so
+    # which channel each part arrived on is readable from the log.
+    assert "--- subject: " in delivered
+    assert f"--- link: {PROPOSAL}" in delivered
+    subject = notifier.subjects()[0]
+    assert "312" in subject, subject
+    # The body is the part that is NOT in either argument.
+    body = delivered.split("--- link: ", 1)[1].split("\n", 1)[1]
+    assert "loop/312-php-guest" in body
+    assert subject not in body.splitlines()

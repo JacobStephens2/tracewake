@@ -390,6 +390,21 @@ def test_the_return_is_journaled(db, box):
     assert one(db, "cycle.finished")["returned"] == [645]
 
 
+def test_a_return_the_tracker_refused_is_journaled_and_pages(db, box):
+    """Story 31, applied to the loud skip: an issue the Selector could not
+    hand back is still sitting in the queue with nothing on it saying why, and
+    a cycle that exited 0 for that would leave the operator with a silence
+    that looks exactly like an empty queue."""
+    body = "## Owning area\n\nThe nightly sync script\n"
+    result = box.run(db, [issue(645, body=body)], ISSUE_EXIT=1)
+
+    assert result.returncode == 1, result.stdout
+    failed = one(db, "issue.return-failed")
+    assert failed["number"] == 645
+    assert "error" in failed
+    assert events(db, "issue.returned") == []
+
+
 def test_a_returned_issue_does_not_stop_a_later_one_being_dispatched(db, box):
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body), issue(648)])
@@ -472,3 +487,47 @@ JSON
     ).stdout
     assert "acme/widgets#645 - Widen the sync window" in plan
     assert "The nightly sync script" in plan
+
+
+# --- The target's own settings reach the dispatch (issue #3) ----------------
+
+
+def test_the_box_command_is_handed_the_targets_checkout_token_and_image(
+    db, box
+):
+    """Three values that differ per target and are consumed on the box: which
+    checkout a Run works in, which repository token it pushes with, and which
+    guest image its Iterations are built from.
+
+    They travel as environment because what reads them is a script (ADR 0004),
+    and they are overlaid at the call site rather than exported into the
+    process, so a drain that worked two targets cannot hand the second one the
+    first's token.
+    """
+    result = box.run(db, [issue(645)], targets=[{
+        "repo": "acme/gadgets",
+        "box_repo": "/home/loop/gadgets",
+        "token_file": "/home/loop/.config/loop/gadgets-token",
+        "guest_template": "gadgets-python:1",
+    }])
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "box-env repo=acme/gadgets box_repo=/home/loop/gadgets"
+        " token=/home/loop/.config/loop/gadgets-token"
+        " guest=gadgets-python:1"
+    ) in box.commands()
+
+
+def test_seeding_happens_in_the_targets_own_work_checkout(db, box):
+    """The Selector seeds off the box, as the operator (ADR 0010), so each
+    target needs its own clone on the controller. The Plan has to be committed
+    in that clone and pushed from it - a dispatch that seeded somewhere else
+    would push somebody else's branch."""
+    result = box.run(db, [issue(645)])
+
+    assert result.returncode == 0, result.stderr
+    seeded = [line for line in box.commands().splitlines()
+              if line.startswith("seed ")]
+    assert seeded, box.commands()
+    assert f"--repo {box.work_repo}" in seeded[0]

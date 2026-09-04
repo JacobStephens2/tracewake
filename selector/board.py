@@ -95,6 +95,26 @@ def _column(key: str, name: str, label: str | None, note: str, cards: list,
             "cards": cards, "error": error}
 
 
+# The five columns, named once. `unconfigured` renders the same board with an
+# error in every column, so an instance with no targets file gets the page it
+# always gets and one sentence saying what is missing - rather than a 500,
+# which is what an unconfigured window used to be.
+_COLUMN_KEYS = (
+    "eligible", "blocked", "in-flight", "awaiting-review", "ready-for-human",
+)
+
+
+def unconfigured(error: str) -> dict:
+    """The board an instance that is not configured yet can still render."""
+    return {
+        "blind": True,
+        "columns": [
+            _column(key, key.replace("-", " "), None, "", [], error)
+            for key in _COLUMN_KEYS
+        ],
+    }
+
+
 def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
     """The five columns, read from the tracker now.
 

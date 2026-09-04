@@ -30,11 +30,19 @@ Journal back.
 
 Usage:
 
-    cycle.py [--dry-run]
+    cycle.py [--dry-run] [--target owner/name]
 
-Everything it reads is environment (see README.md): the tracker command, the
-repository, the label, the allowlist, the cap, and - for dispatch - the work
-checkout, the Seeding command, the box command and the issue command.
+What it works comes from configuration and never from a default (issue #3).
+The **instance** is environment - the tracker command, the box, the Journal,
+the Seeding command, the issue command; the **targets** are stanzas in
+`targets.toml`, one per repository, each carrying its own labels, labeler
+allowlist, checkouts, repository token, guest image, review cap and landing
+mode. See README.md, and `examples/` for both files filled in.
+
+Without `--target` every declared target is worked in turn, each with its own
+`cycle.started`/`cycle.finished` pair: a second repository is a second stanza,
+not a second controller. A required value that is absent stops everything at
+preflight, naming the value, before the tracker is read.
 
 Exit codes:
 
@@ -68,6 +76,7 @@ import control  # noqa: E402
 import dispatch  # noqa: E402
 import events  # noqa: E402
 import journal  # noqa: E402
+import targets  # noqa: E402
 import watcher  # noqa: E402
 from events import (  # noqa: E402
     MAX_ATTEMPTS,
@@ -188,12 +197,23 @@ REQUIRED_RULES = ("pull_request", "non_fast_forward", "deletion")
 
 @dataclass(frozen=True)
 class Config:
-    task_repo: str
-    label: str
-    needs_info_label: str
-    review_label: str
-    human_label: str
-    allowlist: tuple[str, ...]
+    """One cycle's configuration: the target it works, and the instance it
+    works it from.
+
+    The two halves are deliberately one object. Everything below `target` is
+    the instance - the same for every repository this controller works - and
+    the target carries what differs: its labels, who may hand work over on
+    it, its checkouts, its token, its guest image, its review cap and what a
+    finished Run does with its work. A second target is a second `Config`
+    around the same instance values, which is what makes it a stanza rather
+    than a second controller (issue #3).
+
+    The target's own fields are read through properties rather than copied,
+    so there is one spelling of "the review label" and a Config cannot be
+    built that disagrees with the stanza it came from.
+    """
+
+    target: targets.Target
     daily_cap: int
     tracker_command: str
     box_facts_command: str
@@ -202,22 +222,39 @@ class Config:
     guardrail_timeout_seconds: int
     board_timeout_seconds: int
 
+    @property
+    def task_repo(self) -> str:
+        return self.target.repo
+
+    @property
+    def label(self) -> str:
+        return self.target.labels.ready
+
+    @property
+    def needs_info_label(self) -> str:
+        return self.target.labels.needs_info
+
+    @property
+    def review_label(self) -> str:
+        return self.target.labels.review
+
+    @property
+    def human_label(self) -> str:
+        return self.target.labels.human
+
+    @property
+    def allowlist(self) -> tuple[str, ...]:
+        return self.target.labeler_allowlist
+
+    @property
+    def review_cap(self) -> int:
+        return self.target.review_cap
+
     @classmethod
-    def from_env(cls) -> "Config":
+    def for_target(cls, target: targets.Target) -> "Config":
         env = os.environ.get
         return cls(
-            task_repo=env(
-                "SELECTOR_TASK_REPO", "Educational-Travel-Adventures/tourbot"
-            ),
-            label=env("SELECTOR_LABEL", "ready-for-agent"),
-            needs_info_label=env("SELECTOR_NEEDS_INFO_LABEL", "needs-info"),
-            review_label=env("SELECTOR_REVIEW_LABEL", "awaiting-review"),
-            human_label=env("SELECTOR_HUMAN_LABEL", "ready-for-human"),
-            allowlist=tuple(
-                name.strip()
-                for name in env("SELECTOR_LABELER_ALLOWLIST", "JacobStephens2").split(",")
-                if name.strip()
-            ),
+            target=target,
             daily_cap=int(env("SELECTOR_DAILY_CAP", "4")),
             tracker_command=env(
                 "SELECTOR_TRACKER_COMMAND", str(HERE / "tracker-sources" / "github.sh")
@@ -242,12 +279,36 @@ class Config:
             ),
             # Shorter still, and for a sharper version of the same reason: the
             # queue board's tracker reads happen inside a page request. Three
-            # of them against the live tourbot queue took about three seconds
-            # on 2026-08-27, so ten seconds is a tracker that is broken rather
-            # than slow - and a column saying so beats a page that hangs.
+            # of them against a live GitHub queue took about three seconds when
+            # this was measured, so ten seconds is a tracker that is broken
+            # rather than slow - and a column saying so beats a page that
+            # hangs.
             board_timeout_seconds=int(
                 env("SELECTOR_BOARD_TIMEOUT_SECONDS", "10")
             ),
+        )
+
+
+    @classmethod
+    def load(cls, repo: str | None = None) -> tuple["Config", ...]:
+        """Every target this cycle is to work, configured.
+
+        The preflight (issue #3): it raises `targets.NotConfigured` naming the
+        missing value, and it is called before the tracker command is run, so
+        a half-configured instance stops without having read or written
+        anything.
+
+        Both halves, and the instance first. An instance value that is absent
+        is not caught by the script that reads it until the cycle has already
+        read the queue, seeded a branch and pushed it - `observe_box` treats a
+        box it cannot read as a status failure and carries on, by design - so
+        checking it here is what makes "before any tracker read" true of the
+        instance and not only of the targets.
+        """
+        targets.Instance.from_env()
+        return tuple(
+            cls.for_target(target)
+            for target in targets.select(targets.load(), repo)
         )
 
 
@@ -506,6 +567,7 @@ def observe_box(config: Config) -> tuple[dict | None, str | None]:
         config.box_facts_timeout_seconds,
         BOX_FACT_KEYS,
         subject="the box",
+        overlay=config.target.environ(),
     )
 
 
@@ -516,6 +578,7 @@ def read_facts(
     *,
     subject: str,
     list_keys: tuple[str, ...] = (),
+    overlay: dict | None = None,
 ) -> tuple[dict | None, str | None]:
     """Run one status command and read its `KEY=value` lines back.
 
@@ -532,7 +595,8 @@ def read_facts(
     """
     try:
         done = subprocess.run(
-            [command], capture_output=True, text=True, timeout=timeout_seconds
+            [command], capture_output=True, text=True, timeout=timeout_seconds,
+            env=targets.overlaid(overlay),
         )
     except subprocess.TimeoutExpired:
         return None, f"{subject} did not answer within {timeout_seconds}s"
@@ -585,6 +649,7 @@ def observe_guardrail(config: Config) -> tuple[dict | None, str | None]:
         GUARDRAIL_FACT_KEYS,
         subject="the guardrail",
         list_keys=GUARDRAIL_LIST_FACTS,
+        overlay=config.target.environ(),
     )
     if facts is None:
         return None, error
@@ -778,7 +843,7 @@ def _dispatch_pick(
                 "branch": branch,
                 "task_ref": task_ref,
             },
-            watcher.WatchConfig.from_env(),
+            watcher.WatchConfig.for_target(config.target),
         ):
             summary = dispatch.start_run(dispatch_config, branch, task_ref)
     except dispatch.DispatchFailed as exc:
@@ -1098,6 +1163,7 @@ def fetch_queue(config: Config, label: str | None = None,
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=targets.overlaid(config.target.environ()),
         )
     except subprocess.TimeoutExpired as exc:
         raise CycleFailed(
@@ -1139,6 +1205,8 @@ def run_cycle(
             label=config.label,
             allowlist=list(config.allowlist),
             daily_cap=config.daily_cap,
+            review_cap=config.review_cap,
+            landing=config.target.landing,
             dry_run=dry_run,
         ),
     )
@@ -1332,10 +1400,15 @@ def main(argv: list[str] | None = None) -> int:
         help="reason and journal; dispatch nothing and write nothing to the"
         " tracker. The cycle that would have happened.",
     )
+    parser.add_argument(
+        "--target",
+        metavar="OWNER/NAME",
+        help="work only the target declared with this repo. Without it every"
+        " target in the targets file is worked, in the order it declares"
+        " them.",
+    )
     args = parser.parse_args(argv)
 
-    config = Config.from_env()
-    dispatch_config = dispatch.DispatchConfig.from_env()
     try:
         with journal.connect() as conn:
             if not conn.execute(
@@ -1350,19 +1423,56 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 print("cycle.py: another cycle is running; this one stood down")
                 return 0
-            summary = run_cycle(conn, config, dispatch_config, dry_run=args.dry_run)
+
+            # Preflight (issue #3). Before the tracker is read and before
+            # anything is dispatched: an instance missing a required value
+            # stops here, with the value named, rather than part-way through
+            # a cycle that has already commented on somebody's issue. It is
+            # journaled as well as printed, because a cycle that refused to
+            # start is exactly the silence story 31 asks to be paged for.
+            try:
+                configs = Config.load(args.target)
+            except targets.NotConfigured as exc:
+                journal.append(
+                    conn, *events.cycle_failed(cycle=None, error=str(exc))
+                )
+                raise CycleFailed(str(exc)) from exc
+
+            failures = 0
+            for config in configs:
+                # One cycle per target, each with its own `cycle.started`
+                # and `cycle.finished` pair. A second target is a second
+                # stanza and a second pass here - not a second controller,
+                # a second timer or a second Journal (issue #3).
+                #
+                # A target that fails ends the whole invocation, and the
+                # targets after it are not worked. Deliberately: a cycle that
+                # failed exits non-zero and the unit's OnFailure pages, and
+                # carrying on to the next target would turn one page into a
+                # cycle that reports both a failure and a success. The timer
+                # fires again in thirty minutes, so what a failed first
+                # target costs the second is one cycle, not its queue.
+                summary = run_cycle(
+                    conn,
+                    config,
+                    dispatch.DispatchConfig.for_target(config.target),
+                    dry_run=args.dry_run,
+                )
+                if len(configs) > 1:
+                    print(f"target       {config.task_repo}")
+                _report(summary)
+                failures += summary.get("return_failures") or 0
     except CycleFailed as exc:
         print(f"cycle.py: {exc}", file=sys.stderr)
         return 1
     except psycopg.Error as exc:
         print(f"cycle.py: journal unavailable: {exc}", file=sys.stderr)
         return 1
-    _report(summary)
     # A Run that ended on a bound is not a Selector failure; an issue the
     # Selector could not hand back is. Story 31 asks for the Selector's own
     # failures to page, and a comment or a label swap GitHub refused means the
     # issue is still sitting in the queue with nothing on it saying why.
-    return 1 if summary.get("return_failures") else 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

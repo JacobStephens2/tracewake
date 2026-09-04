@@ -43,7 +43,7 @@ if [[ -n ${number} ]]; then
           url: ("https://example.invalid/issues/" + ($number | tostring)),
           state: "OPEN",
           body: "## Acceptance criteria\n\nSeen on the board.\n",
-          labeledBy: "JacobStephens2", labeledAt: $at,
+          labeledBy: "an-operator", labeledAt: $at,
           blockedBy: 0, blockers: [], openSubIssues: 0, proposals: []
         }
       ]
@@ -59,7 +59,7 @@ jq -n --arg at "$labeled_at" '{
       url: "https://example.invalid/issues/9001",
       state: "OPEN",
       body: "## Acceptance criteria\n\nThe preview shows a Run card.\n\n## Owning area\n\nThe preview fixture\n",
-      labeledBy: "JacobStephens2",
+      labeledBy: "an-operator",
       labeledAt: $at,
       blockedBy: 0,
       blockers: [],
@@ -72,7 +72,7 @@ jq -n --arg at "$labeled_at" '{
       url: "https://example.invalid/issues/9002",
       state: "OPEN",
       body: "## Acceptance criteria\n\nSkipped.\n\n## Owning area\n\nThe preview fixture\n",
-      labeledBy: "JacobStephens2",
+      labeledBy: "an-operator",
       labeledAt: $at,
       blockedBy: 1,
       blockers: [
@@ -91,7 +91,7 @@ jq -n --arg at "$labeled_at" '{
       url: "https://example.invalid/issues/9003",
       state: "OPEN",
       body: "## Problem\n\nUnderspecified, and handed back loudly.\n",
-      labeledBy: "JacobStephens2",
+      labeledBy: "an-operator",
       labeledAt: $at,
       blockedBy: 0,
       blockers: [],
@@ -104,7 +104,7 @@ jq -n --arg at "$labeled_at" '{
       url: "https://example.invalid/issues/9004",
       state: "OPEN",
       body: "## Acceptance criteria\n\nIn flight.\n",
-      labeledBy: "JacobStephens2",
+      labeledBy: "an-operator",
       labeledAt: $at,
       blockedBy: 0,
       blockers: [],

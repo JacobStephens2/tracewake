@@ -224,7 +224,14 @@ finish() {
 
 TOTAL_STAGES=5
 
-LOOP_HOST="${LOOP_HOST:-loop.etadventures.com}"
+# Required, and deliberately without a default (issue #3): the box's hostname
+# is a fact about an instance, and a wizard that defaulted to somebody else's
+# would walk an operator through minting a credential and then place it there.
+LOOP_HOST="${LOOP_HOST:-}"
+[[ -n ${LOOP_HOST} ]] || {
+    printf 'LOOP_HOST is not set, and there is no default for it: where the box of this instance is, is a fact about this instance, not about Tracewake.\n' >&2
+    exit 1
+}
 CREDENTIALS_PATH="/home/loop/.grok/auth.json"
 GROK_BIN="/home/loop/.grok/bin/grok"
 ADAPTER="/home/loop/loop/agents/grok.sh"
@@ -347,7 +354,7 @@ step "Open the URL on your own machine and enter the code."
 step "Choose your subscription account, not an API key."
 step "Come back here; it completes on its own."
 printf '\n'
-warn "You are on loop.etadventures.com, not this VM. Nothing else lives there,"
+warn "You are on ${LOOP_HOST}, not this VM. Nothing else lives there,"
 warn "but it is the box an unattended agent runs on - do not ask it to do work."
 printf '\n'
 pause "Press Enter to start the exchange."

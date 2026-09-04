@@ -120,7 +120,9 @@ die() {
 # declaration for why it is a variable and why it is readable from outside.
 # `shell` rather than an agent template, because there is no Grok template to
 # ask for; the consequences of that choice are recorded below.
-guest_template=shell
+# Per target, defaulted to the stock image this adapter uses. See claude.sh
+# for the reasoning (issue #3).
+guest_template="${LOOP_GUEST_TEMPLATE:-shell}"
 
 case "${1:-}" in
     --guest-template)
