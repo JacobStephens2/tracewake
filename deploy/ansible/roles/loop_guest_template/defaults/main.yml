@@ -135,3 +135,18 @@ loop_guest_template_workspace: "{{ loop_scripts_workspace }}"
 # scripts, they are edited by re-applying this play, and root has no reason to
 # be able to hand them to anything.
 loop_guest_template_dir: /home/loop/guest-template
+
+# Multiple declared guest templates, built from their respective package lists
+# (issue #5). When empty, defaults to building the single template declared
+# above (loop_guest_template_tag / loop-php:1).
+#
+# loop_guest_templates:
+#   - tag: "loop-php:1"
+#     packages: "{{ loop_guest_template_packages }}"
+#     smoke: true
+#   - tag: "widgets-python:1"
+#     packages:
+#       - python3
+#       - python3-pip
+loop_guest_templates: []
+

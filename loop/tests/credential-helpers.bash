@@ -141,8 +141,18 @@ SBX
 run_assert() {
     local unsets=() name
     while IFS= read -r name; do unsets+=(-u "${name}"); done < <(credential_env_names)
-    run env "${unsets[@]}" "$@" \
-        "${ASSERT}" --home "${BOX_HOME}" --system-root "${BOX_ROOT}" --sbx "${FAKE_SBX}"
+    local env_vars=()
+    local extra_args=()
+    while (($# > 0)); do
+        if [[ $1 == *=* && $1 != --* ]]; then
+            env_vars+=("$1")
+        else
+            extra_args+=("$1")
+        fi
+        shift
+    done
+    run env "${unsets[@]}" "${env_vars[@]}" \
+        "${ASSERT}" --home "${BOX_HOME}" --system-root "${BOX_ROOT}" --sbx "${FAKE_SBX}" "${extra_args[@]}"
 }
 
 # The machine-readable first lines, as one field. `output` is bats's, set by

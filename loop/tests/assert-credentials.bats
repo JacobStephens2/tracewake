@@ -24,6 +24,57 @@ setup() { setup_credential_fixture; }
     [ "$status" -eq 0 ]
     [ "$(field CREDENTIALS_RESULT)" = "clean" ]
     [ "$(field CREDENTIALS_VIOLATIONS)" = "0" ]
+    [ "$(field CREDENTIALS_HELD)" = "4" ]
+}
+
+@test "credential inventory counts three base credentials plus one token per target" {
+    local token2="${BOX_HOME}/.config/loop/widgets-token"
+    printf 'github_pat_22EXAMPLEEXAMPLEEXAMPLE\n' >"${token2}"
+    chmod 0600 "${token2}"
+
+    run_assert \
+        --token-file "${BOX_HOME}/.config/loop/github-token" \
+        --token-file "${token2}"
+    [ "$status" -eq 0 ]
+    [ "$(field CREDENTIALS_RESULT)" = "clean" ]
+    [ "$(field CREDENTIALS_HELD)" = "5" ]
+}
+
+@test "a second target token that is classic is a violation" {
+    local token2="${BOX_HOME}/.config/loop/widgets-token"
+    printf 'ghp_classic_not_fine_grained\n' >"${token2}"
+    chmod 0600 "${token2}"
+
+    run_assert \
+        --token-file "${BOX_HOME}/.config/loop/github-token" \
+        --token-file "${token2}"
+    [ "$status" -eq 2 ]
+    [ "$(field CREDENTIALS_RESULT)" = "violations" ]
+    [[ "$output" == *"fine-grained"* ]]
+}
+
+@test "credential inventory reads declared targets from targets.toml" {
+    local targets_file="${BATS_TEST_TMPDIR}/targets.toml"
+    local token1="${BOX_HOME}/.config/loop/tourbot-token"
+    local token2="${BOX_HOME}/.config/loop/widgets-token"
+    printf 'github_pat_11111111111111111111\n' >"${token1}"
+    chmod 0600 "${token1}"
+    printf 'github_pat_22222222222222222222\n' >"${token2}"
+    chmod 0600 "${token2}"
+
+    cat >"${targets_file}" <<EOF
+[[target]]
+repo = "org/tourbot"
+token_file = "${token1}"
+
+[[target]]
+repo = "org/widgets"
+token_file = "${token2}"
+EOF
+
+    run_assert --targets "${targets_file}"
+    [ "$status" -eq 0 ]
+    [ "$(field CREDENTIALS_HELD)" = "5" ]
 }
 
 @test "the report names every allowed credential, present or not" {

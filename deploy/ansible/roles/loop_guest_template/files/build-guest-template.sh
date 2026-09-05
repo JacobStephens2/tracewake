@@ -65,6 +65,7 @@ marker=""
 agent=claude
 force=false
 allow=""
+verify=""
 
 while (($#)); do
     case "$1" in
@@ -73,6 +74,7 @@ while (($#)); do
         --marker) marker="${2:?--marker needs a value}"; shift 2 ;;
         --agent) agent="${2:?--agent needs a value}"; shift 2 ;;
         --allow) allow="${2:?--allow needs a value}"; shift 2 ;;
+        --verify) verify="${2:?--verify needs a value}"; shift 2 ;;
         --force) force=true; shift ;;
         *) die "unrecognised argument: $1" ;;
     esac
@@ -218,10 +220,11 @@ fi
 # Proof before the snapshot rather than after it. This is not the smoke
 # assertion - that runs against a FRESH guest, which is the only thing that
 # proves the template rather than the sandbox it was made from - but a build
-# that produced no working `php` should fail here, where the message is about
+# that produced no working environment should fail here, where the message is about
 # the build, rather than one step later where it is about the template.
-"${sbx}" exec "${sandbox}" bash -lc 'php --version >/dev/null && composer --version >/dev/null' >&2 ||
-    die "php or composer did not run in the sandbox they were just installed in"
+verify_cmd="${verify:-dpkg -s ${packages} >/dev/null}"
+"${sbx}" exec "${sandbox}" bash -lc "${verify_cmd}" >&2 ||
+    die "package verification failed in the build sandbox"
 
 # `sbx template save` refuses to snapshot a running sandbox, and says so.
 "${sbx}" stop "${sandbox}" >&2 || die "could not stop the build sandbox"

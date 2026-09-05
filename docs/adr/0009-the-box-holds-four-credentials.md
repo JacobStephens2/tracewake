@@ -42,3 +42,30 @@ A fifth credential is a decision, not an accident, and the assertion script is
 where it becomes visible: anything on the box that is not one of the four is
 either a violation it names or a gap in the script, and both are things to fix
 rather than to discover during a Run.
+
+## Amendment: Three base credentials plus one token per target (Issue #5, September 2026)
+
+When the box serves more than one target repository, holding a single GitHub token
+would either require that token to have scopes across multiple repositories
+(violating repository scoping and blast-radius bounds) or require a separate box
+for every target.
+
+The invariant is amended from "four credentials" to **three base credentials plus
+one repository token per target**:
+
+- Base credentials (fixed across all targets):
+  1. Dedicated SSH signing key (held on the box, registered to the operator)
+  2. Read-only Docker personal access token (`sbx` requirement)
+  3. Model credential (the operator's agent subscription login)
+- Per-target credentials:
+  - Exactly one fine-grained, repository-scoped GitHub PAT per declared target,
+    placed where only the Run account (`loop`) can read it (mode 0600 or 0400).
+
+On a box serving one target, the count is four (3 base + 1 target token). On a box
+serving N targets, the count is 3 + N.
+
+The credential inventory (`loop/assert-credentials.sh`) enforces this amended
+invariant: every declared target token is validated for fine-grained prefix
+(`github_pat_`), owner-only permissions (0600/0400), and counted in `CREDENTIALS_HELD`.
+Any classic token or extra credential remains a violation.
+
