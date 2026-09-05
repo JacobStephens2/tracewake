@@ -50,7 +50,7 @@ ExecStart={{ (tracewake_cycle_wrapper ~ ' ') if tracewake_cycle_wrapper else '' 
 # it off. An individual Run continues to be bounded by the Termination Contract
 # (90 minutes) and by the Selector's per-dispatch backstop
 # (SELECTOR_DISPATCH_TIMEOUT_SECONDS, 7200s).
-TimeoutStartSec=8100
+TimeoutStartSec=infinity
 
 # Two cycles never run at once - cycle.py takes a Postgres advisory lock and a
 # second one stands down, exit 0. This is belt and braces for the ordinary

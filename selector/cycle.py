@@ -1276,7 +1276,7 @@ def run_cycle(
         last_eligible = [int(r["number"]) for r in eligible]
 
         pick = None
-        if control.is_paused(conn) and not dispatches:
+        if control.is_paused(conn):
             # The timer keeps running while paused. It still reads the queue and
             # journals Eligibility so the page remains an explanation of what
             # would have happened; only the Dispatch is stopped.
@@ -1364,7 +1364,6 @@ def run_cycle(
             )
             routes.append(route)
             dispatches.append(pick["number"])
-            break
 
     summary = {
         "cycle": cycle_id,
