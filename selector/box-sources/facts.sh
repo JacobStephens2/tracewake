@@ -116,8 +116,7 @@ if [ -x "${adapter}" ]; then
     [ -n "${expiry}" ] && candidate_expiries+=("${expiry}")
 fi
 for ef in "${HOME}/.config/loop/credential-expiry" "${HOME}/.config/loop/expiry" \
-    "${HOME}/.config/loop"/*.expiry "${HOME}/.config/loop"/*-expiry \
-    "${HOME}/.claude/expiry" "${HOME}/.claude/credential-expiry"; do
+    "${HOME}/.config/loop"/*.expiry "${HOME}/.config/loop"/*-expiry; do
     if [ -f "${ef}" ]; then
         val="$(tr -d "[:space:]" < "${ef}")"
         [ -n "${val}" ] && candidate_expiries+=("${val}")

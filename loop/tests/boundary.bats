@@ -281,7 +281,7 @@ calls() {
     rm -f "${BOX_HOME}/.claude/.credentials.json"
     run_an_iteration
     [ "$status" -eq 1 ]
-    [[ "$output" == *"loop-claude-login.sh"* ]]
+    [[ "$output" == *"loop-credentials.sh"* ]]
     [ -z "$(calls)" ]
 }
 

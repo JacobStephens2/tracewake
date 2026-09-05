@@ -137,7 +137,7 @@ finish() {
 # ──────────────────────────────────────────────────────────────────────────
 
 LOOP_HOST="${LOOP_HOST:-}"
-[[ -n ${LOOP_HOST} ]] || {
+[[ -n "${LOOP_HOST}" ]] || {
     printf 'LOOP_HOST is not set, and there is no default for it: where the box of this instance is, is a fact about this instance, not about Tracewake.\n' >&2
     exit 1
 }
@@ -212,7 +212,7 @@ if [[ -z "$DOCKER_USERNAME" || -z "$DOCKER_PAT" ]]; then
   exit 1
 fi
 
-if printf '%s' "$DOCKER_PAT" | on_loop_stdin "sbx login --username ${DOCKER_USERNAME} --password-stdin"; then
+if printf '%s' "${DOCKER_PAT}" | on_loop_stdin "sbx login --username $(printf '%q' "${DOCKER_USERNAME}") --password-stdin"; then
   printf '  %s✓%s sbx signed in as %s\n' "$GREEN" "$RESET" "$DOCKER_USERNAME"
 else
   warn "sbx login failed."
@@ -229,7 +229,7 @@ stage "GitHub - create fine-grained PAT"
 say "Create a fine-grained personal access token scoped to the target repository."
 printf '\n'
 if [[ -z "$TARGET_REPO" ]]; then
-  ask TARGET_REPO "Target repository (e.g. Educational-Travel-Adventures/tourbot):"
+  ask TARGET_REPO "Target repository (e.g. owner/repo):"
 fi
 open_url "https://github.com/settings/personal-access-tokens/new"
 step "Token name: ${LOOP_HOST}"

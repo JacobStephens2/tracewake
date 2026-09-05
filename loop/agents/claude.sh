@@ -263,7 +263,7 @@ if [[ -z ${token} ]]; then
     done
 fi
 [[ -n ${token} ]] ||
-    die "no model credential: CLAUDE_CODE_OAUTH_TOKEN is unset - run wizards/loop-claude-login.sh"
+    die "no model credential: CLAUDE_CODE_OAUTH_TOKEN is unset - run wizards/loop-credentials.sh"
 
 signing_key="${LOOP_SIGNING_KEY:-${HOME}/.ssh/loop_signing_ed25519}"
 gitconfig="${LOOP_GITCONFIG:-${HOME}/.gitconfig}"
