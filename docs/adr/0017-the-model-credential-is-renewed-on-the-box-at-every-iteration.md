@@ -1,4 +1,9 @@
-# The model credential is renewed on the box at every Iteration
+# [Retired: 2026-09-05, superseded by ADR 0020] The model credential is renewed on the box at every Iteration
+
+> **Status:** Retired. Superseded by [ADR 0020](0020-the-yearly-model-token-replaces-per-iteration-renewal.md) (issue #7).
+> The per-Iteration host renewal is retired with the short-lived session file it serviced.
+> The box's model credential is now a long-lived setup-token minted once a year by
+> `wizards/loop-credentials.sh` and carried via `CLAUDE_CODE_OAUTH_TOKEN`.
 
 The box's subscription login is an OAuth session whose access token stops
 working eight hours after a human mints it. ADR 0011 put that credential

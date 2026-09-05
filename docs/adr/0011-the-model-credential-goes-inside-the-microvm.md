@@ -112,3 +112,12 @@ therefore does **not** die with the sandbox, contrary to the reasoning in that
 ticket and in the comments of `agents/claude.sh`: it survives in the `sbx`
 store, where nothing the Loop runs reads it and where it cannot age out the
 host's own stale copy.
+
+## Amendment, 2026-09-05 (#7): the credential is an environment token, no file is copied, and pushes are guarded
+
+The subscription session file in `~/.claude/.credentials.json` is replaced by a long-lived setup-token carried in the environment (`CLAUDE_CODE_OAUTH_TOKEN`, ADR 0020).
+
+Two things change from the reasoning above:
+
+1. **No credential file is copied into the guest.** `loop/agents/claude.sh` passes the token directly in the microVM invocation via `env CLAUDE_CODE_OAUTH_TOKEN="${token}"`. The file `.credentials.json` never crosses the boundary into the guest.
+2. **Push refuses token leaks.** Because the token is in the guest process environment, an agent could inadvertently write the token into tracked files and commit it. `loop/propose.sh` inspects the git diff before pushing (`git diff "${base_ref}...${branch}" | grep -qF 'sk-ant-oat01-'`), refusing to push and marking the Run proposal as failed (`LOOP_PROPOSE_RESULT=push-failed`, exit 2) if the pattern is found.

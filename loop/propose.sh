@@ -242,6 +242,19 @@ BODY
 # is already on the remote has found a conflict, and resolving one unattended is
 # not something this script gets to do.
 
+base_ref="${base}"
+if ! git -C "${repo}" rev-parse --verify "${base_ref}" >/dev/null 2>&1; then
+    if git -C "${repo}" rev-parse --verify "${remote}/${base}" >/dev/null 2>&1; then
+        base_ref="${remote}/${base}"
+    fi
+fi
+
+if git -C "${repo}" diff "${base_ref}...${branch}" | grep -qF 'sk-ant-oat01-'; then
+    printf 'propose.sh: the branch diff contains a model setup-token (sk-ant-oat01-); refusing to push.\n' >&2
+    printf 'LOOP_PROPOSE_RESULT=push-failed\n'
+    exit 2
+fi
+
 if ! push_output="$(git -C "${repo}" push --set-upstream "${remote}" "${branch}" 2>&1)"; then
     printf 'propose.sh: the push failed; nothing external happened.\n' >&2
     printf '%s\n' "${push_output}" >&2

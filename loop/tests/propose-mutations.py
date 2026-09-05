@@ -31,6 +31,12 @@ MUTATIONS = {
         'git -C "${repo}" push --set-upstream "${remote}" "${branch}"',
         'git -C "${repo}" push --force --set-upstream "${remote}" "${branch}"',
     ),
+    # The setup-token leak guard is dropped, allowing a branch that committed
+    # a model setup-token to be pushed.
+    "token-pattern-guard-dropped": (
+        'if git -C "${repo}" diff "${base_ref}...${branch}" | grep -qF \'sk-ant-oat01-\'; then',
+        "if false; then",
+    ),
     # A push that failed is reported as a proposal, so a Run that had no
     # external effect at all says it had one.
     "push-failure-ignored": (

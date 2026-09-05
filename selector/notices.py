@@ -50,11 +50,11 @@ import targets
 from events import MAX_ATTEMPTS, NO_PROPOSAL, is_failure, outcome_name
 
 # How close to expiry the box's credential has to be before it is worth an
-# email. The subscription login lapses eight hours after a human mints it and
-# the box is read once every thirty minutes, so two hours is four cycles of
-# warning - enough to renew before a dispatch is refused, and late enough that
-# a credential minted at the start of a working day does not mail at lunchtime.
-_DEFAULT_CREDENTIAL_WARN_HOURS = 2.0
+# email (#7). The box's yearly credentials share an expiry date, and the
+# box is read once every thirty minutes, so a fortnight (336 hours) gives
+# the operator two weeks of warning - enough to run wizards/loop-credentials.sh
+# before any credential lapses.
+_DEFAULT_CREDENTIAL_WARN_HOURS = 336.0
 
 # How old a row may be and still be mailed on its own. The notifier replays
 # what it missed while it was down (that is what its cursor is for), and
