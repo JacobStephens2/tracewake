@@ -33,7 +33,7 @@ def test_the_decision_module_is_importable_without_the_dispatcher():
 
 NOW = datetime(2026, 8, 31, 12, 0, 0, tzinfo=timezone.utc)
 CONFIG = notices.NoticeConfig(
-    credential_warn_hours=2,
+    credential_warn_hours=336,
     loop_url="https://lab.invalid/loop",
     max_age_hours=24,
 )
@@ -208,7 +208,13 @@ def in_hours_offset(hours):
 
 
 def test_a_credential_with_hours_left_says_nothing():
-    assert notice("box.observed", box(in_hours(6))) is None
+    assert notice("box.observed", box(in_hours(400))) is None
+
+
+def test_a_credential_a_fortnight_out_is_inside_the_warning_window():
+    # A fortnight is 336 hours (#7)
+    assert notice("box.observed", box(in_hours(335))) is not None
+    assert notice("box.observed", box(in_hours(337))) is None
 
 
 def test_a_credential_inside_the_window_is_a_notice():

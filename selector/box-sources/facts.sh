@@ -31,16 +31,10 @@
 #                            Run, and a Run by a different agent version is a
 #                            Run against a different calibration.
 #   LOOP_BOX_CREDENTIAL_EXPIRES_AT
-#                            when the box's model credential stops working, as
-#                            an absolute instant. The other three say what the
-#                            box IS; this one says whether it can currently do
-#                            anything (#260). The subscription login lapses
-#                            eight hours after a human mints it and nothing in
-#                            a guest can renew the host's copy, so a box that
-#                            passes every other check can still be sixteen
-#                            hours a day unable to start a Run - which is what
-#                            happened to Run 645, visible only in that Run's
-#                            own Progress Log.
+#                            when the nearest of the box's credentials stops
+#                            working, as an absolute instant (#7, #260). The other
+#                            three say what the box IS; this one says whether it
+#                            can currently do anything.
 #
 #                            An instant rather than a remaining time, because
 #                            this is read once a cycle and the page is viewed
@@ -48,9 +42,8 @@
 #                            09:00 would be the card asserting something
 #                            nobody observed. What is left is arithmetic the
 #                            viewer does, on a number the box actually said.
-#                            Asked of the adapter, like the guest template,
-#                            because the file and its shape are vendor facts
-#                            (ADR 0004).
+#                            Asked of the adapter and checked against the box's
+#                            credential expiry files, taking the nearest instant.
 #
 # A fact the box cannot answer is simply not printed. The box's copy of the
 # Loop can be older than this repository's - `--guest-template` is new here -
@@ -115,12 +108,32 @@ if [ -d "${loop}" ]; then
 fi
 printf "LOOP_BOX_AGENT=%%s\\n" "${agent}"
 adapter="${loop}/agents/${agent}.sh"
+candidate_expiries=()
 if [ -x "${adapter}" ]; then
     template="$("${adapter}" --guest-template 2>/dev/null || true)"
     [ -n "${template}" ] && printf "LOOP_BOX_GUEST_TEMPLATE=%%s\\n" "${template}"
     expiry="$("${adapter}" --credential-expiry 2>/dev/null || true)"
-    [ -n "${expiry}" ] && printf "LOOP_BOX_CREDENTIAL_EXPIRES_AT=%%s\\n" "${expiry}"
+    [ -n "${expiry}" ] && candidate_expiries+=("${expiry}")
 fi
+for ef in "${HOME}/.config/loop/credential-expiry" "${HOME}/.config/loop/expiry" \
+    "${HOME}/.config/loop"/*.expiry "${HOME}/.config/loop"/*-expiry; do
+    if [ -f "${ef}" ]; then
+        val="$(tr -d "[:space:]" < "${ef}")"
+        [ -n "${val}" ] && candidate_expiries+=("${val}")
+    fi
+done
+min_epoch=""
+nearest_expiry=""
+for exp in "${candidate_expiries[@]}"; do
+    epoch="$(date -u -d "${exp}" +%%s 2>/dev/null || true)"
+    if [ -n "${epoch}" ]; then
+        if [ -z "${min_epoch}" ] || [ "${epoch}" -lt "${min_epoch}" ]; then
+            min_epoch="${epoch}"
+            nearest_expiry="$(date -u -d "@${epoch}" +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
+        fi
+    fi
+done
+[ -n "${nearest_expiry}" ] && printf "LOOP_BOX_CREDENTIAL_EXPIRES_AT=%%s\\n" "${nearest_expiry}"
 PATH="${HOME}/.local/bin:${HOME}/.grok/bin:${PATH}"
 version="$("${agent}" --version 2>/dev/null | head -n 1 || true)"
 [ -n "${version}" ] && printf "LOOP_BOX_AGENT_VERSION=%%s\\n" "${version}"

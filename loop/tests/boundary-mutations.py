@@ -14,7 +14,7 @@ MUTATIONS = {
     # The Run still works, which is the point of mutating it: nothing about the
     # output of a Run says where it happened.
     "no-boundary": (
-        '"${sbx}" exec --workdir "${workspace}" "${sandbox}" \\\n    claude \\',
+        '"${sbx}" exec --workdir "${workspace}" "${sandbox}" \\\n    env CLAUDE_CODE_OAUTH_TOKEN="${token}" \\\n    claude \\',
         "claude \\",
     ),
     # The sandbox is never removed, so every Iteration leaves one behind.
@@ -70,12 +70,21 @@ MUTATIONS = {
         "    [[ -f ${src} ]] || return 0",
     ),
     # A Run starts with no model credential on the box and finds out one
-    # Iteration at a time. Since #260 the guard is the renewal rather than a
-    # `[[ -f ]]`, and dropping it drops both halves at once: an Iteration now
-    # neither checks that a credential is there nor that it still works.
+    # Iteration at a time.
     "model-credential-unchecked": (
-        "refresh_credential >/dev/null",
-        ":",
+        '[[ -n ${token} ]] ||',
+        '[[ true ]] ||',
+    ),
+    # The guest authenticates from an environment token.
+    "token-not-passed-to-guest": (
+        'env CLAUDE_CODE_OAUTH_TOKEN="${token}"',
+        'env',
+    ),
+    # A credential file is copied into the microVM, violating credential isolation.
+    "credential-file-copied-to-guest": (
+        'put "${guest_gitconfig}" "${guest_home}/.gitconfig" 0644',
+        'put "${credentials_dir}/.credentials.json" "${guest_home}/.claude/.credentials.json" 0600\n'
+        'put "${guest_gitconfig}" "${guest_home}/.gitconfig" 0644',
     ),
     # The turn bound firing stops being told apart from a broken invocation,
     # which is what it looked like before the first Run.
@@ -121,27 +130,6 @@ MUTATIONS = {
     "check-mounted-writable": (
         '"${loop_dir}:ro" >&2',
         '"${loop_dir}" >&2',
-    ),
-    # An Iteration stops renewing the credential and only checks that a file is
-    # there - the state the Loop was in for Run 645, where Iteration 1
-    # authenticated and Iteration 2 died inside the boundary (#260).
-    "iteration-does-not-renew": (
-        "refresh_credential >/dev/null",
-        '[[ -f ${credentials_file} ]] || die "no model credential"',
-    ),
-    # The renewal's result is taken on trust. A vendor client that exits zero
-    # and mints nothing now passes, and the Iteration fails inside the boundary
-    # where only its Progress Log says so - which is the whole failure shape.
-    "renewal-unverified": (
-        '    if ((after - now <= credential_renewal_margin_seconds)); then',
-        "    if false; then",
-    ),
-    # The margin collapses to "expired or not", so a credential with an hour
-    # left is used as it stands and can lapse during the Iteration - failing a
-    # Run halfway and leaving a half-built branch.
-    "renewal-margin-ignored": (
-        "credential_renewal_margin_seconds=7200",
-        "credential_renewal_margin_seconds=0",
     ),
     # The expiry is read from the refresh token beside it, which is three weeks
     # out. Every lapsed box reports as good until the refresh token dies - the

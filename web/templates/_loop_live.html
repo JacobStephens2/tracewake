@@ -120,9 +120,7 @@
         <span class="cell-value alarm">the model credential has expired</span>
         <span class="detail">it lapsed at
           <code>{{ box.credential_expires_at }}</code> - a Run dispatched now
-          would fail at its first API call. The next Iteration renews it
-          before it starts (ADR 0017); if this reading persists, the renewal
-          is not working - run <code>wizards/loop-claude-login.sh</code>.
+          would fail at its first API call. Run <code>wizards/loop-credentials.sh</code>.
           &middot; loop scripts <code>{{ box.scripts_hash or "not reported" }}</code>
           &middot; guest template <code>{{ box.guest_template or "not reported" }}</code>
           &middot; agent {{ box.agent or "" }}

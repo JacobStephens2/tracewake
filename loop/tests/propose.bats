@@ -190,6 +190,18 @@ setup() { setup_propose_fixture; }
     [ ! -f "${FAKE_PR_STATE}" ]
 }
 
+@test "a push whose diff contains the token's pattern is refused" {
+    printf 'sk-ant-oat01-leak-secret\n' >"${REPO}/token.txt"
+    git -C "${REPO}" add "${REPO}/token.txt"
+    git -C "${REPO}" commit --quiet --message "accidental token commit"
+    run_propose
+    [ "$status" -eq 2 ]
+    [ "$(field LOOP_PROPOSE_RESULT)" = "push-failed" ]
+    [[ "$output" == *"sk-ant-oat01-"* ]]
+    ! remote_has_branch "loop/run-648"
+    [ ! -f "${FAKE_PR_STATE}" ]
+}
+
 @test "a pull request that is refused is exit 3, and the branch is still pushed" {
     FAKE_PR_BEHAVIOUR=fail run_propose
     [ "$status" -eq 3 ]
