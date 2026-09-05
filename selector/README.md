@@ -152,7 +152,10 @@ Run's budget would let one wedged call hold a cycle open for two hours.
 stanza) and `SELECTOR_BOX_LOOP` (`/home/loop/loop`). It also carries two
 per-target values across the hop rather than reading them -
 `LOOP_GITHUB_TOKEN_FILE` and `LOOP_GUEST_TEMPLATE` - because what consumes
-them is the Run. `box-sources/facts.sh` shares the first, second and fourth,
+them is the Run. `box-sources/local.sh` (ADR 0019) shares `SELECTOR_BOX_REPO`,
+`SELECTOR_BOX_LOOP`, `LOOP_GITHUB_TOKEN_FILE` and `LOOP_GUEST_TEMPLATE`, requires
+no `SELECTOR_BOX_HOST`, and gates dispatch on `loop/assert-credentials.sh`.
+`box-sources/facts.sh` shares the first, second and fourth of ssh.sh's,
 and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it asks for the guest
 template.
 
@@ -937,6 +940,10 @@ Detection precedes notification, or the mail is a guess.
   puts the box's checkout on the Run's branch and runs `run.sh --propose
   --notify`, printing what the Run reported. It holds no credential of its
   own and starts nothing else.
+- `box-sources/local.sh` - the single-host `SELECTOR_BOX_COMMAND` (ADR 0019):
+  executes a Run directly on the controller without an SSH hop, gated by
+  `loop/assert-credentials.sh`. Refuses dispatch naming the violation if the
+  machine holds any forbidden credentials.
 - `events.py` - the Journal Event vocabulary (CONTEXT.md): every kind, one
   constructor and one reader each, and the naming rules - `outcome_name`, the
   failure bounds, the retry budget, the route names, the checks states.

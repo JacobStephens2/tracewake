@@ -1,25 +1,34 @@
-"""The box surface: what actually crosses the SSH hop.
+"""The box surface: what crosses the seam to start a Run.
 
-`box-sources/ssh.sh` is the one place a target's box checkout, repository
-token and guest image become something the Run can read, and it is the place
-they are easiest to lose: `ssh` forwards no environment, so a per-target value
-set on the controller is simply absent on the box unless this script carries
-it. The failure that produces is silent and expensive - every target's Run
-using whatever token the box was last configured with.
+`box-sources/ssh.sh` (across an SSH hop) and `box-sources/local.sh` (executed
+directly on the controller) are siblings under ADR 0004 and ADR 0019: they share
+the exact same contract, so neither can drift from what dispatch.py expects.
 
-Driven with `ssh` shimmed on PATH, so the assertions are about the command
-that would have been sent rather than about a machine.
+Both take `<branch> <task-ref>`, require `SELECTOR_BOX_REPO`, fetch origin and
+check out the run branch, carry the target's repository token and guest template
+without emitting empty exports, invoke `run.sh --repo <repo> --task-ref <task-ref>
+--propose --notify`, and propagate the Run's stdout report and exit code.
+
+Local dispatch adds the credential inventory gate: `loop/assert-credentials.sh`
+is run as preflight, refusing dispatch and naming every violation if any
+forbidden credentials (or missing required credentials) are found on the box.
 """
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
 SSH_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "ssh.sh"
+LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "local.sh"
 FACTS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "facts.sh"
+
+BOX_SOURCES = [SSH_SOURCE, LOCAL_SOURCE]
 
 TARGET_ENV = {
     "SELECTOR_BOX_HOST": "root@box.invalid",
@@ -29,23 +38,88 @@ TARGET_ENV = {
 }
 
 
+@dataclass
+class DispatchedRun:
+    repo: str | None
+    branch: str | None
+    task_ref: str | None
+    token_file: str | None
+    guest_template: str | None
+    run_args: list[str]
+    git_calls: list[str]
+    assert_called: bool
+    ssh_called: bool
+    assert_args: list[str] = field(default_factory=list)
+
+
 @pytest.fixture
-def ssh(tmp_path):
-    """A shimmed `ssh` that records its argv and exits 0."""
+def box_runner(tmp_path):
+    """A runner providing shims for ssh, git, assert-credentials.sh, and run.sh."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    recorded = tmp_path / "ssh.args"
-    shim = bin_dir / "ssh"
-    shim.write_text(
+    loop_dir = tmp_path / "loop"
+    loop_dir.mkdir()
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+
+    ssh_args_file = tmp_path / "ssh.args"
+    git_calls_file = tmp_path / "git.calls"
+    assert_calls_file = loop_dir / "assert-credentials.calls"
+    run_calls_file = loop_dir / "run.calls"
+    run_env_file = loop_dir / "run.env"
+
+    ssh_shim = bin_dir / "ssh"
+    ssh_shim.write_text(
         "#!/usr/bin/env bash\n"
-        f'printf "%s\\n" "$*" > "{recorded}"\n'
+        f'printf "%s\\n" "$*" > "{ssh_args_file}"\n'
+        'if [[ -n "${RUN_STDOUT:-}" ]]; then\n'
+        '    printf "%b" "${RUN_STDOUT}"\n'
+        'fi\n'
+        'exit "${RUN_EXIT_CODE:-0}"\n'
     )
-    shim.chmod(0o755)
+    ssh_shim.chmod(0o755)
+
+    git_shim = bin_dir / "git"
+    git_shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{git_calls_file}"\n'
+        "exit 0\n"
+    )
+    git_shim.chmod(0o755)
+
+    assert_shim = loop_dir / "assert-credentials.sh"
+    assert_shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{assert_calls_file}"\n'
+        'if [[ -n "${ASSERT_CREDENTIALS_FAIL:-}" ]]; then\n'
+        '    printf "Violations:\\n  - database-credential: %s\\n" "${ASSERT_CREDENTIALS_FAIL}" >&2\n'
+        '    exit 2\n'
+        'fi\n'
+        'exit 0\n'
+    )
+    assert_shim.chmod(0o755)
+
+    run_shim = loop_dir / "run.sh"
+    run_shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{run_calls_file}"\n'
+        f'printf "token=%s\\nguest=%s\\n" "${{LOOP_GITHUB_TOKEN_FILE-<unset>}}" "${{LOOP_GUEST_TEMPLATE-<unset>}}" > "{run_env_file}"\n'
+        'if [[ -n "${RUN_STDOUT:-}" ]]; then\n'
+        '    printf "%b" "${RUN_STDOUT}"\n'
+        'else\n'
+        '    printf "LOOP_RUN_ENDED_BY=iteration-cap\\nLOOP_RUN_EXIT=0\\n"\n'
+        'fi\n'
+        'exit "${RUN_EXIT_CODE:-0}"\n'
+    )
+    run_shim.chmod(0o755)
 
     class Runner:
         def run(self, script, *argv, **env):
             environ = dict(os.environ)
             environ["PATH"] = f"{bin_dir}:{environ['PATH']}"
+            environ.setdefault("SELECTOR_BOX_LOOP", str(loop_dir))
+            environ.setdefault("SELECTOR_ASSERT_CREDENTIALS_COMMAND", str(assert_shim))
+            environ.setdefault("SELECTOR_BOX_HOME", str(home_dir))
             for name in TARGET_ENV:
                 environ.pop(name, None)
             environ.update({k: str(v) for k, v in env.items()})
@@ -55,9 +129,162 @@ def ssh(tmp_path):
             )
 
         def sent(self):
-            return recorded.read_text() if recorded.exists() else ""
+            return ssh_args_file.read_text() if ssh_args_file.exists() else ""
+
+        def run_started(self, source):
+            if source == SSH_SOURCE:
+                return bool(self.sent())
+            return run_calls_file.exists()
+
+        def dispatched(self, source) -> DispatchedRun:
+            if source == SSH_SOURCE:
+                sent = self.sent().replace("\\n", "\n")
+                ssh_called = bool(sent)
+                token_match = re.search(r"export LOOP_GITHUB_TOKEN_FILE=([^\s\n]+)", sent)
+                guest_match = re.search(r"export LOOP_GUEST_TEMPLATE=([^\s\n]+)", sent)
+                repo_match = re.search(r"git -C ([^\s]+) fetch", sent)
+                checkout_match = re.search(r"checkout -B ([^\s]+)", sent)
+                task_match = re.search(r"--task-ref ([^\s]+)", sent)
+                exec_match = re.search(r"exec ([^\'\n]+)", sent)
+
+                token_file = token_match.group(1).strip("'\"") if token_match else None
+                guest_template = guest_match.group(1).strip("'\"") if guest_match else None
+                repo = repo_match.group(1).strip("'\"") if repo_match else None
+                branch = checkout_match.group(1).strip("'\"") if checkout_match else None
+                task_ref = task_match.group(1).strip("'\"") if task_match else None
+                run_args = shlex.split(exec_match.group(1).strip())[1:] if exec_match else []
+                git_calls = [line.strip().strip("'\"") for line in sent.splitlines() if "git -C " in line]
+                return DispatchedRun(
+                    repo=repo, branch=branch, task_ref=task_ref,
+                    token_file=token_file, guest_template=guest_template,
+                    run_args=run_args, git_calls=git_calls,
+                    assert_called=False, ssh_called=ssh_called,
+                )
+            else:
+                ssh_called = ssh_args_file.exists() and bool(ssh_args_file.read_text())
+                assert_called = assert_calls_file.exists()
+                git_calls = git_calls_file.read_text().splitlines() if git_calls_file.exists() else []
+                run_lines = run_calls_file.read_text().splitlines() if run_calls_file.exists() else []
+                run_args = shlex.split(run_lines[0]) if run_lines else []
+                env_lines = run_env_file.read_text().splitlines() if run_env_file.exists() else []
+                env_map = dict(line.split("=", 1) for line in env_lines if "=" in line)
+                token_file = env_map.get("token") if env_map.get("token") != "<unset>" else None
+                guest_template = env_map.get("guest") if env_map.get("guest") != "<unset>" else None
+
+                repo = None
+                if "--repo" in run_args:
+                    repo = run_args[run_args.index("--repo") + 1]
+                task_ref = None
+                if "--task-ref" in run_args:
+                    task_ref = run_args[run_args.index("--task-ref") + 1]
+                branch = None
+                for call in git_calls:
+                    if "checkout -B " in call:
+                        parts = shlex.split(call)
+                        if "-B" in parts:
+                            branch = parts[parts.index("-B") + 1]
+
+                assert_lines = assert_calls_file.read_text().splitlines() if assert_calls_file.exists() else []
+                assert_args = shlex.split(assert_lines[0]) if assert_lines else []
+
+                return DispatchedRun(
+                    repo=repo, branch=branch, task_ref=task_ref,
+                    token_file=token_file, guest_template=guest_template,
+                    run_args=run_args, git_calls=git_calls,
+                    assert_called=assert_called, ssh_called=ssh_called,
+                    assert_args=assert_args,
+                )
 
     return Runner()
+
+
+@pytest.fixture
+def ssh(box_runner):
+    """Alias for backwards compatibility with existing ssh tests."""
+    return box_runner
+
+
+# --- Shared contract: both sources drive through the same interface ---------
+
+
+@pytest.mark.parametrize("source", BOX_SOURCES)
+def test_the_targets_checkout_token_and_image_reach_the_run(box_runner, source):
+    """The contract: a target's checkout, token and guest image reach the Run
+    whether dispatched across an SSH hop or directly on the controller."""
+    result = box_runner.run(source, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    dispatched = box_runner.dispatched(source)
+    assert dispatched.repo == "/home/loop/gadgets"
+    assert dispatched.branch == "loop/645-a-thing"
+    assert dispatched.task_ref == "acme/gadgets#645"
+    assert dispatched.token_file == "/home/loop/.config/loop/gadgets-token"
+    assert dispatched.guest_template == "gadgets-python:1"
+    assert "--propose" in dispatched.run_args
+    assert "--notify" in dispatched.run_args
+    if source == LOCAL_SOURCE:
+        assert "--token-file" in dispatched.assert_args
+        assert "/home/loop/.config/loop/gadgets-token" in dispatched.assert_args
+
+
+@pytest.mark.parametrize("source", BOX_SOURCES)
+def test_a_target_without_a_token_or_image_sends_no_empty_values(box_runner, source):
+    """An empty value is worse than none: it would put an empty
+    `LOOP_GITHUB_TOKEN_FILE` in the Run's environment and override whatever
+    the box's own credential helper was configured with."""
+    result = box_runner.run(
+        source, "loop/645-a-thing", "acme/gadgets#645",
+        SELECTOR_BOX_HOST="root@box.invalid",
+        SELECTOR_BOX_REPO="/home/loop/gadgets",
+        LOOP_GITHUB_TOKEN_FILE="",
+        LOOP_GUEST_TEMPLATE="",
+    )
+
+    assert result.returncode == 0, result.stderr
+    dispatched = box_runner.dispatched(source)
+    assert dispatched.token_file is None
+    assert dispatched.guest_template is None
+
+
+@pytest.mark.parametrize("source", BOX_SOURCES)
+def test_an_unset_repo_refuses_by_name(box_runner, source):
+    """SELECTOR_BOX_REPO has no default; missing it must fail naming the variable."""
+    env = dict(TARGET_ENV)
+    env["SELECTOR_BOX_REPO"] = ""
+    result = box_runner.run(source, "loop/645-a-thing", "acme/gadgets#645", **env)
+
+    assert result.returncode != 0
+    assert "SELECTOR_BOX_REPO" in result.stderr
+    assert not box_runner.run_started(source), "it reached the box anyway"
+
+
+@pytest.mark.parametrize("source", BOX_SOURCES)
+def test_the_branch_is_fetched_and_checked_out_before_run(box_runner, source):
+    """Both sources must fetch origin and checkout the run branch into the target repo."""
+    result = box_runner.run(source, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    dispatched = box_runner.dispatched(source)
+    assert any("fetch --prune" in call for call in dispatched.git_calls)
+    assert any("checkout -B loop/645-a-thing" in call for call in dispatched.git_calls)
+
+
+@pytest.mark.parametrize("source", BOX_SOURCES)
+def test_the_run_exit_code_and_output_propagate(box_runner, source):
+    """The box source blocks for the duration of the Run and yields its stdout and exit code."""
+    result = box_runner.run(
+        source, "loop/645-a-thing", "acme/gadgets#645",
+        RUN_EXIT_CODE="4",
+        RUN_STDOUT="LOOP_RUN_ENDED_BY=agent-failed\nLOOP_RUN_EXIT=4\n",
+        **TARGET_ENV,
+    )
+
+    assert result.returncode == 4
+    assert "LOOP_RUN_ENDED_BY=agent-failed" in result.stdout
+    assert "LOOP_RUN_EXIT=4" in result.stdout
+
+
+# --- SSH-specific surface ---------------------------------------------------
 
 
 def test_the_targets_checkout_token_and_image_cross_the_hop(ssh):
@@ -73,9 +300,6 @@ def test_the_targets_checkout_token_and_image_cross_the_hop(ssh):
 
 
 def test_a_target_without_a_token_or_image_sends_no_empty_exports(ssh):
-    """An empty export is worse than none: it would put an empty
-    `LOOP_GITHUB_TOKEN_FILE` in the Run's environment and override whatever
-    the box's own credential helper was configured with."""
     result = ssh.run(SSH_SOURCE, "loop/645-a-thing", "acme/gadgets#645",
                      SELECTOR_BOX_HOST="root@box.invalid",
                      SELECTOR_BOX_REPO="/home/loop/gadgets")
@@ -117,24 +341,166 @@ def test_the_status_read_refuses_without_a_box(ssh):
 
 
 def test_each_export_is_its_own_line(ssh):
-    """Not merely present - present as a command.
-
-    Command substitution strips trailing newlines, so an earlier spelling of
-    this assembled the exports with `$(printf 'export ...=%q\\n')` arguments
-    and produced
-
-        export LOOP_GITHUB_TOKEN_FILE=/home/loop/tokexec /home/loop/loop/run.sh
-
-    on one line: a dispatch that starts nothing, on every Run that has a
-    token. A substring assertion passed straight through it, which is why
-    this one is about the line breaks. Found by review, 2026-09-04.
-    """
     ssh.run(SSH_SOURCE, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
 
-    # The remote command reaches `ssh` %q-quoted for `su -c`, so a newline
-    # arrives as the two characters `\\` and `n`.
     sent = ssh.sent().replace("\\n", "\n")
     lines = [line.strip() for line in sent.split("\n")]
     assert "export LOOP_GITHUB_TOKEN_FILE=/home/loop/.config/loop/gadgets-token" in lines
     assert "export LOOP_GUEST_TEMPLATE=gadgets-python:1" in lines
     assert any(line.startswith("exec ") for line in lines), sent
+
+
+# --- Local-specific surface (Issue #6, ADR 0019) ----------------------------
+
+
+def test_local_box_has_no_ssh_hop(box_runner):
+    """Local dispatch executes directly on the controller without SSH."""
+    result = box_runner.run(LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    dispatched = box_runner.dispatched(LOCAL_SOURCE)
+    assert not dispatched.ssh_called
+    assert dispatched.assert_called
+
+
+def test_local_dispatch_refuses_naming_violations_when_credential_inventory_fails(box_runner):
+    """Local dispatch is refused, naming every violation, when the credential inventory reports one."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645",
+        ASSERT_CREDENTIALS_FAIL="MYSQL_PWD is set in the environment",
+        **TARGET_ENV,
+    )
+
+    assert result.returncode == 2
+    assert "credential inventory reported violations:" in result.stderr
+    assert "MYSQL_PWD is set in the environment" in result.stderr
+    assert not box_runner.run_started(LOCAL_SOURCE)
+
+
+def test_local_dispatch_fails_when_credential_check_cannot_run(box_runner):
+    """If assert-credentials.sh is missing or unrunnable, dispatch must fail rather than proceed un-gated."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645",
+        SELECTOR_ASSERT_CREDENTIALS_COMMAND="/nonexistent/assert-credentials.sh",
+        **TARGET_ENV,
+    )
+
+    assert result.returncode != 0
+    assert "assert-credentials.sh not found" in result.stderr
+    assert not box_runner.run_started(LOCAL_SOURCE)
+
+
+def test_local_box_does_not_skip_credential_inventory(box_runner):
+    """Local dispatch must not skip the credential inventory check (assert-credentials.sh)."""
+    result = box_runner.run(LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    dispatched = box_runner.dispatched(LOCAL_SOURCE)
+    assert dispatched.assert_called, "credential inventory check was skipped"
+
+
+def test_production_credentials_cause_local_dispatch_refusal(tmp_path):
+    """An operator machine holding production credentials must fail refusal.
+    Driven against the real loop/assert-credentials.sh script with a production env variable.
+    """
+    real_assert = Path(__file__).resolve().parents[2] / "loop" / "assert-credentials.sh"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git_shim = bin_dir / "git"
+    git_shim.write_text("#!/usr/bin/env bash\nexit 0\n")
+    git_shim.chmod(0o755)
+
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+
+    environ = dict(os.environ)
+    environ["PATH"] = f"{bin_dir}:{environ['PATH']}"
+    environ["SELECTOR_BOX_REPO"] = "/tmp"
+    environ["SELECTOR_BOX_HOME"] = str(home_dir)
+    environ["SELECTOR_BOX_SBX"] = "false"
+    environ["SELECTOR_ASSERT_CREDENTIALS_COMMAND"] = str(real_assert)
+    environ["MYSQL_PWD"] = "super-secret-prod-password"
+
+    proc = subprocess.run(
+        [str(LOCAL_SOURCE), "loop/645-test", "acme/gadgets#645"],
+        capture_output=True, text=True, env=environ, timeout=30,
+    )
+
+    assert proc.returncode == 2
+    assert "database-credential" in proc.stderr
+    assert "MYSQL_PWD is set in the environment" in proc.stderr
+
+
+def test_local_box_drives_a_real_run_against_tmpdir(tmp_path):
+    """A Run dispatches, works and proposes with no SSH hop when the box is local.
+    Driven against a real git repository in tmpdir with a scripted sbx / loop scripts.
+    """
+    bare_repo = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(bare_repo)], check=True, capture_output=True)
+
+    work_repo = tmp_path / "work"
+    subprocess.run(["git", "clone", str(bare_repo), str(work_repo)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(work_repo), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(work_repo), "config", "user.email", "test@example.com"], check=True)
+
+    (work_repo / "README.md").write_text("initial\n")
+    subprocess.run(["git", "-C", str(work_repo), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(work_repo), "commit", "-m", "Initial commit"], check=True)
+    subprocess.run(["git", "-C", str(work_repo), "push", "origin", "HEAD:main"], check=True)
+
+    subprocess.run(["git", "-C", str(work_repo), "checkout", "-b", "loop/645-a-thing"], check=True)
+    (work_repo / "PLAN.md").write_text("A plan\n")
+    subprocess.run(["git", "-C", str(work_repo), "add", "PLAN.md"], check=True)
+    subprocess.run(["git", "-C", str(work_repo), "commit", "-m", "Loop: Seed the Run"], check=True)
+    subprocess.run(["git", "-C", str(work_repo), "push", "origin", "loop/645-a-thing"], check=True)
+    subprocess.run(["git", "-C", str(work_repo), "checkout", "main"], check=True)
+
+    box_repo = tmp_path / "box_repo"
+    subprocess.run(["git", "clone", str(bare_repo), str(box_repo)], check=True, capture_output=True)
+
+    fake_loop = tmp_path / "fake_loop"
+    fake_loop.mkdir()
+    fake_assert = fake_loop / "assert-credentials.sh"
+    fake_assert.write_text("#!/usr/bin/env bash\nexit 0\n")
+    fake_assert.chmod(0o755)
+
+    fake_run = fake_loop / "run.sh"
+    fake_run.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'repo=""\n'
+        'while (($# > 0)); do\n'
+        '  case "$1" in\n'
+        '    --repo) repo="$2"; shift 2 ;;\n'
+        '    *) shift ;;\n'
+        '  esac\n'
+        'done\n'
+        'printf "work done\\n" >> "${repo}/WORK.txt"\n'
+        'git -C "${repo}" add WORK.txt\n'
+        'git -C "${repo}" -c user.name="Loop" -c user.email="loop@example.com" commit -m "Loop: Iteration 1"\n'
+        'git -C "${repo}" push origin HEAD\n'
+        'printf "LOOP_RUN_ENDED_BY=iteration-cap\\nLOOP_RUN_EXIT=0\\nLOOP_RUN_ITERATIONS=1\\nLOOP_RUN_FAULTS=none\\nLOOP_RUN_PROPOSAL=https://github.com/example/pull/1\\n"\n'
+        'exit 0\n'
+    )
+    fake_run.chmod(0o755)
+
+    environ = dict(os.environ)
+    environ["SELECTOR_BOX_REPO"] = str(box_repo)
+    environ["SELECTOR_BOX_LOOP"] = str(fake_loop)
+    environ["LOOP_GITHUB_TOKEN_FILE"] = "/tmp/fake-token"
+    environ["LOOP_GUEST_TEMPLATE"] = "test:1"
+
+    proc = subprocess.run(
+        [str(LOCAL_SOURCE), "loop/645-a-thing", "acme/gadgets#645"],
+        capture_output=True, text=True, env=environ, timeout=30,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "LOOP_RUN_ENDED_BY=iteration-cap" in proc.stdout
+    assert "LOOP_RUN_EXIT=0" in proc.stdout
+
+    pushed_tree = subprocess.run(
+        ["git", "--git-dir", str(bare_repo), "ls-tree", "-r", "--name-only", "loop/645-a-thing"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "WORK.txt" in pushed_tree

@@ -106,6 +106,7 @@ TARGETS_SUITE = "tests/test_targets.py"
 # carried here is silently absent on the box - and every target's Run then
 # uses whatever the box was last configured with.
 BOX_SOURCE = "box-sources/ssh.sh"
+LOCAL_SOURCE = "box-sources/local.sh"
 FACTS_SOURCE = "box-sources/facts.sh"
 BOX_SOURCE_SUITE = "tests/test_box_source.py"
 
@@ -1084,6 +1085,35 @@ MUTATIONS = {
         "        os.environ.get(TARGETS_FILE_VAR)\n        or missing(",
         "        os.environ.get(TARGETS_FILE_VAR)\n"
         '        or "/etc/tracewake/targets.toml"\n        or missing(',
+    ),
+    # The local box's checkout stops being required, so an instance that
+    # configured none runs against whatever directory happens to be empty or current.
+    "local-box-repo-not-required": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        "require SELECTOR_BOX_REPO\n", "",
+    ),
+    # The target's repository token is not passed to the credential inventory,
+    # so assert-credentials.sh checks whatever token default is on the box.
+    "local-token-file-not-passed-to-inventory": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        'if [[ -n ${LOOP_GITHUB_TOKEN_FILE:-} ]]; then\n    assert_args+=(--token-file "${LOOP_GITHUB_TOKEN_FILE}")\nfi\n',
+        "",
+    ),
+    # An empty repository token is not unset, so an empty value is exported to
+    # the Run environment overriding the credential helper.
+    "local-empty-token-file-not-unset": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        "else\n    unset LOOP_GITHUB_TOKEN_FILE || true\n",
+        "else\n    true\n",
+    ),
+    # The local dispatch skips the credential inventory check, allowing an
+    # operator machine holding production credentials to run un-gated.
+    "local-dispatch-skips-credential-inventory": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        'if ! cred_output="$("${assert_script}" "${assert_args[@]}" 2>&1)"; then\n    printf \'box-sources/local.sh: credential inventory reported violations:\\n%s\\n\' "${cred_output}" >&2\n    exit 2\nfi\n',
+        "",
+    ),
+    # The local dispatch ignores credential violations reported by assert-credentials.sh
+    # and proceeds anyway.
+    "local-dispatch-ignores-credential-violations": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        "    exit 2\n",
+        "    true\n",
     ),
 }
 
