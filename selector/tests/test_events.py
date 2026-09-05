@@ -370,7 +370,7 @@ def test_the_cycle_rows_spell_their_settled_shapes():
         returned=0, dry_run=False)
     assert kind == "cycle.finished"
     assert set(payload) == {"cycle", "considered", "eligible", "skipped",
-                            "picked", "halted", "in_flight",
+                            "picked", "dispatches", "halted", "in_flight",
                             "dispatched_in_window", "daily_cap", "returned",
                             "dry_run"}
 
@@ -424,7 +424,7 @@ def test_the_cycle_card_rows_read_back_as_records():
         picked=312, halted=None, in_flight=None, dispatched_in_window=1,
         daily_cap=4, returned=[313], dry_run=False)
     summary = events.cycle_finished_record(row(kind, payload))
-    assert (summary.halted, summary.daily_cap) == (None, 4)
+    assert (summary.halted, summary.daily_cap, summary.dispatches) == (None, 4, [312])
 
     kind, payload = events.issue_skipped(
         cycle=51, number=314, title="t", url="u",

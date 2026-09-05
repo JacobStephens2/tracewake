@@ -207,3 +207,15 @@ OnFailure=notify-unit-failure@%n.service
             text=True,
         ).strip()
         assert bad_val == "", f"Expected systemd to ignore OnFailure in [Service], got {bad_val!r}"
+
+
+def test_cycle_unit_has_infinite_start_timeout():
+    """Acceptance criterion 7 for issue #8:
+    The unit no longer bounds a drain by its start timeout, while the
+    per-dispatch backstop still bounds a Run.
+    """
+    unit_path = SYSTEMD_DIR / "tracewake-selector-cycle.service"
+    content = unit_path.read_text()
+    assert re.search(r"^\s*TimeoutStartSec\s*=\s*infinity\s*$", content, re.M), (
+        "tracewake-selector-cycle.service must set TimeoutStartSec=infinity"
+    )

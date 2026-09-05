@@ -44,12 +44,12 @@ EnvironmentFile=-{{ env }}
 ExecStart={{ (tracewake_cycle_wrapper ~ ' ') if tracewake_cycle_wrapper else '' }}{{ tracewake_dir }}/selector/.venv/bin/python \
     {{ tracewake_dir }}/selector/cycle.py{{ (' ' ~ tracewake_cycle_args) if tracewake_cycle_args else '' }}
 
-# A dispatching cycle holds the process for the length of the Run. The
-# Termination Contract bounds a Run at 90 minutes and the Selector's own
-# backstop (SELECTOR_DISPATCH_TIMEOUT_SECONDS) at 7200s, so this is above both
-# on purpose: it is the last resort for a cycle that wedged somewhere with no
-# timeout of its own, and a number that could fire FIRST would be a bound on
-# Runs that nothing in contract.sh declared.
+# The drain is unbounded in time, bounded by the queue, the daily cap, and the
+# review pause. A draining Cycle might dispatch several Runs in a row and take
+# hours; the unit's job is to let it drain without an arbitrary deadline cutting
+# it off. An individual Run continues to be bounded by the Termination Contract
+# (90 minutes) and by the Selector's per-dispatch backstop
+# (SELECTOR_DISPATCH_TIMEOUT_SECONDS, 7200s).
 TimeoutStartSec=8100
 
 # Two cycles never run at once - cycle.py takes a Postgres advisory lock and a

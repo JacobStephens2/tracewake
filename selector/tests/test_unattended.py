@@ -221,3 +221,117 @@ def test_a_dry_run_does_not_reach_the_box(db, fakes):
     assert events(db, "box.unreachable") == []
     assert events(db, "guardrail.observed") == []
     assert events(db, "guardrail.unreadable") == []
+
+
+# --- A Cycle drains the queue (issue #8) ------------------------------------
+
+
+def test_one_cycle_dispatches_several_runs_serially(db, box):
+    """Criterion 1: One Cycle dispatches several Runs serially, routing each
+    before picking the next, and the Journal shows them under one cycle.
+    Criterion 5: One cycle summary per drain names every dispatch and the
+    reason it stopped."""
+    result = box.run(db, [issue(640), issue(645)])
+    assert result.returncode == 0, result.stderr
+
+    # Exactly one cycle
+    assert len(events(db, "cycle.started")) == 1
+    assert len(events(db, "cycle.finished")) == 1
+
+    # Dispatched both issues serially
+    dispatched_issues = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
+    assert dispatched_issues == [640, 645]
+
+    # Both picked and routed
+    picked_numbers = [e["payload"]["number"] for e in events(db, "cycle.picked")]
+    assert picked_numbers == [640, 645]
+    assert len(events(db, "issue.awaiting-review")) == 2
+
+    # Finished summary
+    finished = last(db, "cycle.finished")
+    assert finished["dispatches"] == [640, 645]
+    assert finished["picked"] == 640
+    assert finished["halted"] == "queue-empty"
+
+    # All events belong to the same cycle id
+    cycle_id = one(db, "cycle.finished")["cycle"]
+    for e in events(db):
+        if "cycle" in e["payload"] and e["payload"]["cycle"] is not None:
+            assert e["payload"]["cycle"] == cycle_id, (
+                f"event {e['kind']} has cycle {e['payload']['cycle']}, expected {cycle_id}"
+            )
+
+
+def test_the_box_facts_and_guardrail_are_read_before_each_dispatch(db, box):
+    """Criterion 4: The box's facts and the Guardrail are read before each
+    dispatch, not once per Cycle."""
+    result = box.run(db, [issue(640), issue(645)])
+    assert result.returncode == 0, result.stderr
+
+    assert len(events(db, "box.observed")) == 2
+    assert len(events(db, "guardrail.observed")) == 2
+
+    all_kinds = [e["kind"] for e in events(db)]
+    seq = [k for k in all_kinds if k in ("box.observed", "guardrail.observed", "run.dispatched")]
+    assert seq == [
+        "box.observed", "guardrail.observed", "run.dispatched",
+        "box.observed", "guardrail.observed", "run.dispatched",
+    ]
+
+
+def test_pause_is_honoured_between_runs_and_does_not_cancel_run_in_flight(db, box, tmp_path):
+    """Criterion 3: Pause is honoured before each pick and never cancels a Run
+    already in flight."""
+    pause_script = tmp_path / "pause-mid-run.sh"
+    pause_script.write_text(
+        f"#!/usr/bin/env bash\n"
+        f"psql \"{db}\" -c 'UPDATE selector.control SET paused = true'\n"
+    )
+    pause_script.chmod(0o755)
+
+    result = box.run(db, [issue(640), issue(645)], NESTED_CYCLE=str(pause_script))
+    assert result.returncode == 0, result.stderr
+
+    # Run 640 finished and was routed cleanly (not canceled)
+    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [640]
+    assert len(events(db, "issue.awaiting-review")) == 1
+
+    # Cycle halted before picking 645
+    finished = last(db, "cycle.finished")
+    assert finished["dispatches"] == [640]
+    assert finished["halted"] == "paused"
+    assert finished["eligible"] == [645]
+
+
+def test_cycle_ends_when_daily_cap_is_reached_during_drain(db, box, dispatch):
+    """Criterion 2: A Cycle ends when a cap holds."""
+    for num in (630, 631, 632):
+        dispatch(db, num, outcome="clean")
+
+    result = box.run(db, [issue(640), issue(645)])
+    assert result.returncode == 0, result.stderr
+
+    # 3 earlier dispatches + 1 from this cycle = 4 (the daily cap)
+    dispatches = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
+    assert dispatches == [630, 631, 632, 640]
+
+    finished = last(db, "cycle.finished")
+    assert finished["dispatches"] == [640]
+    assert finished["halted"] == "daily-cap-reached"
+    assert finished["eligible"] == [645]
+
+
+def test_cycle_ends_when_nothing_eligible_during_drain(db, box):
+    """Criterion 2: A Cycle ends when nothing is Eligible."""
+    result = box.run(db, [issue(640), issue(645, blockedBy=1)])
+    assert result.returncode == 0, result.stderr
+
+    # 640 was dispatched
+    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [640]
+    assert len(events(db, "issue.awaiting-review")) == 1
+
+    # 645 is blocked, so nothing is eligible
+    finished = last(db, "cycle.finished")
+    assert finished["dispatches"] == [640]
+    assert finished["halted"] == "none-eligible"
+    assert finished["eligible"] == []

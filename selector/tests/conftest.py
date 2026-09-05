@@ -263,6 +263,7 @@ def box(tmp_path):
     progress_file.write_text(
         "# Progress Log\n\nSeeded by seed-run.sh. No Iteration has run yet.\n"
     )
+    queue_file = tmp_path / "queue.json"
 
     def git(*args, cwd=None):
         return subprocess.run(
@@ -294,6 +295,7 @@ def box(tmp_path):
             .replace("@FACTS@", str(facts_file))
             .replace("@GUARDRAIL@", str(guardrail_file))
             .replace("@PROGRESS@", str(progress_file))
+            .replace("@QUEUE@", str(queue_file))
             .replace("@GUEST@", str(tmp_path / "guest"))
         )
 
@@ -400,6 +402,10 @@ def box(tmp_path):
         # CHANGING - pending, then green - and the Selector's polling is
         # driven rather than assumed. The last line stays put, so a file with
         # one line in it is simply a constant answer.
+        if [[ ${2:-} == relabel ]]; then
+            num="${3:-}"
+            python3 -c "import json, sys; p = sys.argv[1]; n = int(sys.argv[2]); data = json.load(open(p)); data['issues'] = [i for i in data['issues'] if int(i.get('number', 0)) != n]; json.dump(data, open(p, 'w'))" "@QUEUE@" "$num"
+        fi
         if [[ ${2:-} == checks ]]; then
             head -n 1 "@CHECKS@"
             if (($(wc -l < "@CHECKS@") > 1)); then
@@ -445,7 +451,6 @@ def box(tmp_path):
         exec cat "@PROGRESS@"
     '''))
 
-    queue_file = tmp_path / "queue.json"
     tracker = _script(tmp_path / "tracker.sh", f'exec cat "{queue_file}"\n')
 
     class Runner:
