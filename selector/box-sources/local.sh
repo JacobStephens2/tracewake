@@ -26,10 +26,9 @@
 #
 #   SELECTOR_BOX_REPO         required   the target's checkout on this machine
 #   SELECTOR_BOX_LOOP         optional   the Loop directory (default ../../loop)
-#   SELECTOR_BOX_REMOTE       origin     remote to fetch and checkout branch from
 #   LOOP_GITHUB_TOKEN_FILE    optional   the target's repository token
 #   LOOP_GUEST_TEMPLATE       optional   the target's guest image
-#   SELECTOR_BOX_HOME         optional   home directory for credential check
+#   SELECTOR_BOX_HOME         optional   home directory for credential check (default $HOME)
 #   SELECTOR_BOX_SBX          optional   sbx command for credential check
 #   SELECTOR_BOX_SYSTEM_ROOT  optional   system root prefix for testing
 #   SELECTOR_ASSERT_CREDENTIALS_COMMAND optional override for credential check
@@ -56,47 +55,52 @@ task_ref="${2:?usage: local.sh <branch> <task-ref>}"
 require SELECTOR_BOX_REPO
 box_repo="${SELECTOR_BOX_REPO}"
 box_loop="${SELECTOR_BOX_LOOP:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../loop" && pwd)}"
-box_remote="${SELECTOR_BOX_REMOTE:-origin}"
 
 # The credential inventory gate (ADR 0019).
 # Runs assert-credentials.sh before touching git or starting the Run.
 assert_script="${SELECTOR_ASSERT_CREDENTIALS_COMMAND:-${box_loop}/assert-credentials.sh}"
-[[ -f ${assert_script} || -x ${assert_script} ]] || die "assert-credentials.sh not found at ${assert_script}"
+[[ -x "${assert_script}" ]] || die "assert-credentials.sh not executable or not found at ${assert_script}"
 
-local_home="${SELECTOR_BOX_HOME:-${HOME:-/home/loop}}"
+local_home="${SELECTOR_BOX_HOME:-${HOME:?HOME is required}}"
 assert_args=(--home "${local_home}")
 
-if [[ -n ${LOOP_GITHUB_TOKEN_FILE:-} ]]; then
+if [[ -n "${LOOP_GITHUB_TOKEN_FILE:-}" ]]; then
     assert_args+=(--token-file "${LOOP_GITHUB_TOKEN_FILE}")
 fi
-if [[ -n ${TRACEWAKE_TARGETS_FILE:-} && -f ${TRACEWAKE_TARGETS_FILE} ]]; then
+if [[ -n "${TRACEWAKE_TARGETS_FILE:-}" && -f "${TRACEWAKE_TARGETS_FILE}" ]]; then
     assert_args+=(--targets "${TRACEWAKE_TARGETS_FILE}")
 fi
-if [[ -n ${SELECTOR_BOX_SBX:-} ]]; then
+if [[ -n "${SELECTOR_BOX_SBX:-}" ]]; then
     assert_args+=(--sbx "${SELECTOR_BOX_SBX}")
 fi
-if [[ -n ${SELECTOR_BOX_SYSTEM_ROOT:-} ]]; then
+if [[ -n "${SELECTOR_BOX_SYSTEM_ROOT:-}" ]]; then
     assert_args+=(--system-root "${SELECTOR_BOX_SYSTEM_ROOT}")
 fi
 
 cred_output=""
-if ! cred_output="$("${assert_script}" "${assert_args[@]}" 2>&1)"; then
+cred_status=0
+cred_output="$("${assert_script}" "${assert_args[@]}" 2>&1)" || cred_status=$?
+
+if (( cred_status == 2 )); then
     printf 'box-sources/local.sh: credential inventory reported violations:\n%s\n' "${cred_output}" >&2
     exit 2
+elif (( cred_status != 0 )); then
+    printf 'box-sources/local.sh: assert-credentials.sh failed to run (exit %d):\n%s\n' "${cred_status}" "${cred_output}" >&2
+    exit 1
 fi
 
 command -v git >/dev/null 2>&1 || die "git is required on the local machine"
-[[ -x "${box_loop}/run.sh" || -f "${box_loop}/run.sh" ]] || die "run.sh not found at ${box_loop}/run.sh"
+[[ -x "${box_loop}/run.sh" ]] || die "run.sh not executable or not found at ${box_loop}/run.sh"
 
-git -C "${box_repo}" fetch --prune "${box_remote}"
-git -C "${box_repo}" checkout -B "${branch}" "${box_remote}/${branch}"
+git -C "${box_repo}" fetch --prune origin
+git -C "${box_repo}" checkout -B "${branch}" "origin/${branch}"
 
-if [[ -n ${LOOP_GITHUB_TOKEN_FILE:-} ]]; then
+if [[ -n "${LOOP_GITHUB_TOKEN_FILE:-}" ]]; then
     export LOOP_GITHUB_TOKEN_FILE
 else
     unset LOOP_GITHUB_TOKEN_FILE || true
 fi
-if [[ -n ${LOOP_GUEST_TEMPLATE:-} ]]; then
+if [[ -n "${LOOP_GUEST_TEMPLATE:-}" ]]; then
     export LOOP_GUEST_TEMPLATE
 else
     unset LOOP_GUEST_TEMPLATE || true

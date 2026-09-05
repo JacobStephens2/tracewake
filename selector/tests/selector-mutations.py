@@ -1094,7 +1094,7 @@ MUTATIONS = {
     # The target's repository token is not passed to the credential inventory,
     # so assert-credentials.sh checks whatever token default is on the box.
     "local-token-file-not-passed-to-inventory": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
-        'if [[ -n ${LOOP_GITHUB_TOKEN_FILE:-} ]]; then\n    assert_args+=(--token-file "${LOOP_GITHUB_TOKEN_FILE}")\nfi\n',
+        'if [[ -n "${LOOP_GITHUB_TOKEN_FILE:-}" ]]; then\n    assert_args+=(--token-file "${LOOP_GITHUB_TOKEN_FILE}")\nfi\n',
         "",
     ),
     # An empty repository token is not unset, so an empty value is exported to
@@ -1106,14 +1106,39 @@ MUTATIONS = {
     # The local dispatch skips the credential inventory check, allowing an
     # operator machine holding production credentials to run un-gated.
     "local-dispatch-skips-credential-inventory": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
-        'if ! cred_output="$("${assert_script}" "${assert_args[@]}" 2>&1)"; then\n    printf \'box-sources/local.sh: credential inventory reported violations:\\n%s\\n\' "${cred_output}" >&2\n    exit 2\nfi\n',
+        'if (( cred_status == 2 )); then\n'
+        '    printf \'box-sources/local.sh: credential inventory reported violations:\\n%s\\n\' "${cred_output}" >&2\n'
+        '    exit 2\n'
+        'elif (( cred_status != 0 )); then\n'
+        '    printf \'box-sources/local.sh: assert-credentials.sh failed to run (exit %d):\\n%s\\n\' "${cred_status}" "${cred_output}" >&2\n'
+        '    exit 1\n'
+        'fi\n',
         "",
     ),
     # The local dispatch ignores credential violations reported by assert-credentials.sh
     # and proceeds anyway.
     "local-dispatch-ignores-credential-violations": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        "if (( cred_status == 2 )); then\n"
+        '    printf \'box-sources/local.sh: credential inventory reported violations:\\n%s\\n\' "${cred_output}" >&2\n'
         "    exit 2\n",
+        "if (( cred_status == 2 )); then\n"
+        '    printf \'box-sources/local.sh: credential inventory reported violations:\\n%s\\n\' "${cred_output}" >&2\n'
         "    true\n",
+    ),
+    # The local dispatch treats assert-credentials.sh failure to run as violations (exiting 2)
+    # rather than failure to run (exiting 1).
+    "local-dispatch-conflates-check-failure-with-violations": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        "elif (( cred_status != 0 )); then\n"
+        '    printf \'box-sources/local.sh: assert-credentials.sh failed to run (exit %d):\\n%s\\n\' "${cred_status}" "${cred_output}" >&2\n'
+        "    exit 1\n",
+        "elif (( cred_status != 0 )); then\n"
+        '    printf \'box-sources/local.sh: assert-credentials.sh failed to run (exit %d):\\n%s\\n\' "${cred_status}" "${cred_output}" >&2\n'
+        "    exit 2\n",
+    ),
+    # An assert-credentials.sh that is not executable is permitted to pass preflight check.
+    "local-assert-script-executable-not-enforced": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        '[[ -x "${assert_script}" ]] || die "assert-credentials.sh not executable or not found at ${assert_script}"\n',
+        '[[ -f "${assert_script}" ]] || die "assert-credentials.sh not executable or not found at ${assert_script}"\n',
     ),
 }
 
