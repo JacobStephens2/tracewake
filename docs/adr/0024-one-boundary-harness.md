@@ -59,8 +59,8 @@ become lean vendor leaves that declare vendor facts and source the harness.
 
 **Structural properties remain asserted in both suites.** `tests/boundary.bats` and
 `tests/boundary-grok.bats` continue to test their respective adapters independently.
-Per ADR 0012, shared properties are asserted twice on purpose to guarantee that
-structural invariants hold under each leaf's configuration and guest template.
+Per ADR 0012, shared properties are asserted twice on purpose to ensure that
+structural properties hold under each leaf's configuration and guest template.
 
 **Mutation entries follow the code that moved.** Structural mutations
 (`sandbox-leaked`, `missing-credential-skipped`, `pipefail-kills-detection`,
