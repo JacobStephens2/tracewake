@@ -522,3 +522,17 @@ def settled_checks(config: DispatchConfig, task_repo: str, proposal: str) -> dic
         if remaining <= 0:
             return answer
         time.sleep(min(config.checks_poll_seconds, remaining))
+
+
+def update_branch(config: DispatchConfig, task_repo: str, proposal: str | int) -> None:
+    """Bring a proposal's branch up to date with the latest changes from its base."""
+    completed = _run(
+        [config.issue_command, task_repo, "update-branch", str(proposal)],
+        timeout=config.command_timeout_seconds,
+        overlay=config.command_env,
+    )
+    if completed.returncode != 0:
+        raise DispatchFailed(
+            f"could not update branch for proposal {proposal}: {_said(completed)}"
+        )
+

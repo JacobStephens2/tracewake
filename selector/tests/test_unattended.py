@@ -333,3 +333,133 @@ def test_cycle_ends_when_nothing_eligible_during_drain(db, box):
     assert finished["dispatches"] == [640]
     assert finished["halted"] == "none-eligible"
     assert finished["eligible"] == []
+
+
+# --- Proposal freshness during drains (Issue #10) ---------------------------
+
+def test_open_proposals_behind_base_and_mergeable_are_updated_during_drain(db, box):
+    """AC 1: Each open Proposal that is behind its base and mergeable is updated
+    during a drain, and journaled once."""
+    review_issues = [
+        issue(
+            630,
+            proposals=[
+                {
+                    "number": 12,
+                    "url": "https://github.invalid/acme/widgets/pull/12",
+                    "state": "OPEN",
+                    "mergeable": "MERGEABLE",
+                    "mergeStateStatus": "BEHIND",
+                }
+            ],
+        ),
+    ]
+    result = box.run(db, [issue(640)], review_issues=review_issues)
+    assert result.returncode == 0, result.stderr
+
+    # Issue 640 was dispatched
+    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [640]
+
+    # Proposal 12 was updated via issue_command
+    assert "issue acme/widgets update-branch 12" in box.commands()
+
+    # And journaled once as proposal.updated
+    updated = events(db, "proposal.updated")
+    assert len(updated) == 1
+    assert updated[0]["payload"]["proposal"] == 12
+    assert updated[0]["payload"]["issue"] == 630
+    assert updated[0]["payload"]["url"] == "https://github.invalid/acme/widgets/pull/12"
+
+
+def test_conflicting_proposals_are_not_updated_during_drain(db, box):
+    """AC 2: A conflicting Proposal is not updated."""
+    review_issues = [
+        issue(
+            630,
+            proposals=[
+                {
+                    "number": 13,
+                    "url": "https://github.invalid/acme/widgets/pull/13",
+                    "state": "OPEN",
+                    "behind": True,
+                    "conflicting": True,
+                },
+                {
+                    "number": 14,
+                    "url": "https://github.invalid/acme/widgets/pull/14",
+                    "state": "OPEN",
+                    "behind": True,
+                    "mergeable": "CONFLICTING",
+                    "mergeStateStatus": "DIRTY",
+                },
+            ],
+        ),
+    ]
+    result = box.run(db, [issue(640)], review_issues=review_issues)
+    assert result.returncode == 0, result.stderr
+
+    # Proposals 13 and 14 were not updated
+    assert "update-branch 13" not in box.commands()
+    assert "update-branch 14" not in box.commands()
+    assert events(db, "proposal.updated") == []
+
+
+def test_proposal_updated_only_once_during_multi_dispatch_drain(db, box):
+    """AC 1: An open Proposal is journaled once even across multiple dispatches."""
+    review_issues = [
+        issue(
+            630,
+            proposals=[
+                {
+                    "number": 12,
+                    "url": "https://github.invalid/acme/widgets/pull/12",
+                    "state": "OPEN",
+                    "mergeable": "MERGEABLE",
+                    "mergeStateStatus": "BEHIND",
+                }
+            ],
+        ),
+    ]
+    result = box.run(db, [issue(640), issue(645)], review_issues=review_issues)
+    assert result.returncode == 0, result.stderr
+
+    # Both 640 and 645 dispatched
+    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [640, 645]
+
+    # But proposal 12 was updated and journaled only once
+    updated = events(db, "proposal.updated")
+    assert len(updated) == 1
+    assert updated[0]["payload"]["proposal"] == 12
+
+
+def test_refused_proposal_update_is_journaled_and_fails_no_dispatch(db, box):
+    """AC 3: An update the forge refuses is journaled and fails no dispatch."""
+    review_issues = [
+        issue(
+            630,
+            proposals=[
+                {
+                    "number": 14,
+                    "url": "https://github.invalid/acme/widgets/pull/14",
+                    "state": "OPEN",
+                    "mergeable": "MERGEABLE",
+                    "mergeStateStatus": "BEHIND",
+                }
+            ],
+        ),
+    ]
+    result = box.run(
+        db, [issue(640)], review_issues=review_issues, UPDATE_BRANCH_EXIT="1"
+    )
+    assert result.returncode == 0, result.stderr
+
+    # Dispatch still happened despite update failure
+    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [640]
+
+    # The refusal was journaled as proposal.update-failed
+    failed = events(db, "proposal.update-failed")
+    assert len(failed) == 1
+    assert failed[0]["payload"]["proposal"] == 14
+    assert failed[0]["payload"]["issue"] == 630
+    assert "could not update branch" in failed[0]["payload"]["error"]
+

@@ -270,6 +270,9 @@ BOX_OBSERVED = "box.observed"
 BOX_UNREACHABLE = "box.unreachable"
 GUARDRAIL_OBSERVED = "guardrail.observed"
 GUARDRAIL_UNREADABLE = "guardrail.unreadable"
+PROPOSAL_UPDATED = "proposal.updated"
+PROPOSAL_UPDATE_FAILED = "proposal.update-failed"
+
 
 
 def cycle_started(*, repo, label, allowlist, review_cap, landing,
@@ -390,6 +393,35 @@ def guardrail_observed(*, cycle, ref, ref_head, rules, paths, unreviewed,
 
 def guardrail_unreadable(*, cycle, error):
     return GUARDRAIL_UNREADABLE, {"cycle": cycle, "error": error}
+
+
+def proposal_updated(*, cycle, proposal, url=None, number=None, issue=None):
+    """An open Proposal behind base was brought up to date."""
+    num = number if number is not None else (proposal if isinstance(proposal, int) else None)
+    prop = proposal if proposal is not None else number
+    payload = {"cycle": cycle, "proposal": prop}
+    if num is not None:
+        payload["number"] = num
+    if url is not None:
+        payload["url"] = url
+    if issue is not None:
+        payload["issue"] = issue
+    return PROPOSAL_UPDATED, payload
+
+
+def proposal_update_failed(*, cycle, proposal, error, url=None, number=None, issue=None):
+    """An update the forge refused - journaled and fails no dispatch."""
+    num = number if number is not None else (proposal if isinstance(proposal, int) else None)
+    prop = proposal if proposal is not None else number
+    payload = {"cycle": cycle, "proposal": prop, "error": error}
+    if num is not None:
+        payload["number"] = num
+    if url is not None:
+        payload["url"] = url
+    if issue is not None:
+        payload["issue"] = issue
+    return PROPOSAL_UPDATE_FAILED, payload
+
 
 
 # --- Readers ----------------------------------------------------------------
@@ -847,3 +879,50 @@ def run_outcome_record(row) -> RunOutcome:
         seed=payload.get("seed"), criteria=payload.get("criteria"),
         error=payload.get("error"),
     )
+
+
+@dataclass(frozen=True)
+class ProposalUpdated:
+    id: int | None
+    at: object
+    cycle: int | None
+    proposal: int | str | None
+    url: str | None
+    issue: int | None
+
+
+@dataclass(frozen=True)
+class ProposalUpdateFailed:
+    id: int | None
+    at: object
+    cycle: int | None
+    proposal: int | str | None
+    error: str | None
+    url: str | None
+    issue: int | None
+
+
+def proposal_updated_record(row) -> ProposalUpdated:
+    payload = _payload_of(row, PROPOSAL_UPDATED)
+    return ProposalUpdated(
+        id=row.get("id"),
+        at=row.get("at"),
+        cycle=payload.get("cycle"),
+        proposal=payload.get("proposal"),
+        url=payload.get("url"),
+        issue=payload.get("issue"),
+    )
+
+
+def proposal_update_failed_record(row) -> ProposalUpdateFailed:
+    payload = _payload_of(row, PROPOSAL_UPDATE_FAILED)
+    return ProposalUpdateFailed(
+        id=row.get("id"),
+        at=row.get("at"),
+        cycle=payload.get("cycle"),
+        proposal=payload.get("proposal"),
+        error=payload.get("error"),
+        url=payload.get("url"),
+        issue=payload.get("issue"),
+    )
+

@@ -28,7 +28,11 @@ case "$verb" in
         # Green, so the awaiting-review route is the one a preview cycle takes.
         printf '{"state": "green", "failing": []}\n'
         ;;
+    update-branch)
+        printf 'preview: would have updated branch for %s proposal %s\n' "$repo" "${1:-?}" >&2
+        ;;
     *)
+
         printf 'issue.sh: unknown verb %s\n' "$verb" >&2
         exit 1
         ;;

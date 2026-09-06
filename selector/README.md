@@ -50,6 +50,12 @@ awaiting review. A cap that halts a cycle still lets it reason and journal
 first, so the Journal answers "what would it have picked?" as well as "what
 did it?".
 
+**Proposal freshness** (ADR 0023). During each drain, every open Proposal that
+is behind its base and mergeable is brought up to date via `SELECTOR_ISSUE_COMMAND`
+`update-branch` and journaled once (`proposal.updated`). Conflicting Proposals
+are not updated and are displayed as conflicting on the board. A forge refusal
+is journaled (`proposal.update-failed`) without failing or halting any dispatch.
+
 **Pause.** `/loop` is the flag's only writer. A paused Selector still runs its
 timer, reads the queue, applies Eligibility and journals the cycle; it stops
 before picking or dispatching and writes `halted: paused` on `cycle.finished`.

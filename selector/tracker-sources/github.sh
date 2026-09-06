@@ -101,7 +101,7 @@ query($owner: String!, $name: String!, $label: String!, $cursor: String) {
           nodes { ... on LabeledEvent { createdAt label { name } actor { login } } }
         }
         closedByPullRequestsReferences(first: 20, includeClosedPrs: false) {
-          nodes { number url state isDraft }
+          nodes { number url state isDraft mergeable mergeStateStatus }
         }
       }
     }
@@ -139,8 +139,9 @@ gh api graphql --paginate \
                 ),
                 proposals: [
                     .closedByPullRequestsReferences.nodes[]
-                    | {number, url, state, isDraft}
+                    | {number, url, state, isDraft, mergeable, mergeStateStatus}
                 ]
             }
         ] | sort_by(.number)
     }'
+

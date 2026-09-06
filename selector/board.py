@@ -54,15 +54,38 @@ def _read(config: cycle.Config, label: str, timeout: float):
         return [], str(exc)
 
 
-def _card(record: dict, reason: tuple[str, str] | None) -> dict:
+def _has_conflicting_proposal(record: dict) -> bool:
+    return any(cycle.is_conflicting(p) for p in record.get("proposals") or [])
+
+
+def _conflicting_proposal_reason(record: dict) -> tuple[str, str] | None:
+    for p in record.get("proposals") or []:
+        if cycle.is_conflicting(p):
+            target = f"#{p['number']}" if p.get("number") else (p.get("url") or "proposal")
+            return ("conflicting", f"proposal {target} has merge conflicts with base")
+    return None
+
+
+def _card(
+    record: dict,
+    reason: tuple[str, str] | None = None,
+    *,
+    conflicting: bool | None = None,
+) -> dict:
     """One issue, as a card: what it is, and - when it is not Eligible - the
     reason the Selector would journal for it, in that reason's own words."""
+    is_conflict = (
+        _has_conflicting_proposal(record) if conflicting is None else conflicting
+    )
+    if reason is None and is_conflict:
+        reason = _conflicting_proposal_reason(record)
     return {
         "number": record.get("number"),
         "title": record.get("title"),
         "url": record.get("url"),
         "reason": reason[0] if reason else None,
         "detail": reason[1] if reason else None,
+        "conflicting": is_conflict,
         # Named, not counted. `blockedBy` is the count Eligibility decides on;
         # this is the tracker's list of which issues they are, which is the
         # only form of the answer that lets the reader go and look at one.
@@ -177,6 +200,8 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
         if r.get("number") not in placed
         and r.get("number") not in {c.get("number") for c in review}
     ]
+    review_cards = [_card(r) for r in review]
+    human_cards = [_card(r) for r in human]
     return {
         # The Journal's half was missing, so the two columns it decides -
         # eligible and blocked - are a reading of the tracker alone. Said on
@@ -206,11 +231,11 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
             _column("awaiting-review", config.review_label,
                     config.review_label,
                     "a green Proposal is open and waiting on you",
-                    review, review_error),
+                    review_cards, review_error),
             _column("ready-for-human", config.human_label,
                     config.human_label,
                     "the Selector gave up or the checks went red; it will not"
                     " be picked again under this Handover",
-                    human, human_error),
+                    human_cards, human_error),
         ],
     }

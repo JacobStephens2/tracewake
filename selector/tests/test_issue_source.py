@@ -333,3 +333,37 @@ def test_a_refused_proposal_read_is_loud(run):
     assert done.returncode == 1
     assert "could not resolve" in done.stderr.lower()
     assert not done.stdout
+
+
+# --- update-branch ----------------------------------------------------------
+
+def test_update_branch_accepts_a_proposal_url(run):
+    done = run("update-branch", PROPOSAL_URL)
+    assert done.returncode == 0, done.stderr
+    assert f"pr update-branch {PROPOSAL_URL} --repo {REPO}" in done.gh_argv
+
+
+def test_update_branch_accepts_a_bare_number(run):
+    done = run("update-branch", "713")
+    assert done.returncode == 0, done.stderr
+    assert f"pr update-branch 713 --repo {REPO}" in done.gh_argv
+
+
+def test_update_branch_refuses_invalid_proposal_format(run):
+    done = run("update-branch", "loop/712-the-spelling")
+    assert done.returncode == 1
+    assert "proposal" in done.stderr.lower()
+    assert not done.gh_argv
+
+
+def test_update_branch_refuses_foreign_repo_url(run):
+    done = run("update-branch", "https://github.com/someone/else/pull/1")
+    assert done.returncode == 1
+    assert not done.gh_argv
+
+
+def test_update_branch_fails_when_gh_refuses(run):
+    done = run("update-branch", "713", pr_rc=1, gh_err="GitHub refused update-branch")
+    assert done.returncode == 1
+    assert "refused" in done.stderr.lower()
+

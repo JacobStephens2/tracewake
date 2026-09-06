@@ -199,6 +199,21 @@
 .board .column[data-column="awaiting-review"] .card {
   border-left-color: var(--primary-color);
 }
+.board .column[data-column="awaiting-review"] .card.card-conflicting,
+.board .card.card-conflicting {
+  border-left-color: var(--error-color);
+}
+.board .card .badge {
+  font-size: 0.8em;
+  border: 1px solid currentColor;
+  padding: 0 0.4em;
+  vertical-align: middle;
+  margin-left: 0.3rem;
+}
+.board .card .badge-conflicting {
+  border-color: var(--error-color);
+  color: var(--error-color);
+}
 .board .column[data-column="ready-for-human"] .card {
   border-left-color: var(--error-color);
 }

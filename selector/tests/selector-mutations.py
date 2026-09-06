@@ -792,9 +792,13 @@ MUTATIONS = {
     # resolves the repository from the URL and ignores --repo - can be made to
     # answer about somebody else's pull request as though it were this Run's.
     "a-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        'if [[ ${action} == checks ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
         '        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||\n'
         '            die "the proposal ${number} is not in ${task_repo}"\n',
-        "",
+        'if [[ ${action} == checks ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
+        '        :\n',
     ),
     # "No workflow run ran" becomes "every check passed", which is the false
     # pass a broken workflow file or a disabled Actions produces - routed to
@@ -1150,6 +1154,63 @@ MUTATIONS = {
     "local-assert-script-executable-not-enforced": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
         '[[ -x "${assert_script}" ]] || die "assert-credentials.sh not executable or not found at ${assert_script}"\n',
         '[[ -f "${assert_script}" ]] || die "assert-credentials.sh not executable or not found at ${assert_script}"\n',
+    ),
+    # Freshness: open proposals behind their base are not updated during a drain.
+    "proposal-behind-not-updated": (CYCLE, UNATTENDED_SUITE,
+        "        if not dry_run:\n"
+        "            update_proposals_freshness(\n"
+        "                conn,\n"
+        "                cycle_id,\n"
+        "                config,\n"
+        "                dispatch_config,\n"
+        "                queue + (review or []),\n"
+        "                updated=updated_proposals,\n"
+        "                failed=failed_proposals,\n"
+        "            )\n",
+        "        pass\n",
+    ),
+    # Freshness: conflicting proposals are erroneously updated.
+    "conflicting-proposal-updated": (CYCLE, UNATTENDED_SUITE,
+        "    if is_conflicting(proposal):\n        return False\n",
+        "    if False:\n        return False\n",
+    ),
+    # Freshness: forge refusal of proposal update halts drain instead of journaling and continuing.
+    "refused-proposal-update-halts-drain": (CYCLE, UNATTENDED_SUITE,
+        "            except dispatch.DispatchFailed as exc:\n"
+        "                journal.append(\n"
+        "                    conn,\n"
+        "                    *events.proposal_update_failed(\n",
+        "            except ValueError as exc:\n"
+        "                journal.append(\n"
+        "                    conn,\n"
+        "                    *events.proposal_update_failed(\n",
+    ),
+    # Freshness: conflicting proposals are hidden rather than marked on the board.
+    "proposal-conflicts-hidden-on-board": (BOARD, BOARD_SUITE,
+        "    is_conflict = (\n"
+        "        _has_conflicting_proposal(record) if conflicting is None else conflicting\n"
+        "    )\n",
+        "    is_conflict = False\n",
+    ),
+    # Freshness: update-branch verb in issue source is disabled.
+    "update-branch-verb-unsupported": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        '    update-branch)\n'
+        '        gh pr update-branch "${number}" --repo "${task_repo}" >/dev/null ||\n'
+        '            die "GitHub refused update-branch on ${task_repo} proposal ${number}"\n'
+        '        ;;\n',
+        '    update-branch)\n'
+        '        die "update-branch is unsupported"\n'
+        '        ;;\n',
+    ),
+    # Freshness: foreign proposal URL in update-branch is accepted.
+    "update-branch-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        'elif [[ ${action} == update-branch ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
+        '        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||\n'
+        '            die "the proposal ${number} is not in ${task_repo}"\n',
+        'elif [[ ${action} == update-branch ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
+        '        :\n',
     ),
 }
 
