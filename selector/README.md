@@ -1160,9 +1160,9 @@ dispatch is the right floor because every other row of a Run is written after
 it. What falls below the window is counted and said on the page, not dropped:
 `psql -d selector` still has all of it.
 
-The two pages share `_runs.html` (the Run card), `_budget.html` (the budget
-cell) and `terminal_base.html` (the shell and the stream script), and differ
-in the `runs` list they pass in and the region each re-fetches -
+The two pages share `_runs.html` (the Run card) and `terminal_base.html`
+(the shell and the stream script), and differ in the `runs` list they pass in
+and the region each re-fetches -
 `/loop/history/live` rather than `/loop/live`, because a history page pointed
 at the other one would swap in a queue board it never rendered and reach the
 tracker to build it. `web/tests/test_run_history.py` is the suite;

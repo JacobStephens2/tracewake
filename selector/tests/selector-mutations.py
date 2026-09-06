@@ -652,9 +652,9 @@ MUTATIONS = {
     # down whenever GitHub does, and takes a queue board it never asked for
     # with it.
     "the-history-reads-the-tracker": (WINDOW, HISTORY_SUITE,
-        "    (events, older), spend, error = _read_journal(_history_rows, empty)",
+        "    (events, older), _, error = _read_journal(_history_rows, empty)",
         "    return _loop_context(request)\n"
-        "    (events, older), spend, error = _read_journal(_history_rows, empty)",
+        "    (events, older), _, error = _read_journal(_history_rows, empty)",
     ),
     # The Run in flight is filed as history: a card with no bound, no duration
     # and no Proposal, shown as though the Run had ended.
