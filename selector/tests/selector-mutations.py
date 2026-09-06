@@ -30,6 +30,8 @@ OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
 WATCHER_SUITE = "tests/test_watcher.py"
 BOARD_SUITE = "../web/tests/test_queue_board.py"
+CYCLE_SERVICE = "../deploy/systemd/tracewake-selector-cycle.service"
+CONTROLLER_UNITS_SUITE = "tests/test_controller_units.py"
 
 # The write protection over the executed paths (#165). Two targets, because
 # the guardrail is two things: the command that reads the forge and the tree,
@@ -255,10 +257,10 @@ MUTATIONS = {
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
     "every-dispatch-is-the-first": (CYCLE, DISPATCH_SUITE,
-        '        attempt = cycle_spend.attempts(\n'
-        '            pick["number"], picked_record.get("labeledAt")\n'
-        '        ) + 1',
-        "        attempt = 1",
+        '            attempt = cycle_spend.attempts(\n'
+        '                pick["number"], picked_record.get("labeledAt")\n'
+        '            ) + 1',
+        "            attempt = 1",
     ),
     # A Run that ended on a bound is reported as a dispatch failure, so the
     # Termination Contract working pages the operator every time.
@@ -409,8 +411,8 @@ MUTATIONS = {
     # tracker and nothing else is what makes it safe to run against
     # production from a keyboard.
     "a-dry-run-reaches-the-box": (CYCLE, UNATTENDED_SUITE,
-        "    if not dry_run:\n        facts, box_error = observe_box(config)",
-        "    if True:\n        facts, box_error = observe_box(config)",
+        "        if not dry_run:\n            facts, box_error = observe_box(config)",
+        "        if True:\n            facts, box_error = observe_box(config)",
     ),
     # The owning area stops falling back to the issue title, so every issue
     # without the section - which is most of them, and is why the requirement
@@ -531,8 +533,23 @@ MUTATIONS = {
     # The page says dispatch is paused, but the next cycle ignores the flag
     # and starts a Run anyway.
     "the-pause-flag-is-ignored": (CYCLE, UNATTENDED_SUITE,
-        "    if control.is_paused(conn):",
-        "    if False:",
+        "        if control.is_paused(conn):",
+        "        if False:",
+    ),
+    # A Cycle stops after one dispatch rather than draining the queue.
+    "cycle-stops-after-one-dispatch": (CYCLE, UNATTENDED_SUITE,
+        "            dispatches.append(pick[\"number\"])",
+        "            dispatches.append(pick[\"number\"])\n            break",
+    ),
+    # Pause is only honoured before the first dispatch, not between runs.
+    "pause-not-checked-between-runs": (CYCLE, UNATTENDED_SUITE,
+        "        if control.is_paused(conn):",
+        "        if control.is_paused(conn) and not dispatches:",
+    ),
+    # The systemd unit reverts to bounded start timeout rather than infinity.
+    "cycle-unit-timeout-not-infinite": (CYCLE_SERVICE, CONTROLLER_UNITS_SUITE,
+        "TimeoutStartSec=infinity",
+        "TimeoutStartSec=8100",
     ),
     # Clicking Pause writes `false`, so the response quietly returns the
     # ordinary active page and the operator believes a control did nothing.
@@ -707,10 +724,10 @@ MUTATIONS = {
     # tree, on the mode whose property is that it reaches the tracker and
     # nothing else.
     "a-dry-run-reads-the-guardrail": (CYCLE, GUARDRAIL_SUITE,
-        "        guardrail, guardrail_error = observe_guardrail(config)",
-        "        guardrail, guardrail_error = observe_guardrail(config)\n"
-        "    if dry_run:\n"
-        "        guardrail, guardrail_error = observe_guardrail(config)",
+        "            guardrail, guardrail_error = observe_guardrail(config)",
+        "            guardrail, guardrail_error = observe_guardrail(config)\n"
+        "        if dry_run:\n"
+        "            guardrail, guardrail_error = observe_guardrail(config)",
     ),
     # The second half of the pair above: the same break, checked by the suite
     # that watches the guardrail rather than the one that watches the box.
@@ -952,8 +969,8 @@ MUTATIONS = {
     # A shipping module spells a kind by hand again - behavior identical, and
     # only the sweep can notice, which is what the sweep is for.
     "a-kind-spelled-outside-the-vocabulary": (CYCLE, EVENTS_SUITE,
-        "journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n        raise\n",
-        'journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n        raise\n',
+        "            journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n            raise\n",
+        '            journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n            raise\n',
     ),
     # The staging fixture drifts from the writer - a key today's writer always
     # journals goes missing from a seeded row, the state a preview would

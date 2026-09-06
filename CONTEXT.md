@@ -103,11 +103,11 @@ _Avoid_: scheduler, dispatcher, intake
 
 **Cycle**:
 One execution of the Selector: read the tracker, apply Eligibility to the whole
-labeled queue, order, apply the caps, journal the reasoning, and dispatch at
-most one Run. The timer's unit of work, and the Journal's unit of grouping -
-every event of one Cycle carries its id. It is emphatically not an Iteration,
-which is why "cycle" is a word the Iteration entry above tells you to avoid:
-a Cycle chooses work and an Iteration does it.
+labeled queue, order, apply the caps, journal the reasoning, and dispatch serial
+Runs until nothing is Eligible, a cap holds, or the operator has paused. The timer's
+unit of work, and the Journal's unit of grouping - every event of one Cycle carries
+its id. It is emphatically not an Iteration, which is why "cycle" is a word the
+Iteration entry above tells you to avoid: a Cycle chooses work and an Iteration does it.
 _Avoid_: tick, sweep, poll, pass
 
 **Dispatch**:
@@ -282,7 +282,7 @@ _Avoid_: protected file, the code, the scripts
 The check that the Executed Paths cannot change without a review, and the chip on
 `/loop` that reports it. Two halves, because either alone can be green over
 unreviewed code: the rules GitHub holds over the ref those paths are deployed
-from, and whether the deployed tree still matches that ref. Read once per Cycle
+from, and whether the deployed tree still matches that ref. Read before each Dispatch
 and journaled; unknown is never green. It reports, and does not gate Dispatch.
 _Avoid_: branch protection, the ruleset (one half of it), lock
 

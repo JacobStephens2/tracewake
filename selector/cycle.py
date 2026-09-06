@@ -1210,150 +1210,181 @@ def run_cycle(
             dry_run=dry_run,
         ),
     )
-    # Before the queue, and long before the dispatch that holds the process
-    # for the length of a Run. A box card read after the Run would go stale
-    # for exactly the ninety minutes the page is most worth looking at.
-    #
-    # Not in a dry run: a dry run reaches the tracker and nothing else, and
-    # that property is worth more than a status card on a cycle that changed
-    # nothing.
-    if not dry_run:
-        facts, box_error = observe_box(config)
-        journal.append(
-            conn,
-            *(
-                events.box_observed(cycle=cycle_id, **facts)
-                if facts
-                else events.box_unreachable(cycle=cycle_id, error=box_error)
-            ),
-        )
-        # The other half of the same claim (#165): the box card says what is
-        # RUNNING, and this says whether it could have got there without a
-        # review. Read here for the same reasons - once per cycle rather than
-        # per page view, and not in a dry run, which reaches the tracker and
-        # nothing else.
-        guardrail, guardrail_error = observe_guardrail(config)
-        journal.append(
-            conn,
-            *(
-                events.guardrail_observed(cycle=cycle_id, **guardrail)
-                if guardrail
-                else events.guardrail_unreadable(
-                    cycle=cycle_id, error=guardrail_error
+    dispatches: list[int] = []
+    outcomes: list[dict] = []
+    routes: list[str] = []
+    skipped: dict[str, int] = {}
+    skipped_numbers: set[int] = set()
+    returned: list[int] = []
+    return_failures: int = 0
+    first_considered: int | None = None
+    last_eligible: list[int] = []
+    first_pick: dict | None = None
+    halted: str | None = None
+    last_spend: Spend | None = None
+
+    while True:
+        try:
+            queue = fetch_queue(config)
+        except CycleFailed as exc:
+            journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
+            raise
+
+        if first_considered is None:
+            first_considered = len(queue)
+
+        cycle_spend = spend(conn)
+        last_spend = cycle_spend
+        eligible: list[dict] = []
+        for record in queue:
+            number = int(record["number"])
+            if number in dispatches:
+                continue
+            verdict = eligibility(
+                record, config, cycle_spend.attempts(number, record.get("labeledAt"))
+            )
+            if verdict is None:
+                eligible.append(record)
+                continue
+            reason, detail = verdict
+            if number not in skipped_numbers:
+                skipped_numbers.add(number)
+                skipped[reason] = skipped.get(reason, 0) + 1
+                journal.append(
+                    conn,
+                    *events.issue_skipped(
+                        cycle=cycle_id,
+                        number=number,
+                        title=record.get("title"),
+                        url=record.get("url"),
+                        reason=reason,
+                        detail=detail,
+                    ),
                 )
-            ),
-        )
+                # The loud skip. Independent of the caps and of the pick: returning an
+                # underspecified issue is handing work back to the operator, not
+                # spending a Run, and an issue the Selector will never seed should not
+                # wait for a free budget to be told so.
+                if reason == "missing-section" and not dry_run:
+                    if _return_to_operator(
+                        conn, cycle_id, config, dispatch_config, record, detail
+                    ):
+                        returned.append(number)
+                    else:
+                        return_failures += 1
 
-    try:
-        queue = fetch_queue(config)
-    except CycleFailed as exc:
-        journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
-        raise
+        last_eligible = [int(r["number"]) for r in eligible]
 
-    cycle_spend = spend(conn)
-    eligible, skipped = [], {}
-    returned, return_failures = [], 0
-    for record in queue:
-        number = int(record["number"])
-        verdict = eligibility(
-            record, config, cycle_spend.attempts(number, record.get("labeledAt"))
-        )
-        if verdict is None:
-            eligible.append(record)
-            continue
-        reason, detail = verdict
-        skipped[reason] = skipped.get(reason, 0) + 1
-        journal.append(
-            conn,
-            *events.issue_skipped(
-                cycle=cycle_id,
-                number=number,
-                title=record.get("title"),
-                url=record.get("url"),
-                reason=reason,
-                detail=detail,
-            ),
-        )
-        # The loud skip. Independent of the caps and of the pick: returning an
-        # underspecified issue is handing work back to the operator, not
-        # spending a Run, and an issue the Selector will never seed should not
-        # wait for a free budget to be told so.
-        if reason == "missing-section" and not dry_run:
-            if _return_to_operator(
-                conn, cycle_id, config, dispatch_config, record, detail
-            ):
-                returned.append(number)
-            else:
-                return_failures += 1
+        pick = None
+        if control.is_paused(conn):
+            # The timer keeps running while paused. It still reads the queue and
+            # journals Eligibility so the page remains an explanation of what
+            # would have happened; only the Dispatch is stopped.
+            halted = "paused"
+            break
+        elif not queue:
+            halted = "queue-empty"
+            break
+        elif cycle_spend.in_flight:
+            halted = "run-in-flight"
+            break
+        elif cycle_spend.recent_dispatches >= config.daily_cap:
+            halted = "daily-cap-reached"
+            break
+        elif not eligible:
+            halted = "none-eligible"
+            break
+        else:
+            # Lowest first: deterministic and explainable, and it works a
+            # dependency chain bottom-up because the chain was numbered that way.
+            picked_record = eligible[0]
+            body_sections = sections(picked_record.get("body") or "")
+            check = body_sections.get("check", "")
+            pick = {
+                "cycle": cycle_id,
+                "number": int(picked_record["number"]),
+                "title": picked_record.get("title"),
+                "url": picked_record.get("url"),
+                "area": _area(picked_record, body_sections),
+                "check": _check_command(check) or None,
+            }
+            journal.append(conn, *events.cycle_picked(**pick))
+            if first_pick is None:
+                first_pick = pick
 
-    halted, pick, picked_record = None, None, None
-    if control.is_paused(conn):
-        # The timer keeps running while paused. It still reads the queue and
-        # journals Eligibility so the page remains an explanation of what
-        # would have happened; only the Dispatch is stopped.
-        halted = "paused"
-    elif not queue:
-        halted = "queue-empty"
-    elif cycle_spend.in_flight:
-        halted = "run-in-flight"
-    elif cycle_spend.recent_dispatches >= config.daily_cap:
-        halted = "daily-cap-reached"
-    elif not eligible:
-        halted = "none-eligible"
-    else:
-        # Lowest first: deterministic and explainable, and it works a
-        # dependency chain bottom-up because the chain was numbered that way.
-        picked_record = eligible[0]
-        body_sections = sections(picked_record.get("body") or "")
-        check = body_sections.get("check", "")
-        pick = {
-            "cycle": cycle_id,
-            "number": int(picked_record["number"]),
-            "title": picked_record.get("title"),
-            "url": picked_record.get("url"),
-            "area": _area(picked_record, body_sections),
-            "check": _check_command(check) or None,
-        }
-        journal.append(conn, *events.cycle_picked(**pick))
+        # Before each dispatch: read box facts and guardrail.
+        # Not in a dry run: a dry run reaches the tracker and nothing else, and
+        # that property is worth more than a status card on a cycle that changed
+        # nothing.
+        if not dry_run:
+            facts, box_error = observe_box(config)
+            journal.append(
+                conn,
+                *(
+                    events.box_observed(cycle=cycle_id, **facts)
+                    if facts
+                    else events.box_unreachable(cycle=cycle_id, error=box_error)
+                ),
+            )
+            # The other half of the same claim (#165): the box card says what is
+            # RUNNING, and this says whether it could have got there without a
+            # review. Read before each dispatch rather than once per cycle, and
+            # not in a dry run, which reaches the tracker and nothing else.
+            guardrail, guardrail_error = observe_guardrail(config)
+            journal.append(
+                conn,
+                *(
+                    events.guardrail_observed(cycle=cycle_id, **guardrail)
+                    if guardrail
+                    else events.guardrail_unreadable(
+                        cycle=cycle_id, error=guardrail_error
+                    )
+                ),
+            )
+
+        if pick and not dry_run:
+            attempt = cycle_spend.attempts(
+                pick["number"], picked_record.get("labeledAt")
+            ) + 1
+            outcome = _dispatch_pick(
+                conn, cycle_id, config, dispatch_config, pick, attempt,
+            )
+            outcomes.append(outcome)
+            # Routing is separate from dispatching, and after it, because the two
+            # answer different questions: `_dispatch_pick` records what the Run
+            # did, and this decides what that means for the issue. Keeping the
+            # outcome row unconditional is what stops a label swap GitHub refused
+            # from erasing the Journal's record that a Run ever ran.
+            route = _route(
+                conn, cycle_id, config, dispatch_config, pick,
+                outcome, attempt,
+            )
+            routes.append(route)
+            dispatches.append(pick["number"])
+
+        if dry_run or not pick:
+            break
 
     summary = {
         "cycle": cycle_id,
-        "considered": len(queue),
-        "eligible": [int(r["number"]) for r in eligible],
+        "considered": first_considered if first_considered is not None else 0,
+        "eligible": last_eligible,
         "skipped": skipped,
-        "picked": pick["number"] if pick else None,
+        "picked": dispatches[0] if dispatches else (first_pick["number"] if first_pick else None),
+        "dispatches": dispatches,
         "halted": halted,
-        "in_flight": cycle_spend.in_flight,
-        "dispatched_in_window": cycle_spend.recent_dispatches,
+        "in_flight": last_spend.in_flight if last_spend else None,
+        "dispatched_in_window": last_spend.recent_dispatches if last_spend else 0,
         "daily_cap": config.daily_cap,
         "returned": returned,
         "dry_run": dry_run,
     }
-    # Journaled before the dispatch rather than after it. A dispatch holds the
-    # process for as long as the Run lasts, and a cycle card that only
-    # appeared once the Run had finished would leave the page with no record
-    # of the decision that started it for ninety minutes.
+    # One cycle summary per drain names every dispatch and the reason it stopped.
     journal.append(conn, *events.cycle_finished(**summary))
 
     summary["return_failures"] = return_failures
-    summary["outcome"] = None
-    summary["route"] = None
-    if pick and not dry_run:
-        attempt = cycle_spend.attempts(
-            pick["number"], picked_record.get("labeledAt")
-        ) + 1
-        summary["outcome"] = _dispatch_pick(
-            conn, cycle_id, config, dispatch_config, pick, attempt,
-        )
-        # Routing is separate from dispatching, and after it, because the two
-        # answer different questions: `_dispatch_pick` records what the Run
-        # did, and this decides what that means for the issue. Keeping the
-        # outcome row unconditional is what stops a label swap GitHub refused
-        # from erasing the Journal's record that a Run ever ran.
-        summary["route"] = _route(
-            conn, cycle_id, config, dispatch_config, pick,
-            summary["outcome"], attempt,
-        )
+    summary["outcome"] = outcomes[-1] if outcomes else None
+    summary["route"] = routes[-1] if routes else None
     return summary
 
 
@@ -1366,7 +1397,9 @@ def _report(summary: dict) -> None:
         print(f"returned     {summary['returned']} (commented, swapped to needs-info)")
     if summary.get("return_failures"):
         print(f"  FAILED     {summary['return_failures']} issue(s) could not be returned")
-    if summary["picked"]:
+    if summary.get("dispatches"):
+        print(f"dispatches   {', '.join(f'#{n}' for n in summary['dispatches'])}")
+    elif summary["picked"]:
         suffix = " (dry run - not dispatched)" if summary["dry_run"] else ""
         print(f"pick         #{summary['picked']}{suffix}")
     else:

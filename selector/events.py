@@ -304,15 +304,21 @@ def cycle_picked(*, cycle, number, title, url, area, check):
     }
 
 
-def cycle_finished(*, cycle, considered, eligible, skipped, picked, halted,
-                   in_flight, dispatched_in_window, daily_cap, returned,
-                   dry_run):
-    """The cycle summary: what was read, what survived, and - when `halted`
-    names a cap or the pause - why nothing was dispatched."""
+def cycle_finished(*, cycle, considered, eligible, skipped, picked=None,
+                   dispatches=None, halted, in_flight, dispatched_in_window,
+                   daily_cap, returned, dry_run):
+    """The cycle summary: what was read, what survived, every dispatch made,
+    and - when `halted` names a cap or the pause - why nothing more was
+    dispatched."""
+    if dispatches is None:
+        dispatches = [picked] if picked is not None else []
+    elif picked is None and dispatches:
+        picked = dispatches[0]
     return CYCLE_FINISHED, {
         "cycle": cycle, "considered": considered, "eligible": eligible,
-        "skipped": skipped, "picked": picked, "halted": halted,
-        "in_flight": in_flight, "dispatched_in_window": dispatched_in_window,
+        "skipped": skipped, "picked": picked, "dispatches": dispatches,
+        "halted": halted, "in_flight": in_flight,
+        "dispatched_in_window": dispatched_in_window,
         "daily_cap": daily_cap, "returned": returned, "dry_run": dry_run,
     }
 
@@ -467,10 +473,15 @@ class CycleSummary:
     daily_cap: int | None
     returned: object
     dry_run: object
+    dispatches: list[int] | None = None
 
 
 def cycle_finished_record(row) -> CycleSummary:
     payload = _payload_of(row, CYCLE_FINISHED)
+    dispatches = payload.get("dispatches")
+    if dispatches is None:
+        picked = payload.get("picked")
+        dispatches = [picked] if picked is not None else []
     return CycleSummary(
         id=row.get("id"), at=row.get("at"), cycle=payload.get("cycle"),
         considered=payload.get("considered"), eligible=payload.get("eligible"),
@@ -479,6 +490,7 @@ def cycle_finished_record(row) -> CycleSummary:
         dispatched_in_window=payload.get("dispatched_in_window"),
         daily_cap=payload.get("daily_cap"), returned=payload.get("returned"),
         dry_run=payload.get("dry_run"),
+        dispatches=dispatches,
     )
 
 
