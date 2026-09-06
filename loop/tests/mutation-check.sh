@@ -31,6 +31,7 @@ subjects=(
     "propose.sh|tests/propose.bats|tests/propose-mutations.py"
     "pr-sources/github.sh|tests/pr-source.bats|tests/pr-mutations.py"
     "notify-sources/github-pr-comment.sh|tests/notify-source.bats|tests/notify-mutations.py"
+    "boundary-harness.sh|tests/boundary.bats|tests/boundary-harness-mutations.py"
     "agents/claude.sh|tests/boundary.bats|tests/boundary-mutations.py"
     "agents/grok.sh|tests/boundary-grok.bats|tests/boundary-grok-mutations.py"
 )

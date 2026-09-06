@@ -55,19 +55,25 @@
 
 # --- The agent -------------------------------------------------------------
 #
-# ADR 0004: the agent is one substitutable command. Its contract is two
-# positional arguments - a file holding a single-turn prompt, and a turn bound -
-# executed with the repository as its working directory, exiting non-zero on
+# ADR 0004: the agent is one substitutable command. Its contract is declared in
+# one place by boundary-harness.sh (ADR 0024):
+#   <adapter> <prompt-file> <max-turns>  one Iteration inside the boundary
+#   <adapter> --metered-env-names        one name per line
+#   <adapter> --guest-template           the image the boundary is built from
+#   <adapter> --credential-expiry        when the credential expires (ISO 8601 UTC)
+#
+# Executed with the repository as its working directory, exiting non-zero on
 # failure. Changing vendor is changing this one line, which is also why the
 # offline suite can point it at a scripted fake and drive the real Run.
 #
-# One query is part of that contract as well: `--metered-env-names` prints, one
-# per line, every environment variable name that would supersede the agent's
-# subscription and move billing to a metered key. run.sh refuses to start a Run
-# while one of them is set, and assert-credentials.sh grades the box against the
-# union of what every adapter answers. It is a query rather than a declaration
-# here because the names are the vendor's and this file is not allowed to know
-# one (#84).
+# Queries are part of that contract as well: `--metered-env-names` prints every
+# environment variable name that would supersede the agent's subscription and
+# move billing to a metered key; run.sh refuses to start a Run while one is set,
+# and assert-credentials.sh grades the box against the union of what every adapter
+# answers. `--guest-template` is read by the Selector's box card (#156), and
+# `--credential-expiry` reports credential lifetime. Queries live in the adapter
+# contract because the facts are the vendor's and this file is not allowed to
+# know them (#84).
 : "${LOOP_AGENT_COMMAND:=}"
 
 # The exit status an agent command uses to say THE TURN BOUND FIRED, as opposed

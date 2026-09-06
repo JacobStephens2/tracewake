@@ -521,9 +521,11 @@ publish_upstream() {
     copy="${BATS_TEST_TMPDIR}/copy"
     mkdir -p "${copy}/agents"
     cp "${LOOP_SRC}"/agents/*.sh "${copy}/agents/"
-    # The Contract too: an adapter sources it, and an adapter that cannot start
-    # answers nothing - which would make this test pass on the wrong adapter.
+    # The Contract and Harness too: an adapter sources them, and an adapter
+    # that cannot start answers nothing - which would make this test pass on the
+    # wrong adapter.
     cp "${LOOP_SRC}/contract.sh" "${copy}/contract.sh"
+    cp "${LOOP_SRC}/boundary-harness.sh" "${copy}/boundary-harness.sh"
     cp "${ASSERT}" "${copy}/assert-credentials.sh"
     printf '#!/usr/bin/env bash\nexit 0\n' >"${copy}/agents/silent.sh"
     chmod +x "${copy}/agents/silent.sh"

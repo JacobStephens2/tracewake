@@ -369,6 +369,18 @@ calls() {
     [[ "$output" == *"<prompt-file> <max-turns>"* ]]
 }
 
+@test "the adapter answers the guest template it declares" {
+    run "${AGENT}" --guest-template
+    [ "$status" -eq 0 ]
+    [ "$output" = "shell" ]
+}
+
+@test "an adapter with no credential clock answers nothing to --credential-expiry" {
+    run "${AGENT}" --credential-expiry
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
 @test "the swap is one line: nothing but the default names an adapter" {
     # Comments are excluded - run.sh and contract.sh both record what the first
     # Run learned about Claude Code, and that history is worth keeping. What
