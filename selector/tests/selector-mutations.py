@@ -792,9 +792,13 @@ MUTATIONS = {
     # resolves the repository from the URL and ignores --repo - can be made to
     # answer about somebody else's pull request as though it were this Run's.
     "a-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        'if [[ ${action} == checks ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
         '        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||\n'
         '            die "the proposal ${number} is not in ${task_repo}"\n',
-        "",
+        'if [[ ${action} == checks ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
+        '        :\n',
     ),
     # "No workflow run ran" becomes "every check passed", which is the false
     # pass a broken workflow file or a disabled Actions produces - routed to
@@ -1197,6 +1201,16 @@ MUTATIONS = {
         '    update-branch)\n'
         '        die "update-branch is unsupported"\n'
         '        ;;\n',
+    ),
+    # Freshness: foreign proposal URL in update-branch is accepted.
+    "update-branch-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,
+        'elif [[ ${action} == update-branch ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
+        '        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||\n'
+        '            die "the proposal ${number} is not in ${task_repo}"\n',
+        'elif [[ ${action} == update-branch ]]; then\n'
+        '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
+        '        :\n',
     ),
 }
 
