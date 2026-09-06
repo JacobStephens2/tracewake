@@ -88,15 +88,16 @@ def fakes(tmp_path):
     tracker = tmp_path / "tracker.sh"
     tracker.write_text(
         "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
         f'if [[ ! -f "{tmp_path}/tracker.args" ]]; then\n'
         f'    printf "%s %s\\n" "$1" "$2" > "{tmp_path}/tracker.args"\n'
         f'fi\n'
         f'printf "%s %s\\n" "$1" "$2" >> "{tmp_path}/tracker.log"\n'
-        f'queue="{tmp_path}/queue-$2.json"\n'
+        f'queue="{tmp_path}/queue-${{2}}.json"\n'
         f'if [[ -f "${{queue}}" ]]; then\n'
         f'    exec cat "${{queue}}"\n'
         f'fi\n'
-        f'if [[ "$2" != "awaiting-review" ]]; then\n'
+        f'if [[ "${{2}}" != "awaiting-review" ]]; then\n'
         f'    exec cat "{queue_file}"\n'
         f'fi\n'
         f'printf \'{{"issues": []}}\\n\'\n'
@@ -508,12 +509,13 @@ if add_label:
     '''))
 
     tracker = _script(tmp_path / "tracker.sh", fill('''
+        set -euo pipefail
         queue_dir="$(dirname "@QUEUE@")"
-        labeled="${queue_dir}/queue-$2.json"
+        labeled="${queue_dir}/queue-${2}.json"
         if [[ -f "${labeled}" ]]; then
             exec cat "${labeled}"
         fi
-        if [[ "$2" != "awaiting-review" ]]; then
+        if [[ "${2}" != "awaiting-review" ]]; then
             exec cat "@QUEUE@"
         fi
         printf '{"issues": []}\n'

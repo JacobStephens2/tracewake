@@ -1,4 +1,4 @@
-"""Run history and the budget (#160), at HTTP level over a seeded Journal.
+"""Run history (#160), at HTTP level over a seeded Journal.
 
 The history is the half of /loop that owes nothing to GitHub. Every Run it
 shows is read back from rows the Selector wrote, which is what makes it
@@ -73,7 +73,7 @@ def test_the_history_renders_from_the_journal_alone(db, tracker):
         _run(conn)
     resp = client.get("/loop/history")
     assert resp.status_code == 200
-    assert tracker.labels_asked() == ["awaiting-review"]
+    assert tracker.labels_asked() == []
     body = history(resp.text)
     assert "Widen the sync window" in body
     assert "iteration-cap" in body
@@ -246,7 +246,7 @@ def test_the_history_fragment_and_page_render_the_same_panels(db):
         _run(conn)
     page = client.get("/loop/history").text
     fragment = client.get("/loop/history/live").text
-    for panel in ("review capacity", "Runs that have ended", "1h 0m"):
+    for panel in ("Runs that have ended", "1h 0m"):
         assert panel in page, panel
         assert panel in fragment, panel
 
@@ -296,7 +296,7 @@ def budget(body):
 
 def test_the_budget_tile_shows_review_capacity_remaining(tracker):
     tracker.queue("awaiting-review", [tracker.issue(640), tracker.issue(641)])
-    cell = budget(client.get("/loop/history").text)
+    cell = budget(client.get("/loop").text)
     assert "18 remaining" in cell
     assert "2 of 20" in cell
     assert "awaiting review" in cell
@@ -304,7 +304,7 @@ def test_the_budget_tile_shows_review_capacity_remaining(tracker):
 
 def test_a_spent_budget_reads_as_zero_remaining(tracker):
     tracker.queue("awaiting-review", [tracker.issue(i) for i in range(20)])
-    cell = budget(client.get("/loop/history").text)
+    cell = budget(client.get("/loop").text)
     assert "0 remaining" in cell
     assert "20 of 20" in cell
 
@@ -313,13 +313,6 @@ def test_the_budget_is_unknown_rather_than_full_when_the_tracker_is_down(tracker
     """The direction that matters. An unreadable tracker defaulting to '20
     remaining' would be the page inventing capacity it cannot see."""
     tracker.fail("gh: could not resolve host github.com")
-    cell = budget(client.get("/loop/history").text)
+    cell = budget(client.get("/loop").text)
     assert "unknown" in cell
     assert "the tracker could not be read." in cell
-
-
-def test_the_loop_strip_shows_the_same_remaining_count(tracker):
-    """One budget, rendered twice. Both pages include the same partial, so
-    they cannot drift into two answers."""
-    tracker.queue("awaiting-review", [tracker.issue(640)])
-    assert "19 remaining" in budget(client.get("/loop").text)

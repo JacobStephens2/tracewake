@@ -1,4 +1,4 @@
-{# The history's live region (#160): the budget, and every Run that has ended.
+{# The history's live region (#160): every Run that has ended.
 
    Everything here comes from the Journal, so unlike /loop's region there is
    nothing on it that a tracker outage can empty. Same swap mechanism as
@@ -12,10 +12,6 @@
     {% if error %}
     <p class="terminal-alert terminal-alert-error">{{ error }}</p>
     {% endif %}
-
-    <section class="strip">
-{% include "_budget.html" %}
-    </section>
 
     <h2>Runs that have ended</h2>
     <p>One card per Run, newest first: the bound it ended on, how long it

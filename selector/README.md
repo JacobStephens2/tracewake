@@ -1127,7 +1127,7 @@ rather than unbounded: each label's read is capped by
 `SELECTOR_BOARD_TIMEOUT_SECONDS` and a failed one renders as a column error,
 so a slow or rate-limited tracker degrades the board rather than the stream.
 
-### Run history and the budget (#160)
+### Run history (#160)
 
 `/loop/history` is the page `/loop` cannot be. `/loop`'s live region contains
 the queue board, and the board is a tracker read - so `/loop` is only as
@@ -1139,17 +1139,12 @@ link is the durable one and is rendered as a link; the branch is named but
 never linked, because a link to a deleted branch is a 404 dressed up as a
 working one.
 
-Two things it computes rather than replays:
+One thing it computes rather than replays:
 
 - **Duration**, the gap between the `run.dispatched` row and the `run.outcome`
   row. Nothing reports it - the box persists no record of a finished Run at
   all - so those two timestamps are the only account of how long the operator
   waited. Two units at most (`1h 40m`, `42s`).
-- **Review capacity**, `review_cap - awaiting`, read
-  through `cycle.review_budget` like the strip's cell and floored at zero. `None`
-  rather than the cap when the tracker cannot be read: an unknown budget
-  rendered as a full one would be the page inventing headroom the Selector
-  would refuse.
 
 It shows ended Runs only. A Run still going has no bound, no duration and no
 Proposal, and `/loop` already shows it live on the panel built for it.

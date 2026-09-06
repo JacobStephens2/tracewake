@@ -800,7 +800,7 @@ def _loop_context(request: Request) -> dict:
 
 
 def _history_context(request: Request) -> dict:
-    """The Run history and the budget: the Journal, and nothing else (#160).
+    """The Run history: the Journal, and nothing else (#160).
 
     Deliberately not `_loop_context` minus a few keys. The point of this page
     is what it does NOT read: /loop's board reaches the tracker at request
@@ -810,9 +810,8 @@ def _history_context(request: Request) -> dict:
     worked on, since a merged-and-deleted branch takes the forge's copy of the
     work with it and leaves the Journal's untouched.
     """
-    config, _ = _config()
     empty: tuple[list[dict], int] = ([], 0)
-    (events, older), spend, error = _read_journal(_history_rows, empty)
+    (events, older), _, error = _read_journal(_history_rows, empty)
     return {
         # History is what has ended. A Run still going has no bound, no
         # duration and no Proposal; /loop shows it live on the panel built
@@ -821,9 +820,6 @@ def _history_context(request: Request) -> dict:
         # The Runs below the window, counted rather than dropped in silence.
         "older": older,
         "shown": HISTORY_RUNS,
-        "budget": cycle.review_budget(
-            config, timeout=config.board_timeout_seconds if config else None
-        ),
         "error": error,
         "live_url": _path(request, "/loop/history/live"),
         "events_url": _path(request, "/loop/events"),

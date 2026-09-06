@@ -1206,23 +1206,21 @@ def review_budget(
         if raise_on_error:
             raise CycleFailed(error)
         count = None
-    elif review is not None:
-        if handover is not None:
-            placed = {r.get("number") for r in handover}
-            review = [r for r in review if r.get("number") not in placed]
-        count = len(review)
     else:
-        try:
-            review_issues = fetch_queue(config, config.review_label, timeout=timeout)
-        except CycleFailed:
-            if raise_on_error:
-                raise
-            count = None
-        else:
+        if review is None:
+            try:
+                review = fetch_queue(config, config.review_label, timeout=timeout)
+            except CycleFailed:
+                if raise_on_error:
+                    raise
+                review = None
+        if review is not None:
             if handover is not None:
                 placed = {r.get("number") for r in handover}
-                review_issues = [r for r in review_issues if r.get("number") not in placed]
-            count = len(review_issues)
+                review = [r for r in review if r.get("number") not in placed]
+            count = len(review)
+        else:
+            count = None
 
     cap = config.review_cap
     remaining = None if count is None or cap is None else max(0, cap - count)

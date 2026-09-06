@@ -36,8 +36,9 @@ Five architectural rules govern review capacity:
    `review_cap`.
 4. **Single source of truth for the review budget.**
    `cycle.review_budget()` is the single function used both by `run_cycle` to
-   enforce the review cap and by the web application (`/loop` and `/loop/history`)
-   to render the status cell. The page and the engine cannot drift.
+   enforce the review cap and by the web application (`/loop`) to render the
+   status cell. Run history (`/loop/history`) remains strictly isolated to the
+   Selector Journal and does not query the tracker. The live page and the engine cannot drift.
 5. **No daily spend counter residue.**
    `SELECTOR_DAILY_CAP`, `daily_cap`, `CAP_WINDOW_HOURS`, `dispatched_in_window`,
    and `recent_dispatches` are removed from the system.
@@ -49,5 +50,7 @@ Five architectural rules govern review capacity:
 - **Immediate resumption.** Merging or closing a review item immediately restores
   review headroom for the next cycle without waiting for a 24-hour rolling window
   to elapse.
-- **Consistent presentation.** The status strip and history views report remaining
+- **Consistent presentation.** The status strip on `/loop` reports remaining
   review capacity derived directly from the tracker's review column.
+- **Journal-only isolation preserved.** `/loop/history` continues to read
+  strictly from the Selector Journal, unaffected by tracker network conditions.
