@@ -1342,9 +1342,6 @@ def run_cycle(
                 ),
             )
 
-        if dry_run:
-            break
-
         if pick and not dry_run:
             attempt = cycle_spend.attempts(
                 pick["number"], picked_record.get("labeledAt")
@@ -1364,6 +1361,9 @@ def run_cycle(
             )
             routes.append(route)
             dispatches.append(pick["number"])
+
+        if dry_run or not pick:
+            break
 
     summary = {
         "cycle": cycle_id,

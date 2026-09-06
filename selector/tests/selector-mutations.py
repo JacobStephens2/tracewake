@@ -257,10 +257,10 @@ MUTATIONS = {
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
     "every-dispatch-is-the-first": (CYCLE, DISPATCH_SUITE,
-        '        attempt = cycle_spend.attempts(\n'
-        '            pick["number"], picked_record.get("labeledAt")\n'
-        '        ) + 1',
-        "        attempt = 1",
+        '            attempt = cycle_spend.attempts(\n'
+        '                pick["number"], picked_record.get("labeledAt")\n'
+        '            ) + 1',
+        "            attempt = 1",
     ),
     # A Run that ended on a bound is reported as a dispatch failure, so the
     # Termination Contract working pages the operator every time.
@@ -969,8 +969,8 @@ MUTATIONS = {
     # A shipping module spells a kind by hand again - behavior identical, and
     # only the sweep can notice, which is what the sweep is for.
     "a-kind-spelled-outside-the-vocabulary": (CYCLE, EVENTS_SUITE,
-        "journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n        raise\n",
-        'journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n        raise\n',
+        "            journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n            raise\n",
+        '            journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n            raise\n',
     ),
     # The staging fixture drifts from the writer - a key today's writer always
     # journals goes missing from a seeded row, the state a preview would
