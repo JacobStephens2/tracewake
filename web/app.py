@@ -652,8 +652,8 @@ def _selector_state(
         return "paused - dispatch is off"
     if timer.get("state") != "active":
         return "stopped - nothing will start a cycle"
-    if budget["spent"] >= budget["cap"]:
-        return "idle - daily cap reached"
+    if budget.get("remaining") == 0:
+        return "idle - review cap reached"
     return "idle"
 
 
@@ -683,9 +683,8 @@ def _read_journal(
     the spend come from one connection and one moment - two reads would be a
     page describing two different Journals.
 
-    `spend` comes back as the Selector's own object rather than a count taken
-    here: two readings of "Runs today" that could disagree would be a budget
-    that reassures about a cap it is not the one enforcing.
+    `spend` comes back as the Selector's own object for in-flight and attempt
+    queries on the board.
     """
     try:
         with journal.connect() as conn:
@@ -730,26 +729,6 @@ def _config() -> tuple["cycle.Config | None", str | None]:
     return configs[0], None
 
 
-def _budget(cap: int | None, spend) -> dict:
-    """Today's cap, and what is left of it.
-
-    `remaining` rather than only `spent` because that is the operator's
-    question - "can the Selector still start one?" - and a tile that leaves
-    him to subtract is a tile that gets read wrong the day the cap changes.
-    None on an unreadable Journal, all the way through: an unknown budget
-    rendered as a full one would be the page inventing headroom.
-    """
-    spent = None if spend is None else spend.recent_dispatches
-    return {
-        "spent": spent,
-        "cap": cap,
-        "window": cycle.CAP_WINDOW_HOURS,
-        "remaining": (
-            None if spent is None or cap is None else max(0, cap - spent)
-        ),
-    }
-
-
 def _loop_context(request: Request) -> dict:
     """Everything the live region renders, read now.
 
@@ -762,7 +741,6 @@ def _loop_context(request: Request) -> dict:
     config, unconfigured = _config()
     empty: tuple[list[dict], bool] = ([], False)
     (events, paused), spend, error = _read_journal(_loop_rows, empty)
-    budget = _budget(config.daily_cap if config else None, spend)
     view = [
         {
             "id": e["id"],
@@ -782,6 +760,16 @@ def _loop_context(request: Request) -> dict:
     board_view = (
         queue_board.board(config, spend) if config
         else queue_board.unconfigured(unconfigured)
+    )
+    review_col = next(
+        (c for c in board_view.get("columns", []) if c.get("key") == "awaiting-review"),
+        None,
+    )
+    budget = cycle.review_budget(
+        config,
+        review=review_col["cards"] if review_col and not review_col.get("error") else None,
+        error=review_col.get("error") if review_col else None,
+        timeout=config.board_timeout_seconds if config else None,
     )
     return {
         "events": view,
@@ -812,7 +800,7 @@ def _loop_context(request: Request) -> dict:
 
 
 def _history_context(request: Request) -> dict:
-    """The Run history and the budget: the Journal, and nothing else (#160).
+    """The Run history: the Journal, and nothing else (#160).
 
     Deliberately not `_loop_context` minus a few keys. The point of this page
     is what it does NOT read: /loop's board reaches the tracker at request
@@ -822,9 +810,8 @@ def _history_context(request: Request) -> dict:
     worked on, since a merged-and-deleted branch takes the forge's copy of the
     work with it and leaves the Journal's untouched.
     """
-    config, _ = _config()
     empty: tuple[list[dict], int] = ([], 0)
-    (events, older), spend, error = _read_journal(_history_rows, empty)
+    (events, older), _, error = _read_journal(_history_rows, empty)
     return {
         # History is what has ended. A Run still going has no bound, no
         # duration and no Proposal; /loop shows it live on the panel built
@@ -833,7 +820,6 @@ def _history_context(request: Request) -> dict:
         # The Runs below the window, counted rather than dropped in silence.
         "older": older,
         "shown": HISTORY_RUNS,
-        "budget": _budget(config.daily_cap if config else None, spend),
         "error": error,
         "live_url": _path(request, "/loop/history/live"),
         "events_url": _path(request, "/loop/events"),

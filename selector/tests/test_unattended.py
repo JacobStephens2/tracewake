@@ -86,7 +86,7 @@ def test_the_lock_is_released_when_the_cycle_ends(db, box, tmp_path):
     assert len(events(db, "cycle.started")) == 2
 
 
-# --- The daily cap, across cycles -------------------------------------------
+# --- The review cap, across cycles -------------------------------------------
 
 
 def test_a_paused_cycle_dispatches_nothing_and_journals_why(db, box):
@@ -121,23 +121,18 @@ def test_resuming_allows_the_next_cycle_to_dispatch_again(db, box):
     assert "box loop/645-the-nightly-sync-script" in box.commands()
 
 
-def test_the_fifth_dispatch_of_a_day_is_refused_and_journaled(db, box, dispatch):
-    """Story 9's bound, held by a process that remembers nothing: the four
-    earlier Runs are in the Journal and nowhere else."""
-    for number in (640, 641, 642, 643):
-        dispatch(db, number, outcome="clean")
-    result = box.run(db, [issue(645)])
+def test_dispatch_is_refused_and_journaled_when_review_cap_is_reached(db, box):
+    """The review cap stops dispatch before the box is reached, and journals
+    the reason and the count read."""
+    review_issues = [issue(600 + i) for i in range(20)]
+    result = box.run(db, [issue(645)], review_issues=review_issues)
     assert result.returncode == 0, result.stderr
-    # The four seeded dispatches and no fifth: the cap refused this one before
-    # the box was reached at all.
-    assert len(events(db, "run.dispatched")) == 4, "a fifth Run was started"
+    assert len(events(db, "run.dispatched")) == 0, "a Run was started"
     assert "box " not in box.commands()
     finished = last(db, "cycle.finished")
-    assert finished["halted"] == "daily-cap-reached"
-    assert finished["dispatched_in_window"] == 4
-    assert finished["daily_cap"] == 4
-    # Refused, not skipped over silently: the issue is still eligible, and the
-    # Journal says which one the budget cost.
+    assert finished["halted"] == "review-cap-reached"
+    assert finished["awaiting_review"] == 20
+    assert finished["review_cap"] == 20
     assert finished["eligible"] == [645]
 
 
@@ -303,21 +298,24 @@ def test_pause_is_honoured_between_runs_and_does_not_cancel_run_in_flight(db, bo
     assert finished["eligible"] == [645]
 
 
-def test_cycle_ends_when_daily_cap_is_reached_during_drain(db, box, dispatch):
+def test_cycle_ends_when_review_cap_is_reached_during_drain(db, box):
     """Criterion 2: A Cycle ends when a cap holds."""
-    for num in (630, 631, 632):
-        dispatch(db, num, outcome="clean")
-
-    result = box.run(db, [issue(640), issue(645)])
+    result = box.run(
+        db,
+        [issue(640), issue(645)],
+        review_issues=[issue(630)],
+        targets=[{"review_cap": 2}],
+    )
     assert result.returncode == 0, result.stderr
 
-    # 3 earlier dispatches + 1 from this cycle = 4 (the daily cap)
     dispatches = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
-    assert dispatches == [630, 631, 632, 640]
+    assert dispatches == [640]
 
     finished = last(db, "cycle.finished")
     assert finished["dispatches"] == [640]
-    assert finished["halted"] == "daily-cap-reached"
+    assert finished["halted"] == "review-cap-reached"
+    assert finished["awaiting_review"] == 2
+    assert finished["review_cap"] == 2
     assert finished["eligible"] == [645]
 
 

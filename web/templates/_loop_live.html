@@ -266,8 +266,8 @@
       <p class="detail">considered {{ c.summary.considered }},
          eligible {{ c.summary.eligible | length }},
          skipped {{ c.skips | length }};
-         budget {{ c.summary.dispatched_in_window }}/{{ c.summary.daily_cap }}
-         dispatches in the last 24h.</p>
+         review capacity {{ c.summary.awaiting_review }}/{{ c.summary.review_cap }}
+         awaiting review.</p>
       {% endif %}
     </section>
     {% endfor %}

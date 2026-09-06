@@ -88,8 +88,19 @@ def fakes(tmp_path):
     tracker = tmp_path / "tracker.sh"
     tracker.write_text(
         "#!/usr/bin/env bash\n"
-        f'printf "%s %s\\n" "$1" "$2" > "{tmp_path}/tracker.args"\n'
-        f'exec cat "{queue_file}"\n'
+        "set -euo pipefail\n"
+        f'if [[ ! -f "{tmp_path}/tracker.args" ]]; then\n'
+        f'    printf "%s %s\\n" "$1" "$2" > "{tmp_path}/tracker.args"\n'
+        f'fi\n'
+        f'printf "%s %s\\n" "$1" "$2" >> "{tmp_path}/tracker.log"\n'
+        f'queue="{tmp_path}/queue-${{2}}.json"\n'
+        f'if [[ -f "${{queue}}" ]]; then\n'
+        f'    exec cat "${{queue}}"\n'
+        f'fi\n'
+        f'if [[ "${{2}}" != "awaiting-review" ]]; then\n'
+        f'    exec cat "{queue_file}"\n'
+        f'fi\n'
+        f'printf \'{{"issues": []}}\\n\'\n'
     )
     tracker.chmod(0o755)
 
@@ -98,7 +109,7 @@ def fakes(tmp_path):
 
         targets_file = tmp_path / "targets.toml"
 
-        def run(self, dsn, issues=(), *, tracker_command=None,
+        def run(self, dsn, issues=(), *, review_issues=(), tracker_command=None,
                 dry_run=True, targets=None, select=None, **env):
             """One cycle against a canned queue.
 
@@ -108,7 +119,14 @@ def fakes(tmp_path):
             through the targets file (issue #3).
             """
             queue_file.write_text(json.dumps({"issues": list(issues)}))
-            write_targets(self.targets_file, *(targets or ()))
+            stanzas = targets or ()
+            review_label = "awaiting-review"
+            if stanzas and isinstance(stanzas, (list, tuple)) and len(stanzas) > 0:
+                review_label = stanzas[0].get("labels", {}).get("review", "awaiting-review")
+            (tmp_path / f"queue-{review_label}.json").write_text(
+                json.dumps({"issues": list(review_issues)})
+            )
+            write_targets(self.targets_file, *stanzas)
             environ = dict(os.environ)
             environ.update(
                 {
@@ -128,6 +146,11 @@ def fakes(tmp_path):
                 capture_output=True,
                 text=True,
                 env=environ,
+            )
+
+        def queue(self, label, issues):
+            (tmp_path / f"queue-{label}.json").write_text(
+                json.dumps({"issues": list(issues)})
             )
 
         def tripped(self):
@@ -404,7 +427,41 @@ def box(tmp_path):
         # one line in it is simply a constant answer.
         if [[ ${2:-} == relabel ]]; then
             num="${3:-}"
-            python3 -c "import json, sys; p = sys.argv[1]; n = int(sys.argv[2]); data = json.load(open(p)); data['issues'] = [i for i in data['issues'] if int(i.get('number', 0)) != n]; json.dump(data, open(p, 'w'))" "@QUEUE@" "$num"
+            add="${4:-}"
+            rem="${5:-}"
+            python3 -c "import json, sys, os
+q_path = sys.argv[1]
+num = int(sys.argv[2])
+add_label = sys.argv[3] if len(sys.argv) > 3 else ''
+rem_label = sys.argv[4] if len(sys.argv) > 4 else ''
+q_dir = os.path.dirname(q_path)
+
+removed = []
+if os.path.exists(q_path):
+    data = json.load(open(q_path))
+    removed = [i for i in data.get('issues', []) if int(i.get('number', 0)) == num]
+    data['issues'] = [i for i in data.get('issues', []) if int(i.get('number', 0)) != num]
+    json.dump(data, open(q_path, 'w'))
+
+if rem_label:
+    rem_path = f'{q_dir}/queue-{rem_label}.json'
+    if os.path.exists(rem_path):
+        rem_data = json.load(open(rem_path))
+        if not removed:
+            removed = [i for i in rem_data.get('issues', []) if int(i.get('number', 0)) == num]
+        rem_data['issues'] = [i for i in rem_data.get('issues', []) if int(i.get('number', 0)) != num]
+        json.dump(rem_data, open(rem_path, 'w'))
+
+if add_label:
+    dest_path = f'{q_dir}/queue-{add_label}.json'
+    if os.path.exists(dest_path):
+        dest_data = json.load(open(dest_path))
+    else:
+        dest_data = {'issues': []}
+    item = removed[0] if removed else {'number': num}
+    dest_data['issues'].append(item)
+    json.dump(dest_data, open(dest_path, 'w'))
+" "@QUEUE@" "$num" "$add" "$rem"
         fi
         if [[ ${2:-} == checks ]]; then
             head -n 1 "@CHECKS@"
@@ -451,7 +508,18 @@ def box(tmp_path):
         exec cat "@PROGRESS@"
     '''))
 
-    tracker = _script(tmp_path / "tracker.sh", f'exec cat "{queue_file}"\n')
+    tracker = _script(tmp_path / "tracker.sh", fill('''
+        set -euo pipefail
+        queue_dir="$(dirname "@QUEUE@")"
+        labeled="${queue_dir}/queue-${2}.json"
+        if [[ -f "${labeled}" ]]; then
+            exec cat "${labeled}"
+        fi
+        if [[ "${2}" != "awaiting-review" ]]; then
+            exec cat "@QUEUE@"
+        fi
+        printf '{"issues": []}\n'
+    '''))
 
     class Runner:
         # Assigned after the class body: `bare = bare` inside it would read
@@ -461,9 +529,13 @@ def box(tmp_path):
         # at, exposed so a test can assert Seeding happened in it.
         work_repo = work
 
-        def run(self, dsn, issues=(), *, dry_run=False, targets=None, **env):
+        def run(self, dsn, issues=(), *, review_issues=(), dry_run=False, targets=None, **env):
             queue_file.write_text(json.dumps({"issues": list(issues)}))
             stanzas = targets or ({},)
+            review_label = stanzas[0].get("labels", {}).get("review", "awaiting-review")
+            (tmp_path / f"queue-{review_label}.json").write_text(
+                json.dumps({"issues": list(review_issues)})
+            )
             write_targets(
                 self.targets_file,
                 *({"work_repo": str(work), **over} for over in stanzas),
@@ -487,6 +559,11 @@ def box(tmp_path):
             return subprocess.run(
                 [sys.executable, str(CYCLE), *(["--dry-run"] if dry_run else [])],
                 capture_output=True, text=True, env=environ,
+            )
+
+        def queue(self, label, issues):
+            (tmp_path / f"queue-{label}.json").write_text(
+                json.dumps({"issues": list(issues)})
             )
 
         def commands(self):

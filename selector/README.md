@@ -45,12 +45,10 @@ The order is not arbitrary: `missing-section` is the loud skip - see below -
 so the cheap, quiet reasons are tested first. An issue that is blocked anyway
 is not shouted at for a gap.
 
-**Caps.** One Run in flight, `SELECTOR_DAILY_CAP` (4) dispatches per rolling
-24 hours. (A target's `review_cap` is declared and journaled; the cap the
-cycle enforces is still the daily one until the draining Cycle lands.) Rolling rather than calendar: "four a day" is a spend bound, and a
-calendar boundary would let eight Runs happen inside three hours across
-midnight. A cap that halts a cycle still lets it reason and journal first, so
-the Journal answers "what would it have picked?" as well as "what did it?".
+**Caps.** One Run in flight, target's `review_cap` (default 20) Proposals
+awaiting review. A cap that halts a cycle still lets it reason and journal
+first, so the Journal answers "what would it have picked?" as well as "what
+did it?".
 
 **Pause.** `/loop` is the flag's only writer. A paused Selector still runs its
 timer, reads the queue, applies Eligibility and journals the cycle; it stops
@@ -117,7 +115,6 @@ address or a command have no default at all:
 | `SELECTOR_PROTECTED_REPO` | required | the repository holding the guardrail's rules |
 | `SELECTOR_PROTECTED_REF` | required | the ref the executed paths are deployed from |
 | `SELECTOR_TRACKER_COMMAND` | `tracker-sources/github.sh` | the labeled queue, read |
-| `SELECTOR_DAILY_CAP` | `4` | dispatches per rolling 24h |
 | `SELECTOR_JOURNAL_DSN` | `dbname=selector` | |
 | `SELECTOR_WORK_REMOTE` | `origin` | |
 | `SELECTOR_BRANCH_PREFIX` | `loop/` | |
@@ -483,12 +480,12 @@ from the in-flight lock in the caps: that one is journaled and is about *Runs*,
 this one is about *processes*, and it stops a second cycle before it has read
 anything at all.
 
-**The daily cap holds across cycles** because it was always read from the
-Journal rather than from memory - which is what makes it survive a process
-that runs for ninety seconds every half hour and remembers nothing. The fifth
-dispatch of a rolling day is refused before the box is reached, and the
-refusal is journaled: `cycle.finished` with `halted: daily-cap-reached` and
-the budget it counted.
+**The review cap holds across cycles and within a drain** because it reads
+the target's awaiting-review column from the tracker on each pass. When the
+number of awaiting-review issues reaches the target's configured `review_cap`,
+further dispatches halt before the box is reached, and the refusal is
+journaled: `cycle.finished` with `halted: review-cap-reached` and the count it
+read.
 
 The refusal is journaled on `cycle.finished` rather than as an event of its
 own, unlike the lock refusal above. The asymmetry is not an oversight: a cycle
@@ -535,9 +532,9 @@ because the alternative pages every thirty minutes for a box nobody is asking
 to do anything.
 
 **The status strip** is the `/loop` half of all of this: what the Selector is
-doing, when the timer fires next, `Runs today N of 4`, and the box card. The
-budget is read through `cycle.spend` - the same function the cap is enforced
-with - because two readings of "Runs today" that could disagree would be a
+doing, when the timer fires next, `review capacity N remaining`, and the box card. The
+review budget is read through `cycle.review_budget` - the same function the cap
+is enforced with - because two readings that could disagree would be a
 strip that reassures about a cap it is not the one reading. The next-cycle
 cell reads `systemctl show` on the timer through `SELECTOR_TIMER_COMMAND`
 (default: `systemctl show selector-cycle.timer`; the one substitutable command
@@ -1130,7 +1127,7 @@ rather than unbounded: each label's read is capped by
 `SELECTOR_BOARD_TIMEOUT_SECONDS` and a failed one renders as a column error,
 so a slow or rate-limited tracker degrades the board rather than the stream.
 
-### Run history and the budget (#160)
+### Run history (#160)
 
 `/loop/history` is the page `/loop` cannot be. `/loop`'s live region contains
 the queue board, and the board is a tracker read - so `/loop` is only as
@@ -1142,17 +1139,12 @@ link is the durable one and is rendered as a link; the branch is named but
 never linked, because a link to a deleted branch is a 404 dressed up as a
 working one.
 
-Two things it computes rather than replays:
+One thing it computes rather than replays:
 
 - **Duration**, the gap between the `run.dispatched` row and the `run.outcome`
   row. Nothing reports it - the box persists no record of a finished Run at
   all - so those two timestamps are the only account of how long the operator
   waited. Two units at most (`1h 40m`, `42s`).
-- **Runs remaining today**, `daily_cap - spend.recent_dispatches`, read
-  through `cycle.spend` like the strip's cell and floored at zero. `None`
-  rather than the cap when the Journal cannot be read: an unknown budget
-  rendered as a full one would be the page inventing headroom the Selector
-  would refuse.
 
 It shows ended Runs only. A Run still going has no bound, no duration and no
 Proposal, and `/loop` already shows it live on the panel built for it.
@@ -1168,9 +1160,9 @@ dispatch is the right floor because every other row of a Run is written after
 it. What falls below the window is counted and said on the page, not dropped:
 `psql -d selector` still has all of it.
 
-The two pages share `_runs.html` (the Run card), `_budget.html` (the budget
-cell) and `terminal_base.html` (the shell and the stream script), and differ
-in the `runs` list they pass in and the region each re-fetches -
+The two pages share `_runs.html` (the Run card) and `terminal_base.html`
+(the shell and the stream script), and differ in the `runs` list they pass in
+and the region each re-fetches -
 `/loop/history/live` rather than `/loop/live`, because a history page pointed
 at the other one would swap in a queue board it never rendered and reach the
 tracker to build it. `web/tests/test_run_history.py` is the suite;

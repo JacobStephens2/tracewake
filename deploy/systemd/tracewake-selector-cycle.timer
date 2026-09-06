@@ -5,16 +5,16 @@ Description=Run a Selector cycle every 30 minutes, around the clock
 # Every thirty minutes, all day and all night. Not office hours: the point of
 # the Selector is that the operator's Handover - applying `ready-for-agent` -
 # is the last human step, and a queue that only drains while he is awake is one
-# he is still pacing. Spend stays bounded by the daily cap (4 Runs per rolling
-# 24 hours), not by the firing rate.
+# he is still pacing. Unreviewed work stays bounded by the target's review
+# cap (default 20 awaiting review), not by the firing rate.
 OnCalendar=*:00/30
 
 # Persistent=false, deliberately, and it is the one setting here that spends
 # money if it is wrong. `true` would make a box that was down for six hours
 # fire a catch-up cycle the moment it came back - and a catch-up cycle is a
 # real Run against a real repository. Nothing is lost by skipping: the queue is
-# still there thirty minutes later, and the cap is a rolling window rather than
-# a quota to be used up.
+# still there thirty minutes later, and review capacity bounds work rather than
+# a calendar quota.
 Persistent=false
 
 # Enough to keep every cycle off the exact half hour, and small next to the

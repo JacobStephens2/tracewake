@@ -1,26 +1,23 @@
-{# The daily-cap budget (#160), one cell, shared by /loop's status strip and
-   the history page.
+{# The review-capacity budget, one cell on /loop's status strip.
 
-   It leads with what is left rather than with what is spent. "2 of 4" is the
-   same arithmetic, but the operator's question is "can the Selector still
-   start one today?", and a tile that leaves him to subtract is one that gets
-   read wrong the day the cap changes. The spend is kept underneath because it
-   is what the Journal actually holds.
+   It leads with what is left rather than with what is awaiting review.
+   "18 remaining" answers the operator's question - "can the Selector still
+   dispatch?" - and the count awaiting review is kept underneath.
 
-   `remaining` is None, not 0, when the Journal could not be read: an unknown
+   `remaining` is None, not 0, when the tracker could not be read: an unknown
    budget rendered as a full one would be the page inventing headroom.
 
    `cell-budget` carries no styling; it is how the suite cuts this cell out of
-   whichever page it is on, so that "2 remaining" is asserted about the tile
+   whichever page it is on, so that "20 remaining" is asserted about the tile
    rather than about the page containing the string somewhere. #}
       <div class="cell cell-budget">
-        <span class="cell-label">runs remaining today</span>
+        <span class="cell-label">review capacity</span>
         {% if budget.remaining is none %}
         <span class="cell-value">unknown</span>
-        <span class="detail">the Journal could not be read.</span>
+        <span class="detail">the tracker could not be read.</span>
         {% else %}
         <span class="cell-value">{{ budget.remaining }} remaining</span>
-        <span class="detail">{{ budget.spent }} of {{ budget.cap }}
-          dispatches in the last {{ budget.window }}h</span>
+        <span class="detail">{{ budget.awaiting }} of {{ budget.cap }}
+          awaiting review</span>
         {% endif %}
       </div>

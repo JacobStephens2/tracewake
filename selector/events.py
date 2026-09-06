@@ -272,7 +272,7 @@ GUARDRAIL_OBSERVED = "guardrail.observed"
 GUARDRAIL_UNREADABLE = "guardrail.unreadable"
 
 
-def cycle_started(*, repo, label, allowlist, daily_cap, review_cap, landing,
+def cycle_started(*, repo, label, allowlist, review_cap, landing,
                   dry_run):
     """The cycle's opening row. It carries no `cycle` key on purpose: the id
     this row is appended under IS the cycle id every later row names.
@@ -286,7 +286,7 @@ def cycle_started(*, repo, label, allowlist, daily_cap, review_cap, landing,
     """
     return CYCLE_STARTED, {
         "repo": repo, "label": label, "allowlist": allowlist,
-        "daily_cap": daily_cap, "review_cap": review_cap, "landing": landing,
+        "review_cap": review_cap, "landing": landing,
         "dry_run": dry_run,
     }
 
@@ -305,8 +305,8 @@ def cycle_picked(*, cycle, number, title, url, area, check):
 
 
 def cycle_finished(*, cycle, considered, eligible, skipped, picked=None,
-                   dispatches=None, halted, in_flight, dispatched_in_window,
-                   daily_cap, returned, dry_run):
+                   dispatches=None, halted, in_flight, awaiting_review,
+                   review_cap, returned, dry_run):
     """The cycle summary: what was read, what survived, every dispatch made,
     and - when `halted` names a cap or the pause - why nothing more was
     dispatched."""
@@ -318,8 +318,8 @@ def cycle_finished(*, cycle, considered, eligible, skipped, picked=None,
         "cycle": cycle, "considered": considered, "eligible": eligible,
         "skipped": skipped, "picked": picked, "dispatches": dispatches,
         "halted": halted, "in_flight": in_flight,
-        "dispatched_in_window": dispatched_in_window,
-        "daily_cap": daily_cap, "returned": returned, "dry_run": dry_run,
+        "awaiting_review": awaiting_review,
+        "review_cap": review_cap, "returned": returned, "dry_run": dry_run,
     }
 
 
@@ -419,7 +419,7 @@ class CycleStarted:
     repo: str | None
     label: str | None
     allowlist: object
-    daily_cap: int | None
+    review_cap: int | None
     dry_run: object
 
 
@@ -428,7 +428,7 @@ def cycle_started_record(row) -> CycleStarted:
     return CycleStarted(
         id=row.get("id"), at=row.get("at"), repo=payload.get("repo"),
         label=payload.get("label"), allowlist=payload.get("allowlist"),
-        daily_cap=payload.get("daily_cap"), dry_run=payload.get("dry_run"),
+        review_cap=payload.get("review_cap"), dry_run=payload.get("dry_run"),
     )
 
 
@@ -469,8 +469,8 @@ class CycleSummary:
     picked: int | None
     halted: str | None
     in_flight: object
-    dispatched_in_window: int | None
-    daily_cap: int | None
+    awaiting_review: int | None
+    review_cap: int | None
     returned: object
     dry_run: object
     dispatches: list[int] | None = None
@@ -487,8 +487,8 @@ def cycle_finished_record(row) -> CycleSummary:
         considered=payload.get("considered"), eligible=payload.get("eligible"),
         skipped=payload.get("skipped"), picked=payload.get("picked"),
         halted=payload.get("halted"), in_flight=payload.get("in_flight"),
-        dispatched_in_window=payload.get("dispatched_in_window"),
-        daily_cap=payload.get("daily_cap"), returned=payload.get("returned"),
+        awaiting_review=payload.get("awaiting_review"),
+        review_cap=payload.get("review_cap"), returned=payload.get("returned"),
         dry_run=payload.get("dry_run"),
         dispatches=dispatches,
     )
