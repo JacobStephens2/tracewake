@@ -345,7 +345,7 @@ def test_a_watch_failure_is_one_row_naming_the_error():
 def test_the_cycle_rows_spell_their_settled_shapes():
     kind, payload = events.cycle_started(
         repo="acme/widgets", label="ready-for-agent",
-        allowlist=("an-operator",), daily_cap=4, review_cap=20,
+        allowlist=("an-operator",), review_cap=20,
         landing="propose", dry_run=False)
     # No `cycle` key: the row's own id IS the cycle id every later row names.
     assert (kind, "cycle" in payload) == ("cycle.started", False)
@@ -353,7 +353,7 @@ def test_the_cycle_rows_spell_their_settled_shapes():
     # #3): a Journal holding the reasoning but not the configuration would
     # leave "why that repository, under whose Handover?" answerable only from
     # a file that has since changed.
-    assert set(payload) == {"repo", "label", "allowlist", "daily_cap",
+    assert set(payload) == {"repo", "label", "allowlist",
                             "review_cap", "landing", "dry_run"}
 
     kind, payload = events.cycle_skipped(reason="cycle-in-progress")
@@ -366,12 +366,12 @@ def test_the_cycle_rows_spell_their_settled_shapes():
 
     kind, payload = events.cycle_finished(
         cycle=7, considered=5, eligible=2, skipped=3, picked=312,
-        halted=None, in_flight=None, dispatched_in_window=1, daily_cap=4,
+        halted=None, in_flight=None, awaiting_review=1, review_cap=20,
         returned=0, dry_run=False)
     assert kind == "cycle.finished"
     assert set(payload) == {"cycle", "considered", "eligible", "skipped",
                             "picked", "dispatches", "halted", "in_flight",
-                            "dispatched_in_window", "daily_cap", "returned",
+                            "awaiting_review", "review_cap", "returned",
                             "dry_run"}
 
     kind, payload = events.cycle_failed(cycle=7, error="boom")
@@ -408,11 +408,11 @@ def test_the_skip_and_the_loud_skip_rows():
 def test_the_cycle_card_rows_read_back_as_records():
     kind, payload = events.cycle_started(
         repo="acme/widgets", label="ready-for-agent",
-        allowlist=("an-operator",), daily_cap=4, review_cap=20,
+        allowlist=("an-operator",), review_cap=20,
         landing="propose", dry_run=True)
     started = events.cycle_started_record(row(kind, payload, id=51))
-    assert (started.id, started.repo, started.dry_run) == (
-        51, "acme/widgets", True)
+    assert (started.id, started.repo, started.review_cap, started.dry_run) == (
+        51, "acme/widgets", 20, True)
 
     kind, payload = events.cycle_picked(
         cycle=51, number=312, title="t", url="u", area="a", check="c")
@@ -421,10 +421,10 @@ def test_the_cycle_card_rows_read_back_as_records():
 
     kind, payload = events.cycle_finished(
         cycle=51, considered=5, eligible=[312], skipped={"proposal-open": 1},
-        picked=312, halted=None, in_flight=None, dispatched_in_window=1,
-        daily_cap=4, returned=[313], dry_run=False)
+        picked=312, halted=None, in_flight=None, awaiting_review=1,
+        review_cap=20, returned=[313], dry_run=False)
     summary = events.cycle_finished_record(row(kind, payload))
-    assert (summary.halted, summary.daily_cap, summary.dispatches) == (None, 4, [312])
+    assert (summary.halted, summary.review_cap, summary.dispatches) == (None, 20, [312])
 
     kind, payload = events.issue_skipped(
         cycle=51, number=314, title="t", url="u",

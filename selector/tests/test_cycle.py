@@ -243,27 +243,32 @@ def test_a_recent_dispatch_with_no_outcome_still_holds_the_lock(db, fakes, dispa
     assert finished(db)["halted"] == "run-in-flight"
 
 
-def test_the_daily_cap_stops_the_pick(db, fakes, dispatch):
-    for number in (640, 641, 642, 643):
-        dispatch(db, number, outcome="clean")
-    fakes.run(db, [issue(645)])
+def test_the_review_cap_stops_the_pick(db, fakes):
+    review_issues = [issue(600 + i) for i in range(20)]
+    fakes.run(db, [issue(645)], review_issues=review_issues)
     assert picked(db) is None
-    assert finished(db)["halted"] == "daily-cap-reached"
+    fin = finished(db)
+    assert fin["halted"] == "review-cap-reached"
+    assert fin["awaiting_review"] == 20
+    assert fin["review_cap"] == 20
 
 
-def test_dispatches_older_than_the_window_do_not_count_against_the_cap(
-    db, fakes, dispatch
-):
-    for number in (640, 641, 642, 643):
-        dispatch(db, number, outcome="clean", hours_ago=30)
-    fakes.run(db, [issue(645)])
+def test_the_review_cap_is_configurable(db, fakes):
+    fakes.run(
+        db, [issue(645)], review_issues=[issue(640)],
+        targets=[{"review_cap": 1}],
+    )
+    assert picked(db) is None
+    fin = finished(db)
+    assert fin["halted"] == "review-cap-reached"
+    assert fin["awaiting_review"] == 1
+    assert fin["review_cap"] == 1
+
+
+def test_dispatch_resumes_when_awaiting_review_drops_below_cap(db, fakes):
+    review_issues = [issue(600 + i) for i in range(19)]
+    fakes.run(db, [issue(645)], review_issues=review_issues)
     assert picked(db)["number"] == 645
-
-
-def test_the_cap_is_configurable(db, fakes, dispatch):
-    dispatch(db, 640, outcome="clean")
-    fakes.run(db, [issue(645)], SELECTOR_DAILY_CAP=1)
-    assert finished(db)["halted"] == "daily-cap-reached"
 
 
 # --- The cycle as a whole ---------------------------------------------------

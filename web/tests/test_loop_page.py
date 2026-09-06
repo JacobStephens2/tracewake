@@ -111,8 +111,8 @@ def test_the_cycle_card_shows_the_pick_and_every_skip_with_its_reason(db):
                 "skipped": {"blocked-by-open-dependency": 1},
                 "picked": 645,
                 "halted": None,
-                "dispatched_in_window": 0,
-                "daily_cap": 4,
+                "awaiting_review": 0,
+                "review_cap": 20,
                 "dry_run": True,
             },
         )
@@ -122,7 +122,7 @@ def test_the_cycle_card_shows_the_pick_and_every_skip_with_its_reason(db):
     assert "blocked-by-open-dependency" in body
     assert "1 open blocking edge(s) on the tracker" in body
     assert "dry run" in body
-    assert "0/4" in body, "the daily-cap budget is shown"
+    assert "0/20" in body, "the review-capacity budget is shown"
 
 
 def test_a_cycle_that_picked_nothing_says_why(db):
@@ -138,8 +138,8 @@ def test_a_cycle_that_picked_nothing_says_why(db):
                 "skipped": {},
                 "picked": None,
                 "halted": "run-in-flight",
-                "dispatched_in_window": 1,
-                "daily_cap": 4,
+                "awaiting_review": 1,
+                "review_cap": 20,
                 "dry_run": True,
             },
         )
@@ -161,8 +161,8 @@ def test_a_paused_cycle_card_says_paused(db):
                 "skipped": {},
                 "picked": None,
                 "halted": "paused",
-                "dispatched_in_window": 0,
-                "daily_cap": 4,
+                "awaiting_review": 0,
+                "review_cap": 20,
                 "dry_run": False,
             },
         )
@@ -690,17 +690,20 @@ def _running_timer(monkeypatch, tmp_path):
     )
 
 
-def test_the_strip_counts_todays_runs_against_the_cap(db, dispatch):
-    for number in (640, 641):
-        dispatch(db, number, outcome="clean")
-    assert "2 of 4" in strip(client.get("/loop").text)
+def test_the_strip_shows_review_capacity(tracker):
+    tracker.queue("awaiting-review", [tracker.issue(640), tracker.issue(641)])
+    cell = strip(client.get("/loop").text)
+    assert "18 remaining" in cell
+    assert "2 of 20" in cell
+    assert "awaiting review" in cell
 
 
-def test_a_dispatch_older_than_the_window_is_not_a_run_today(db, dispatch):
-    """The same rolling window the Selector enforces, because a strip that
-    counted a different day would reassure about a cap it is not reading."""
-    dispatch(db, 640, outcome="clean", hours_ago=30)
-    assert "0 of 4" in strip(client.get("/loop").text)
+def test_the_strip_says_idle_when_review_cap_reached(db, tracker, monkeypatch, tmp_path):
+    _running_timer(monkeypatch, tmp_path)
+    tracker.queue("awaiting-review", [tracker.issue(i) for i in range(20)])
+    cell = strip(client.get("/loop").text)
+    assert "idle - review cap reached" in cell
+    assert "0 remaining" in cell
 
 
 def test_the_strip_names_the_run_in_flight(db, dispatch, monkeypatch, tmp_path):

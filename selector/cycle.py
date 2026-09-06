@@ -118,10 +118,6 @@ SIGNATURE = (
     " wrote this and none read the issue.*"
 )
 
-# Rolling rather than calendar. "4 Runs a day" is a spend bound, and a
-# calendar boundary lets eight Runs happen inside three hours across midnight
-# while every one of them is within its day.
-CAP_WINDOW_HOURS = 24
 
 # How long a dispatch with no outcome still counts as a Run in flight. The
 # Termination Contract's run clock is 90 minutes (loop/contract.sh,
@@ -214,7 +210,6 @@ class Config:
     """
 
     target: targets.Target
-    daily_cap: int
     tracker_command: str
     box_facts_command: str
     box_facts_timeout_seconds: int
@@ -255,7 +250,6 @@ class Config:
         env = os.environ.get
         return cls(
             target=target,
-            daily_cap=int(env("SELECTOR_DAILY_CAP", "4")),
             tracker_command=env(
                 "SELECTOR_TRACKER_COMMAND", str(HERE / "tracker-sources" / "github.sh")
             ),
@@ -461,12 +455,11 @@ def eligibility(record: dict, config: Config, attempts: int) -> tuple[str, str] 
 
 @dataclass(frozen=True)
 class Dispatch:
-    """One `run.dispatched` row, with the two age questions already answered
+    """One `run.dispatched` row, with the age question already answered
     by the database that knows what "now" is."""
 
     issue: int
     at: datetime
-    within_cap_window: bool
     stale: bool
 
 
@@ -475,7 +468,6 @@ class Spend:
 
     def __init__(self, dispatches: list[Dispatch], outcomes: list[int]):
         self._dispatches = dispatches
-        self.recent_dispatches = sum(1 for d in dispatches if d.within_cap_window)
         started: dict[int, int] = {}
         for d in dispatches:
             if d.stale:
@@ -513,18 +505,14 @@ def _parse_time(value: str | None) -> datetime | None:
 
 
 def spend(conn: psycopg.Connection) -> Spend:
-    """The Journal's answer to "what has been spent". Public because the page
-    shows the same budget the cycle enforces (#156): two readings of "Runs
-    today" that could disagree would be a status strip that reassures about a
-    cap it is not the one reading."""
+    """The Journal's answer to in-flight runs and attempt counts."""
     dispatches = [
         Dispatch(*row)
         for row in conn.execute(
             "SELECT (payload->>'issue')::bigint, at,"
-            "       at > now() - make_interval(hours => %s),"
             "       at < now() - make_interval(hours => %s)"
             "  FROM journal.events WHERE kind = %s",
-            (CAP_WINDOW_HOURS, IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),
+            (IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),
         ).fetchall()
     ]
     outcomes = [
@@ -1190,6 +1178,62 @@ class CycleFailed(Exception):
     """The cycle could not run. Journaled, printed, and exits non-zero."""
 
 
+def review_budget(
+    config: Config | None,
+    *,
+    handover: list[dict] | None = None,
+    review: list[dict] | None = None,
+    error: str | None = None,
+    timeout: float | None = None,
+    raise_on_error: bool = False,
+) -> dict:
+    """The target's review capacity, and what is left of it.
+
+    Counts open issues in the review column (`config.review_label`), excluding
+    any issues already accounted for in `handover`.
+    Returns:
+        {
+            "count": count,
+            "awaiting": count,
+            "cap": cap,
+            "remaining": remaining,
+        }
+    """
+    if config is None:
+        return {"count": None, "awaiting": None, "cap": None, "remaining": None}
+
+    if error is not None:
+        if raise_on_error:
+            raise CycleFailed(error)
+        count = None
+    elif review is not None:
+        if handover is not None:
+            placed = {r.get("number") for r in handover}
+            review = [r for r in review if r.get("number") not in placed]
+        count = len(review)
+    else:
+        try:
+            review_issues = fetch_queue(config, config.review_label, timeout=timeout)
+        except CycleFailed:
+            if raise_on_error:
+                raise
+            count = None
+        else:
+            if handover is not None:
+                placed = {r.get("number") for r in handover}
+                review_issues = [r for r in review_issues if r.get("number") not in placed]
+            count = len(review_issues)
+
+    cap = config.review_cap
+    remaining = None if count is None or cap is None else max(0, cap - count)
+    return {
+        "count": count,
+        "awaiting": count,
+        "cap": cap,
+        "remaining": remaining,
+    }
+
+
 def run_cycle(
     conn: psycopg.Connection,
     config: Config,
@@ -1204,7 +1248,6 @@ def run_cycle(
             repo=config.task_repo,
             label=config.label,
             allowlist=list(config.allowlist),
-            daily_cap=config.daily_cap,
             review_cap=config.review_cap,
             landing=config.target.landing,
             dry_run=dry_run,
@@ -1222,13 +1265,17 @@ def run_cycle(
     first_pick: dict | None = None
     halted: str | None = None
     last_spend: Spend | None = None
+    last_budget: dict | None = None
 
     while True:
         try:
             queue = fetch_queue(config)
+            budget = review_budget(config, handover=queue, raise_on_error=True)
         except CycleFailed as exc:
             journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
             raise
+
+        last_budget = budget
 
         if first_considered is None:
             first_considered = len(queue)
@@ -1288,8 +1335,8 @@ def run_cycle(
         elif cycle_spend.in_flight:
             halted = "run-in-flight"
             break
-        elif cycle_spend.recent_dispatches >= config.daily_cap:
-            halted = "daily-cap-reached"
+        elif budget["remaining"] == 0:
+            halted = "review-cap-reached"
             break
         elif not eligible:
             halted = "none-eligible"
@@ -1374,8 +1421,12 @@ def run_cycle(
         "dispatches": dispatches,
         "halted": halted,
         "in_flight": last_spend.in_flight if last_spend else None,
-        "dispatched_in_window": last_spend.recent_dispatches if last_spend else 0,
-        "daily_cap": config.daily_cap,
+        "awaiting_review": (
+            last_budget["count"]
+            if last_budget and last_budget["count"] is not None
+            else 0
+        ),
+        "review_cap": config.review_cap,
         "returned": returned,
         "dry_run": dry_run,
     }
@@ -1417,8 +1468,8 @@ def _report(summary: dict) -> None:
     if summary.get("route"):
         print(f"routed       {summary['route']}")
     print(
-        f"budget       {summary['dispatched_in_window']}/{summary['daily_cap']}"
-        f" dispatches in the last {CAP_WINDOW_HOURS}h"
+        f"budget       {summary['awaiting_review']}/{summary['review_cap']}"
+        f" awaiting review"
     )
 
 

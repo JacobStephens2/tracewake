@@ -44,7 +44,7 @@ END IF;
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '5 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -87,8 +87,8 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'dispatches', jsonb_build_array(645),
         'skipped', jsonb_build_object('blocked-by-open-dependency', 1,
             'proposal-open', 1, 'missing-section', 1),
-        'halted', NULL, 'in_flight', false, 'dispatched_in_window', 0,
-        'daily_cap', 4, 'returned', jsonb_build_array(596),
+        'halted', NULL, 'in_flight', false, 'awaiting_review', 0,
+        'review_cap', 20, 'returned', jsonb_build_array(596),
         'dry_run', false)),
     (now() - interval '5 hours' + interval '8 seconds', 'run.dispatched',
      jsonb_build_object('cycle', cycle_id, 'issue', 645, 'attempt', 1,
@@ -121,7 +121,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '4 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -153,7 +153,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '3 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -186,7 +186,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '2 hours', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -222,7 +222,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '1 hour', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -250,7 +250,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '30 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -317,7 +317,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '28 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', true))
     RETURNING id INTO cycle_id;
@@ -329,7 +329,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
         'dispatches', jsonb_build_array(),
         'skipped', jsonb_build_object('attempts-exhausted', 1),
         'halted', 'run-in-flight', 'in_flight', true,
-        'dispatched_in_window', 3, 'daily_cap', 4,
+        'awaiting_review', 1, 'review_cap', 20,
         'returned', jsonb_build_array(), 'dry_run', true));
 
 -- 8. A cycle that failed outright: the tracker could not be read, so there
@@ -337,7 +337,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '25 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -353,7 +353,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '20 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -382,7 +382,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '15 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;
@@ -423,7 +423,7 @@ INSERT INTO journal.events (at, kind, payload) VALUES
 INSERT INTO journal.events (at, kind, payload) VALUES
     (now() - interval '12 minutes', 'cycle.started',
      jsonb_build_object('repo', repo, 'label', 'ready-for-agent',
-        'allowlist', jsonb_build_array('an-operator'), 'daily_cap', 4,
+        'allowlist', jsonb_build_array('an-operator'),
         'review_cap', 20, 'landing', 'propose',
         'dry_run', false))
     RETURNING id INTO cycle_id;

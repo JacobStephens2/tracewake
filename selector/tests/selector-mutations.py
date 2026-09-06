@@ -149,16 +149,10 @@ MUTATIONS = {
     # Concurrency arrives by accident: a second Run is dispatched while one is
     # still in flight.
     "in-flight-cap-ignored": (CYCLE, CYCLE_SUITE, "elif cycle_spend.in_flight:", "elif False:"),
-    # The daily cap stops bounding spend and the review pile.
-    "daily-cap-ignored": (CYCLE, CYCLE_SUITE,
-        "elif cycle_spend.recent_dispatches >= config.daily_cap:",
+    # The review cap stops bounding the review pile.
+    "review-cap-ignored": (CYCLE, CYCLE_SUITE,
+        'elif budget["remaining"] == 0:',
         "elif False:",
-    ),
-    # The cap window widens to never, so yesterday's dispatches stop aging out
-    # and the Selector wedges itself after four Runs, forever.
-    "cap-window-never-expires": (CYCLE, CYCLE_SUITE,
-        "CAP_WINDOW_HOURS = 24",
-        "CAP_WINDOW_HOURS = 99999",
     ),
     # An underspecified issue is seeded anyway, which is the case ADR 0014
     # says must be returned to the operator rather than guessed at.
@@ -237,8 +231,8 @@ MUTATIONS = {
     # Spend reads outcomes where it should read dispatches, so the ninety
     # minutes between the two rows - the in-flight lock itself - goes unread.
     "in-flight-lock-not-taken": (CYCLE, DISPATCH_SUITE,
-        "(CAP_WINDOW_HOURS, IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),",
-        "(CAP_WINDOW_HOURS, IN_FLIGHT_STALE_HOURS, events.RUN_OUTCOME),",
+        "(IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),",
+        "(IN_FLIGHT_STALE_HOURS, events.RUN_OUTCOME),",
     ),
     # The comment naming the gap says nothing, so an issue is taken out of the
     # queue with no record of why - the silence the loud skip exists to stop.
@@ -668,11 +662,11 @@ MUTATIONS = {
         '        "runs": [run for run in _runs(events) if not run.get("in_flight")],',
         '        "runs": _runs(events),',
     ),
-    # An unreadable Journal renders as a full budget, so the page promises
-    # four Runs remaining on the strength of rows it never read.
-    "an-unknown-budget-reads-as-full": (WINDOW, HISTORY_SUITE,
-        "            None if spent is None or cap is None else max(0, cap - spent)",
-        "            cap - (spent or 0)",
+    # An unreadable tracker renders as a full budget, so the page promises
+    # 20 Runs remaining on the strength of a queue it never read.
+    "an-unknown-budget-reads-as-full": (CYCLE, HISTORY_SUITE,
+        "    remaining = None if count is None or cap is None else max(0, cap - count)",
+        "    remaining = cap - (count or 0)",
     ),
     # A Run stops reporting how long it took, which is the one fact about it
     # that exists nowhere else: the box persists no record of a finished Run.
