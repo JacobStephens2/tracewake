@@ -166,6 +166,24 @@ loop_execution_boundary_egress_by_agent:
         made it required; the changelog itself is turned off in the adapter so
         this host is allowed for one reason rather than two.
 
+  # OpenAI Codex CLI. While `sbx` provides a `codex` template/kit, its required
+  # endpoints are declared with the boundary's egress so that model inference,
+  # session routing, and authentication token refreshes succeed under deny-all.
+  codex:
+    - host: api.openai.com:443
+      need: >-
+        Inference on the subscription. The primary API endpoint reached by
+        Codex for chat completions, responses, and model interaction.
+    - host: auth.openai.com:443
+      need: >-
+        OAuth token refresh during an Iteration. Codex subscription credentials
+        require refreshing access tokens against OpenAI's authentication
+        authority.
+    - host: chatgpt.com:443
+      need: >-
+        ChatGPT backend routing and session management when operating under
+        subscription credentials.
+
 # Four derived values, here rather than repeated inline, because each is named
 # in more than one task and a second copy is a second place to be wrong. All are
 # evaluated where they are used, not where they are written: they need the uid
