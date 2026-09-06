@@ -5,6 +5,7 @@
 #   github.sh <owner/repo> comment <number>            # body on stdin
 #   github.sh <owner/repo> relabel <number> <add> <remove>
 #   github.sh <owner/repo> checks <proposal-url-or-number>
+#   github.sh <owner/repo> update-branch <proposal-url-or-number>
 #
 # The default SELECTOR_ISSUE_COMMAND. This is the half of the Selector the
 # Loop's box deliberately cannot do: the box's fine-grained token holds no
@@ -27,6 +28,9 @@
 # and no change to cycle.py (ADR 0004). It reads GitHub Actions workflow runs
 # rather than check runs, which is a permission story rather than a preference
 # - see the `checks` arm below, and #273.
+#
+# `update-branch` brings an open proposal up to date with its base branch via
+# GitHub's update-branch endpoint.
 #
 # Exit codes: 0 done, 1 could not run or GitHub refused.
 
@@ -52,9 +56,9 @@ gh_refused() {
     die "could not read $1 on ${task_repo}: ${number}${said}"
 }
 
-task_repo="${1:?usage: github.sh <owner/repo> <comment|relabel> <number> ...}"
-action="${2:?usage: github.sh <owner/repo> <comment|relabel> <number> ...}"
-number="${3:?usage: github.sh <owner/repo> <comment|relabel> <number> ...}"
+task_repo="${1:?usage: github.sh <owner/repo> <comment|relabel|checks|update-branch> <number> ...}"
+action="${2:?usage: github.sh <owner/repo> <comment|relabel|checks|update-branch> <number> ...}"
+number="${3:?usage: github.sh <owner/repo> <comment|relabel|checks|update-branch> <number> ...}"
 
 [[ ${task_repo} =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
     die "repository must be owner/name, got ${task_repo}"
@@ -62,12 +66,12 @@ number="${3:?usage: github.sh <owner/repo> <comment|relabel> <number> ...}"
 # The two writing actions take an issue NUMBER, and nothing else: the number is
 # the whole of what says which issue is commented on or relabeled.
 #
-# `checks` is the exception, and it is deliberate rather than lax. cycle.py
-# holds a Proposal's URL - the box reports it, nothing parses a number out of
-# it - so demanding a number here would break the one path that runs after
-# every successful Run. It did, on the first unattended dispatch: the Run
-# worked, and the cycle died reading the checks of the Proposal it had just
-# produced (tourbot #712, 2026-08-31).
+# `checks` and `update-branch` are the exceptions, and it is deliberate rather
+# than lax. cycle.py holds a Proposal's URL - the box reports it, nothing
+# parses a number out of it - so demanding a number here would break the one
+# path that runs after every successful Run. It did, on the first unattended
+# dispatch: the Run worked, and the cycle died reading the checks of the
+# Proposal it had just produced (tourbot #712, 2026-08-31).
 #
 # A URL is still checked twice over. It must be a pull request URL, because
 # `gh pr view` would happily take a branch name and answer about a Proposal
@@ -76,6 +80,13 @@ number="${3:?usage: github.sh <owner/repo> <comment|relabel> <number> ...}"
 # --repo, so a foreign URL is not a mismatch gh would catch - it is a
 # different Proposal, answered as though it were this one.
 if [[ ${action} == checks ]]; then
+    if [[ ${number} =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then
+        [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||
+            die "the proposal ${number} is not in ${task_repo}"
+    elif [[ ! ${number} =~ ^[1-9][0-9]*$ ]]; then
+        die "proposal must be a pull request URL or a number, got ${number}"
+    fi
+elif [[ ${action} == update-branch ]]; then
     if [[ ${number} =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then
         [[ ${BASH_REMATCH[1]} == "${task_repo}" ]] ||
             die "the proposal ${number} is not in ${task_repo}"
@@ -208,7 +219,12 @@ case "${action}" in
               end' ||
             die "could not read the checks on ${task_repo} ${number}"
         ;;
+    update-branch)
+        gh pr update-branch "${number}" --repo "${task_repo}" >/dev/null ||
+            die "GitHub refused update-branch on ${task_repo} proposal ${number}"
+        ;;
     *)
         die "unknown action: ${action}"
         ;;
 esac
+

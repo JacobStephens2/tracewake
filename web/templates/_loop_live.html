@@ -183,8 +183,11 @@
         <p class="detail">nothing here.</p>
         {% endif %}
         {% for card in col.cards %}
-        <article class="card">
+        <article class="card{% if card.conflicting %} card-conflicting{% endif %}">
           <a href="{{ card.url }}">#{{ card.number }}</a> {{ card.title }}
+          {% if card.conflicting %}
+          <span class="badge badge-conflicting">conflicting</span>
+          {% endif %}
           {% if card.reason %}
           <p class="detail"><code>{{ card.reason }}</code> &middot; {{ card.detail }}</p>
           {% endif %}

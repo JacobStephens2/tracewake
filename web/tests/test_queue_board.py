@@ -167,3 +167,42 @@ def test_an_issue_carrying_two_labels_is_drawn_once(db, tracker):
     body = client.get("/loop").text
     assert "#110" in column(body, "eligible")
     assert "#110" not in column(body, "awaiting-review")
+
+
+def test_conflicting_proposal_shows_as_conflicting_on_board(db, tracker):
+    """AC 2: A conflicting Proposal is not updated and is shown as conflicting on the board."""
+    tracker.queue(
+        "awaiting-review",
+        [
+            tracker.issue(
+                201,
+                proposals=[
+                    {
+                        "number": 15,
+                        "url": "https://example.invalid/pull/15",
+                        "state": "OPEN",
+                        "mergeable": "CONFLICTING",
+                        "mergeStateStatus": "DIRTY",
+                    }
+                ],
+            ),
+            tracker.issue(
+                202,
+                proposals=[
+                    {
+                        "number": 16,
+                        "url": "https://example.invalid/pull/16",
+                        "state": "OPEN",
+                        "mergeable": "MERGEABLE",
+                        "mergeStateStatus": "CLEAN",
+                    }
+                ],
+            ),
+        ],
+    )
+    body = client.get("/loop").text
+    awaiting = column(body, "awaiting-review")
+    assert "#201" in awaiting
+    assert "conflicting" in awaiting
+    assert "#202" in awaiting
+

@@ -471,7 +471,11 @@ if add_label:
             fi
             exit "${CHECKS_EXIT:-0}"
         fi
+        if [[ ${2:-} == update-branch ]]; then
+            exit "${UPDATE_BRANCH_EXIT:-0}"
+        fi
         exit "${ISSUE_EXIT:-0}"
+
     '''))
 
     # Scripted here rather than in the one suite that asserts on it, because

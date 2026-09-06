@@ -444,6 +444,104 @@ def eligibility(record: dict, config: Config, attempts: int) -> tuple[str, str] 
     return None
 
 
+# --- Proposal freshness ----------------------------------------------------
+
+
+def is_conflicting(proposal: dict) -> bool:
+    """True when an open Proposal cannot be cleanly merged into its base."""
+    if proposal.get("state", "OPEN") != "OPEN":
+        return False
+    if proposal.get("conflicting") is True:
+        return True
+    mergeable = proposal.get("mergeable")
+    if mergeable is False:
+        return True
+    if mergeable is not None and str(mergeable).upper() in ("CONFLICTING", "FALSE"):
+        return True
+    status = proposal.get("mergeStateStatus")
+    if status is not None and str(status).upper() in ("DIRTY",):
+        return True
+    return False
+
+
+def is_behind_and_mergeable(proposal: dict) -> bool:
+    """True when an open Proposal is behind its base branch and mergeable."""
+    if proposal.get("state", "OPEN") != "OPEN":
+        return False
+    if is_conflicting(proposal):
+        return False
+    status = str(proposal.get("mergeStateStatus") or "").upper()
+    behind = proposal.get("behind") is True or status == "BEHIND"
+    if not behind:
+        return False
+    mergeable = proposal.get("mergeable")
+    if mergeable is not None:
+        m_str = str(mergeable).upper()
+        if m_str not in ("MERGEABLE", "TRUE"):
+            return False
+    return True
+
+
+def update_proposals_freshness(
+    conn: psycopg.Connection,
+    cycle_id: int,
+    config: Config,
+    dispatch_config: dispatch.DispatchConfig,
+    issues: list[dict],
+    *,
+    updated: set,
+    failed: set,
+) -> None:
+    """Update all open proposals behind their base and mergeable during a drain.
+
+    An update is journaled once (`proposal.updated`). A forge refusal is
+    journaled (`proposal.update-failed`) and fails no dispatch.
+    """
+    for issue_record in issues:
+        issue_number = int(issue_record.get("number"))
+        for p in issue_record.get("proposals") or []:
+            proposal_target = p.get("number") if p.get("number") is not None else p.get("url")
+            if not proposal_target:
+                continue
+            keys = [proposal_target]
+            if p.get("number") is not None:
+                keys.append(p.get("number"))
+            if p.get("url"):
+                keys.append(p.get("url"))
+            if any(k in updated or k in failed for k in keys):
+                continue
+            if not is_behind_and_mergeable(p):
+                continue
+            try:
+                dispatch.update_branch(dispatch_config, config.task_repo, proposal_target)
+                journal.append(
+                    conn,
+                    *events.proposal_updated(
+                        cycle=cycle_id,
+                        proposal=proposal_target,
+                        url=p.get("url"),
+                        number=p.get("number"),
+                        issue=issue_number,
+                    ),
+                )
+                for k in keys:
+                    updated.add(k)
+            except dispatch.DispatchFailed as exc:
+                journal.append(
+                    conn,
+                    *events.proposal_update_failed(
+                        cycle=cycle_id,
+                        proposal=proposal_target,
+                        url=p.get("url"),
+                        number=p.get("number"),
+                        issue=issue_number,
+                        error=str(exc),
+                    ),
+                )
+                for k in keys:
+                    failed.add(k)
+
+
 # --- Journal state ----------------------------------------------------------
 #
 # The caps and the retry budget are the Selector's own history, and the
@@ -1264,14 +1362,28 @@ def run_cycle(
     halted: str | None = None
     last_spend: Spend | None = None
     last_budget: dict | None = None
+    updated_proposals: set = set()
+    failed_proposals: set = set()
 
     while True:
         try:
             queue = fetch_queue(config)
-            budget = review_budget(config, handover=queue, raise_on_error=True)
+            review = fetch_queue(config, config.review_label)
+            budget = review_budget(config, handover=queue, review=review, raise_on_error=True)
         except CycleFailed as exc:
             journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
             raise
+
+        if not dry_run:
+            update_proposals_freshness(
+                conn,
+                cycle_id,
+                config,
+                dispatch_config,
+                queue + (review or []),
+                updated=updated_proposals,
+                failed=failed_proposals,
+            )
 
         last_budget = budget
 
@@ -1434,6 +1546,7 @@ def run_cycle(
     summary["return_failures"] = return_failures
     summary["outcome"] = outcomes[-1] if outcomes else None
     summary["route"] = routes[-1] if routes else None
+    summary["updated_proposals"] = sorted(str(p) for p in updated_proposals)
     return summary
 
 
@@ -1446,6 +1559,8 @@ def _report(summary: dict) -> None:
         print(f"returned     {summary['returned']} (commented, swapped to needs-info)")
     if summary.get("return_failures"):
         print(f"  FAILED     {summary['return_failures']} issue(s) could not be returned")
+    if summary.get("updated_proposals"):
+        print(f"proposals    {', '.join(str(p) for p in summary['updated_proposals'])} updated")
     if summary.get("dispatches"):
         print(f"dispatches   {', '.join(f'#{n}' for n in summary['dispatches'])}")
     elif summary["picked"]:

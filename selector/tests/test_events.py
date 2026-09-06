@@ -145,8 +145,9 @@ def test_shipping_code_spells_kinds_only_in_the_vocabulary():
     shipping = sorted(p for p in selector.glob("*.py") if p.name != "events.py")
     shipping += [web / "app.py", web / "preview.py"]
     pattern = re.compile(
-        r"""["'](cycle|run|issue|box|guardrail)\.([a-z][a-z-]*)["']"""
+        r"""["'](cycle|run|issue|box|guardrail|proposal)\.([a-z][a-z-]*)["']"""
     )
+
     strays = []
     for path in shipping:
         for n, line in enumerate(path.read_text().splitlines(), 1):
@@ -465,3 +466,44 @@ def test_a_guardrail_reading_is_one_record_whichever_kind_wrote_it():
     kind, payload = events.guardrail_unreadable(cycle=7, error="gh: boom")
     reading = events.guardrail_record(row(kind, payload))
     assert (reading.readable, reading.error) == (False, "gh: boom")
+
+
+# --- Proposal freshness rows ------------------------------------------------
+
+def test_proposal_updated_and_failed_events_and_records():
+    kind, payload = events.proposal_updated(
+        cycle=7, proposal=12, url="https://github.invalid/acme/widgets/pull/12",
+        issue=630)
+    assert kind == "proposal.updated"
+    assert payload["cycle"] == 7
+    assert payload["proposal"] == 12
+    assert payload["number"] == 12
+    assert payload["url"] == "https://github.invalid/acme/widgets/pull/12"
+    assert payload["issue"] == 630
+
+    rec = events.proposal_updated_record(row(kind, payload, id=99))
+    assert rec.id == 99
+    assert rec.cycle == 7
+    assert rec.proposal == 12
+    assert rec.url == "https://github.invalid/acme/widgets/pull/12"
+    assert rec.issue == 630
+
+    kind_f, payload_f = events.proposal_update_failed(
+        cycle=7, proposal=13, error="GitHub refused update-branch",
+        url="https://github.invalid/acme/widgets/pull/13", issue=631)
+    assert kind_f == "proposal.update-failed"
+    assert payload_f["cycle"] == 7
+    assert payload_f["proposal"] == 13
+    assert payload_f["number"] == 13
+    assert payload_f["error"] == "GitHub refused update-branch"
+    assert payload_f["url"] == "https://github.invalid/acme/widgets/pull/13"
+    assert payload_f["issue"] == 631
+
+    rec_f = events.proposal_update_failed_record(row(kind_f, payload_f, id=100))
+    assert rec_f.id == 100
+    assert rec_f.cycle == 7
+    assert rec_f.proposal == 13
+    assert rec_f.error == "GitHub refused update-branch"
+    assert rec_f.url == "https://github.invalid/acme/widgets/pull/13"
+    assert rec_f.issue == 631
+
