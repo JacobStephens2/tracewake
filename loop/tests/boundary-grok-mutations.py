@@ -1,11 +1,8 @@
 """The deliberate breaks tests/mutation-check.sh applies to agents/grok.sh.
 
-The same shape as boundary-mutations.py, and deliberately not the same list.
-The properties Grok Build shares with Claude Code are mutated here too - a
-suite that only covered the differences would let the shared ones rot the day
-somebody edited this adapter alone. The ones only this adapter can lose are the
-pin, the install, the metered-key doors, and the vendor's own wording for the
-turn bound.
+Vendor-specific properties of Grok Build: the pinned version and installer,
+credential placement and verification, metered-key doors, vendor invocation arguments,
+and turn bound wording. Structural boundary properties live in boundary-harness-mutations.py.
 """
 
 import pathlib
@@ -14,43 +11,31 @@ import sys
 MUTATIONS = {
     # The agent runs on the host, beside the boundary rather than inside it.
     "no-boundary": (
-        '"${sbx}" exec --workdir "${workspace}" "${sandbox}" \\\n'
-        "    env GROK_TELEMETRY_ENABLED=0",
-        "env GROK_TELEMETRY_ENABLED=0",
-    ),
-    # The sandbox is never removed, so every Iteration leaves one behind.
-    "sandbox-leaked": (
-        '    "${sbx}" rm --force "${sandbox}" >/dev/null 2>&1 || true',
-        "    :",
+        '    "${sbx}" exec --workdir "${workspace}" "${sandbox}" \\\n'
+        "        env GROK_TELEMETRY_ENABLED=0",
+        "        env GROK_TELEMETRY_ENABLED=0",
     ),
     # The GitHub token goes inside the boundary, and Proposal-Only Output stops
     # being a property of what the agent can reach. It is the one first-Run
     # property #84 exists to confirm transfers, so it is mutated here rather
     # than assumed to hold because the other adapter holds it.
     "token-inside-the-boundary": (
-        'put "${gitconfig}" "${guest_home}/.gitconfig" 0644',
-        'put "${gitconfig}" "${guest_home}/.gitconfig" 0644\n'
-        'put "${HOME}/.config/loop/github-token"'
+        '    put "${gitconfig}" "${guest_home}/.gitconfig" 0644',
+        '    put "${gitconfig}" "${guest_home}/.gitconfig" 0644\n'
+        '    put "${HOME}/.config/loop/github-token"'
         ' "${guest_home}/.config/loop/github-token" 0600',
-    ),
-    # A missing credential is skipped instead of fatal, so an Iteration runs and
-    # commits unsigned.
-    "missing-credential-skipped": (
-        '    [[ -f ${src} ]] ||\n        die "${src} is not on this box'
-        ' - a Run needs it inside the boundary. Apply ansible/loop.yml."',
-        "    [[ -f ${src} ]] || return 0",
     ),
     # A Run starts with no model credential on the box and finds out one
     # Iteration at a time.
     "model-credential-unchecked": (
-        '[[ -f "${grok_home}/auth.json" ]] ||',
-        "[[ true ]] ||",
+        '    [[ -f "${grok_home}/auth.json" ]] ||',
+        "    [[ true ]] ||",
     ),
     # The turn bound firing stops being told apart from a broken invocation.
     # Under the other vendor this ended a whole Run at Iteration 1.
     "turn-bound-unrecognised": (
-        "if ((agent_rc != 0)) && grep -qiF 'max turns reached' -- \"${transcript}\"; then",
-        "if false; then",
+        "    grep -qiF 'max turns reached' -- \"$1\"",
+        "    false",
     ),
     # The other vendor's wording, which is the mistake this adapter exists to
     # make impossible: the two agents report the same event in different words,
@@ -60,35 +45,16 @@ MUTATIONS = {
         "grep -qiF 'max turns reached'",
         "grep -qF 'Reached max turns'",
     ),
-    # `pipefail` back on for the agent's pipeline. `set -e` then ends this
-    # script the moment the agent exits non-zero, so the turn bound is never
-    # recognised.
-    "pipefail-kills-detection": (
-        'set +o pipefail\n"${sbx}" exec --workdir',
-        '"${sbx}" exec --workdir',
-    ),
     # The turn bound the Contract declared never reaches the agent.
     "turn-bound-dropped": (
-        '--max-turns "${max_turns}" \\',
-        "--max-turns 99 \\",
+        '        --max-turns "${max_turns}" \\',
+        "        --max-turns 99 \\",
     ),
     # The mode the first Run failed under: file edits auto-approved, Bash still
     # gated, so no Iteration can commit.
     "permission-mode-gates-bash": (
-        "--permission-mode bypassPermissions \\",
-        "--permission-mode acceptEdits \\",
-    ),
-    # The Loop's scripts stop being mounted, so the Plan's completeness check is
-    # outside the session's allowed directories.
-    "check-not-mounted": (
-        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}" "${loop_dir}:ro"',
-        '"${sbx}" create --quiet --name "${sandbox}" "${guest_template}" "${workspace}"',
-    ),
-    # The scripts are mounted writable, so a Run could edit the thing that
-    # grades it.
-    "check-mounted-writable": (
-        '"${loop_dir}:ro" >&2',
-        '"${loop_dir}" >&2',
+        "        --permission-mode bypassPermissions \\",
+        "        --permission-mode acceptEdits \\",
     ),
     # --- What only this adapter can lose ------------------------------------
     #
@@ -104,21 +70,33 @@ MUTATIONS = {
     # that fell back to a channel pointer puts an unobserved version inside the
     # Run and nothing notices.
     "pin-not-verified": (
-        '[[ ${installed} == *"${LOOP_GROK_VERSION}"* ]] ||',
-        "[[ true ]] ||",
+        '    [[ ${installed} == *"${LOOP_GROK_VERSION}"* ]] ||',
+        "    [[ true ]] ||",
     ),
     # The credential is placed before the installer runs, into the directory the
     # installer writes into.
     "credential-placed-before-install": (
-        'put "${grok_home}/auth.json" "${guest_home}/.grok/auth.json" 0600\n',
-        "",
-    ),
-    # The metered key guard goes away entirely: a stray XAI_API_KEY moves every
-    # Iteration onto per-token billing with no error and no output difference.
-    # Spec #73 story 32, and the failure shape that broke Remote Control.
-    "metered-key-unguarded": (
-        "if ((${#metered_found[@]} > 0)); then",
-        "if false; then",
+        '    "${sbx}" exec "${sandbox}" bash -lc \\\n'
+        '        "set -o pipefail; curl -fsSL https://x.ai/cli/install.sh | bash -s ${LOOP_GROK_VERSION}" >&2 ||\n'
+        '        die "could not install the agent inside the boundary - is x.ai:443 on the egress allowlist? See ansible/roles/loop_execution_boundary/defaults/main.yml"\n'
+        '\n'
+        '    guest_agent="${guest_home}/.grok/bin/grok"\n'
+        '    local installed\n'
+        '    installed="$("${sbx}" exec "${sandbox}" "${guest_agent}" --version 2>&1 || true)"\n'
+        '    [[ ${installed} == *"${LOOP_GROK_VERSION}"* ]] ||\n'
+        '        die "the boundary is holding \'${installed}\', not the pinned ${LOOP_GROK_VERSION}"\n'
+        '\n'
+        '    put "${grok_home}/auth.json" "${guest_home}/.grok/auth.json" 0600',
+        '    put "${grok_home}/auth.json" "${guest_home}/.grok/auth.json" 0600\n'
+        '    "${sbx}" exec "${sandbox}" bash -lc \\\n'
+        '        "set -o pipefail; curl -fsSL https://x.ai/cli/install.sh | bash -s ${LOOP_GROK_VERSION}" >&2 ||\n'
+        '        die "could not install the agent inside the boundary - is x.ai:443 on the egress allowlist? See ansible/roles/loop_execution_boundary/defaults/main.yml"\n'
+        '\n'
+        '    guest_agent="${guest_home}/.grok/bin/grok"\n'
+        '    local installed\n'
+        '    installed="$("${sbx}" exec "${sandbox}" "${guest_agent}" --version 2>&1 || true)"\n'
+        '    [[ ${installed} == *"${LOOP_GROK_VERSION}"* ]] ||\n'
+        '        die "the boundary is holding \'${installed}\', not the pinned ${LOOP_GROK_VERSION}"',
     ),
     # The guard covers the documented name only. It reads as complete and lets
     # every other door the vendor honours through.
@@ -144,8 +122,8 @@ MUTATIONS = {
     # which the `shell` template refuses. An Iteration then dies placing the
     # signing key - after building a boundary and installing an agent.
     "guest-dir-unprivileged": (
-        '"${sbx}" exec "${sandbox}" sudo mkdir -p "${dir}"',
-        '"${sbx}" exec "${sandbox}" mkdir -p "${dir}"',
+        "adapter_privileged_put=true",
+        "adapter_privileged_put=false",
     ),
 }
 

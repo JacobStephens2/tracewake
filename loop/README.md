@@ -36,8 +36,9 @@ was deliberately left off are in
 | `seed-run.sh` | The setup step. One chosen task in, a Plan and a Progress Log out (#82). |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `propose.sh` | Proposal-Only Output. The push and the draft pull request (#83). |
-| `agents/claude.sh` | The first agent as one substitutable command (ADR 0004), inside the Execution Boundary. |
-| `agents/grok.sh` | The second agent (#84). Agent-less boundary, installed inside at a pin. |
+| `boundary-harness.sh` | The Execution Boundary harness (ADR 0024). Boundary lifecycle, contract dispatch, and credential isolation. |
+| `agents/claude.sh` | The first agent as a vendor leaf of boundary-harness.sh (ADR 0004, ADR 0024). |
+| `agents/grok.sh` | The second agent as a vendor leaf (#84, ADR 0024). Agent-less boundary, installed inside at a pin. |
 | `task-sources/github.sh` | The task source as one substitutable command. One task, by number. |
 | `pr-sources/github.sh` | The pull-request surface as one substitutable command. |
 | `notify-sources/github-pr-comment.sh` | The notification surface. A comment on the proposal (#110). |
@@ -572,12 +573,13 @@ adapter answers. None of the three restates a name, so they cannot disagree
 about what a metered key is called - and an adapter that answers nothing stops
 the Run rather than shortening the check.
 
-That is why the adapter's contract has one query alongside its two arguments:
+That is why the adapter's contract has queries alongside its two arguments, declared in one place by `boundary-harness.sh` (ADR 0024):
 
 ```
-<adapter> <prompt-file> <max-turns>     one Iteration
+<adapter> <prompt-file> <max-turns>     one Iteration inside the boundary
 <adapter> --metered-env-names           one name per line
 <adapter> --guest-template              the image the boundary is built from
+<adapter> --credential-expiry           when the model credential expires (ISO 8601 UTC)
 ```
 
 The third is read by the Selector's box card (#156) rather than by the Loop, so
