@@ -48,6 +48,7 @@ those rather than reading defaults out of the code.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -280,6 +281,104 @@ class Target:
 
 
 @dataclass(frozen=True)
+class GuardrailTree:
+    """One tree the Guardrail watches: its repository, the ref deployed from it,
+    the working copy on the controller, and the paths file or list of paths."""
+
+    repo: str
+    ref: str
+    tree: Path
+    paths: str | Path
+
+    def environ(self) -> dict[str, str]:
+        return {
+            "SELECTOR_PROTECTED_REPO": self.repo,
+            "SELECTOR_PROTECTED_REF": self.ref,
+            "SELECTOR_PROTECTED_TREE": str(self.tree),
+            "SELECTOR_PROTECTED_PATHS": str(self.paths),
+        }
+
+
+def load_guardrail_trees(environ: dict[str, str] | None = None) -> tuple[GuardrailTree, ...]:
+    """Parse every declared guardrail tree from environment.
+
+    Reads `SELECTOR_GUARDRAIL_TREES` if present (as JSON or semicolon/line-separated
+    `repo:ref:tree:paths`), or falls back to `SELECTOR_PROTECTED_REPO` /
+    `SELECTOR_PROTECTED_REF` / `SELECTOR_PROTECTED_TREE` / `SELECTOR_PROTECTED_PATHS`.
+    """
+    env = os.environ.get if environ is None else environ.get
+    raw = env("SELECTOR_GUARDRAIL_TREES")
+    if raw and raw.strip():
+        raw = raw.strip()
+        parsed: list[GuardrailTree] = []
+        if raw.startswith("["):
+            try:
+                data = json.loads(raw)
+            except Exception as exc:
+                raise NotConfigured(
+                    f"SELECTOR_GUARDRAIL_TREES is not valid JSON: {exc}"
+                ) from exc
+            if not isinstance(data, list):
+                raise NotConfigured("SELECTOR_GUARDRAIL_TREES must be a list")
+            for item in data:
+                if isinstance(item, dict):
+                    repo = item.get("repo") or item.get("repository")
+                    ref = item.get("ref")
+                    tree = item.get("tree")
+                    paths = item.get("paths")
+                elif isinstance(item, (list, tuple)) and len(item) >= 4:
+                    repo, ref, tree, paths = item[0], item[1], item[2], item[3]
+                else:
+                    raise NotConfigured(
+                        f"SELECTOR_GUARDRAIL_TREES entry is malformed: {item}"
+                    )
+                if not (repo and ref and tree and paths):
+                    raise NotConfigured(
+                        f"SELECTOR_GUARDRAIL_TREES entry missing required field: {item}"
+                    )
+                parsed.append(GuardrailTree(
+                    repo=str(repo).strip(),
+                    ref=str(ref).strip(),
+                    tree=Path(str(tree).strip()),
+                    paths=str(paths).strip(),
+                ))
+        else:
+            entries = [e.strip() for e in raw.replace("\n", ";").split(";") if e.strip()]
+            for entry in entries:
+                if ":" in entry:
+                    parts = [p.strip() for p in entry.split(":", 3)]
+                else:
+                    parts = [p.strip() for p in entry.split(",", 3)]
+                if len(parts) < 4 or not all(parts):
+                    raise NotConfigured(
+                        f"SELECTOR_GUARDRAIL_TREES entry is malformed: {entry} (expected repo:ref:tree:paths)"
+                    )
+                parsed.append(GuardrailTree(
+                    repo=parts[0],
+                    ref=parts[1],
+                    tree=Path(parts[2]),
+                    paths=parts[3],
+                ))
+        if not parsed:
+            raise NotConfigured("SELECTOR_GUARDRAIL_TREES declared no trees")
+        return tuple(parsed)
+
+    repo = env("SELECTOR_PROTECTED_REPO")
+    ref = env("SELECTOR_PROTECTED_REF")
+    if repo and ref:
+        here = Path(__file__).resolve().parent
+        tree = Path(env("SELECTOR_PROTECTED_TREE") or str(here.parent))
+        paths = env("SELECTOR_PROTECTED_PATHS") or str(here / "guardrail-sources" / "paths.txt")
+        return (GuardrailTree(
+            repo=repo.strip(),
+            ref=ref.strip(),
+            tree=tree,
+            paths=paths,
+        ),)
+    return ()
+
+
+@dataclass(frozen=True)
 class Instance:
     """The instance's own values: what is the same for every target.
 
@@ -291,6 +390,7 @@ class Instance:
     box_host: str
     protected_repo: str
     protected_ref: str
+    guardrail_trees: tuple[GuardrailTree, ...]
 
     @classmethod
     def from_env(cls) -> "Instance":
@@ -300,13 +400,20 @@ class Instance:
         about them in the order it would fill them in rather than in whatever
         order a dict happened to iterate.
         """
-        for name, what in REQUIRED_INSTANCE_VARS.items():
-            if not os.environ.get(name):
-                missing(name, what)
+        if not os.environ.get("SELECTOR_BOX_HOST"):
+            missing("SELECTOR_BOX_HOST", REQUIRED_INSTANCE_VARS["SELECTOR_BOX_HOST"])
+        if not os.environ.get("SELECTOR_GUARDRAIL_TREES"):
+            for name in ("SELECTOR_PROTECTED_REPO", "SELECTOR_PROTECTED_REF"):
+                if not os.environ.get(name):
+                    missing(name, REQUIRED_INSTANCE_VARS[name])
+        trees = load_guardrail_trees()
+        protected_repo = os.environ.get("SELECTOR_PROTECTED_REPO") or (trees[0].repo if trees else "")
+        protected_ref = os.environ.get("SELECTOR_PROTECTED_REF") or (trees[0].ref if trees else "")
         return cls(
             box_host=os.environ["SELECTOR_BOX_HOST"],
-            protected_repo=os.environ["SELECTOR_PROTECTED_REPO"],
-            protected_ref=os.environ["SELECTOR_PROTECTED_REF"],
+            protected_repo=protected_repo,
+            protected_ref=protected_ref,
+            guardrail_trees=trees,
         )
 
 

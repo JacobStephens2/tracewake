@@ -92,9 +92,15 @@
         <span class="detail">{{ guardrail.error }} &middot; {{ guardrail.at }}</span>
         {% elif guardrail.protected %}
         <span class="cell-value guarded">the executed paths are review-gated</span>
-        <span class="detail"><code>{{ guardrail.ref }}</code>
-          at <code>{{ guardrail.ref_head or "unknown" }}</code>
-          &middot; {{ guardrail.rules | join(", ") }}
+        <span class="detail">
+          {%- if guardrail.trees -%}
+            {%- for tree in guardrail.trees -%}
+              <code>{{ tree.repo }}</code> (<code>{{ tree.ref }}</code> at <code>{{ tree.ref_head or "unknown" }}</code>)
+              {%- if not loop.last %} &middot; {% endif -%}
+            {%- endfor -%}
+          {%- else -%}
+            <code>{{ guardrail.ref }}</code> at <code>{{ guardrail.ref_head or "unknown" }}</code> &middot; {{ guardrail.rules | join(", ") }}
+          {%- endif %}
           &middot; {{ guardrail.paths | length }} declared path(s) unchanged
           &middot; read {{ guardrail.at }}</span>
         {% else %}

@@ -158,3 +158,75 @@ def test_a_guardrail_that_cannot_be_read_does_not_stop_the_cycle(db, box):
 
     assert len(events(db, "run.dispatched")) == 1
     assert last(db, "cycle.finished")["picked"] == 645
+
+
+# --- Multi-tree Guardrail (#14) ---------------------------------------------
+
+
+TREES_ENV = (
+    '[{"repo": "acme/tracewake", "ref": "main", "tree": "/srv/tracewake", "paths": "paths1.txt"}, '
+    '{"repo": "acme/config", "ref": "master", "tree": "/srv/config", "paths": "paths2.txt"}]'
+)
+
+
+def test_two_declared_trees_are_read_in_one_cycle_and_green_only_when_both_are(
+    db, box
+):
+    # Both trees protected
+    box.run(db, [issue(645)], SELECTOR_GUARDRAIL_TREES=TREES_ENV)
+
+    assert box.commands().count("guardrail ") == 2
+    row = one(db, "guardrail.observed")
+    assert row["protected"] is True
+    assert len(row.get("trees", [])) == 2
+
+    # Second tree is unprotected (missing pull_request)
+    box.guardrail(
+        GUARDRAIL.replace(
+            "SELECTOR_GUARDRAIL_RULES=deletion,non_fast_forward,pull_request",
+            "SELECTOR_GUARDRAIL_RULES=deletion,non_fast_forward",
+        ),
+        repo="acme/config",
+    )
+    box.run(db, [issue(645)], SELECTOR_GUARDRAIL_TREES=TREES_ENV)
+
+    # Newest row
+    row = last(db, "guardrail.observed")
+    assert row["protected"] is False
+    assert "acme/config" in row["detail"]
+    assert "pull_request" in row["detail"]
+
+
+def test_a_tree_the_command_did_not_answer_for_counts_against_the_verdict(
+    db, box
+):
+    """Unknown is never green: if one tree cannot be read, it counts against the verdict."""
+    box.guardrail_command(
+        'if [[ "${SELECTOR_PROTECTED_REPO}" == "acme/config" ]]; then\n'
+        '    printf "gh: error reading config rules\\n" >&2\n'
+        '    exit 1\n'
+        'fi\n'
+        'cat "@GUARDRAIL@"\n'
+    )
+    box.run(db, [issue(645)], SELECTOR_GUARDRAIL_TREES=TREES_ENV)
+
+    row = one(db, "guardrail.observed")
+    assert row["protected"] is False
+    assert "acme/config" in row["detail"]
+
+
+def test_the_chip_names_which_tree_and_which_rule_failed(db, box):
+    box.guardrail(
+        GUARDRAIL.replace(
+            "SELECTOR_GUARDRAIL_RULES=deletion,non_fast_forward,pull_request",
+            "SELECTOR_GUARDRAIL_RULES=non_fast_forward,pull_request",
+        ),
+        repo="acme/tracewake",
+    )
+    box.run(db, [issue(645)], SELECTOR_GUARDRAIL_TREES=TREES_ENV)
+
+    row = one(db, "guardrail.observed")
+    assert row["protected"] is False
+    assert "acme/tracewake" in row["detail"]
+    assert "deletion" in row["detail"]
+

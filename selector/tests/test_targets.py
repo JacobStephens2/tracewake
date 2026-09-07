@@ -273,3 +273,85 @@ def test_the_example_instance_file_declares_every_required_value():
     }
     assert set(targets.REQUIRED_INSTANCE_VARS) <= declared
     assert targets.TARGETS_FILE_VAR in declared
+
+
+# --- Multi-tree Guardrail configuration (#14) --------------------------------
+
+
+def test_guardrail_trees_parsed_from_json_list_of_objects(monkeypatch):
+    monkeypatch.setenv(
+        "SELECTOR_GUARDRAIL_TREES",
+        '[{"repo": "acme/tracewake", "ref": "main", "tree": "/srv/tracewake", "paths": "paths1.txt"}, '
+        '{"repo": "acme/config", "ref": "master", "tree": "/srv/config", "paths": "paths2.txt"}]',
+    )
+    trees = targets.load_guardrail_trees()
+    assert len(trees) == 2
+    assert trees[0].repo == "acme/tracewake"
+    assert trees[0].ref == "main"
+    assert str(trees[0].tree) == "/srv/tracewake"
+    assert str(trees[0].paths) == "paths1.txt"
+    assert trees[1].repo == "acme/config"
+    assert trees[1].ref == "master"
+    assert str(trees[1].tree) == "/srv/config"
+    assert str(trees[1].paths) == "paths2.txt"
+
+
+def test_guardrail_trees_parsed_from_json_list_of_tuples(monkeypatch):
+    monkeypatch.setenv(
+        "SELECTOR_GUARDRAIL_TREES",
+        '[["acme/tracewake", "main", "/srv/tracewake", "paths1.txt"], '
+        '["acme/config", "master", "/srv/config", "paths2.txt"]]',
+    )
+    trees = targets.load_guardrail_trees()
+    assert len(trees) == 2
+    assert trees[0].repo == "acme/tracewake"
+    assert trees[1].repo == "acme/config"
+
+
+def test_guardrail_trees_parsed_from_delimited_string(monkeypatch):
+    monkeypatch.setenv(
+        "SELECTOR_GUARDRAIL_TREES",
+        "acme/tracewake:main:/srv/tracewake:paths1.txt;acme/config:master:/srv/config:paths2.txt",
+    )
+    trees = targets.load_guardrail_trees()
+    assert len(trees) == 2
+    assert trees[0].repo == "acme/tracewake"
+    assert trees[1].repo == "acme/config"
+
+
+def test_guardrail_trees_fallback_to_protected_repo_and_ref(monkeypatch):
+    monkeypatch.delenv("SELECTOR_GUARDRAIL_TREES", raising=False)
+    monkeypatch.setenv("SELECTOR_PROTECTED_REPO", "acme/tracewake")
+    monkeypatch.setenv("SELECTOR_PROTECTED_REF", "main")
+    monkeypatch.setenv("SELECTOR_PROTECTED_TREE", "/srv/tracewake")
+    monkeypatch.setenv("SELECTOR_PROTECTED_PATHS", "/srv/tracewake/paths.txt")
+    trees = targets.load_guardrail_trees()
+    assert len(trees) == 1
+    assert trees[0].repo == "acme/tracewake"
+    assert trees[0].ref == "main"
+    assert str(trees[0].tree) == "/srv/tracewake"
+    assert str(trees[0].paths) == "/srv/tracewake/paths.txt"
+
+
+def test_malformed_guardrail_trees_refuses_by_name(monkeypatch):
+    monkeypatch.setenv("SELECTOR_GUARDRAIL_TREES", "[invalid-json")
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.load_guardrail_trees()
+    assert "SELECTOR_GUARDRAIL_TREES" in str(raised.value)
+
+
+def test_guardrail_trees_satisfies_instance_configuration_without_legacy_vars(monkeypatch):
+    monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
+    monkeypatch.delenv("SELECTOR_PROTECTED_REPO", raising=False)
+    monkeypatch.delenv("SELECTOR_PROTECTED_REF", raising=False)
+    monkeypatch.setenv(
+        "SELECTOR_GUARDRAIL_TREES",
+        '[{"repo": "acme/tracewake", "ref": "main", "tree": "/srv/tracewake", "paths": "paths.txt"}]',
+    )
+    instance = targets.Instance.from_env()
+    assert instance.box_host == "root@box.invalid"
+    assert instance.protected_repo == "acme/tracewake"
+    assert instance.protected_ref == "main"
+    assert len(instance.guardrail_trees) == 1
+
+

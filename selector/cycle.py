@@ -216,6 +216,7 @@ class Config:
     guardrail_command: str
     guardrail_timeout_seconds: int
     board_timeout_seconds: int
+    guardrail_trees: tuple[targets.GuardrailTree, ...]
 
     @property
     def task_repo(self) -> str:
@@ -280,6 +281,7 @@ class Config:
             board_timeout_seconds=int(
                 env("SELECTOR_BOARD_TIMEOUT_SECONDS", "10")
             ),
+            guardrail_trees=targets.load_guardrail_trees(),
         )
 
 
@@ -717,30 +719,93 @@ def observe_guardrail(config: Config) -> tuple[dict | None, str | None]:
     from a shared working tree; a clean tree says nothing about what may be
     pushed to it tomorrow.
 
+    With multiple declared trees (issue #14), every tree is read and the chip
+    is green only when all of them are.
+
     Returns `(facts, None)` or `(None, error)`, and never raises. Like the box
     read, a guardrail that cannot be read does not end the cycle: it is a
     status read, and a Selector that stopped working because GitHub would not
     answer a question about its own rules would be a queue stopped by a
     dashboard. What it must not do is report green - see `guardrail_verdict`.
     """
-    # The list keys are where an absent key and an empty one part company, and
-    # the difference is the whole point: `UNREVIEWED=` is "nothing differs",
-    # no line at all is "the comparison did not happen", and reading the
-    # second as the first would report green for the one state this exists to
-    # catch. `read_facts` keeps them apart; `guardrail_verdict` decides what
-    # each of them means.
-    facts, error = read_facts(
-        config.guardrail_command,
-        config.guardrail_timeout_seconds,
-        GUARDRAIL_FACT_KEYS,
-        subject="the guardrail",
-        list_keys=GUARDRAIL_LIST_FACTS,
-        overlay=config.target.environ(),
-    )
-    if facts is None:
-        return None, error
-    protected, detail = guardrail_verdict(facts)
-    return {**facts, "protected": protected, "detail": detail}, None
+    trees = config.guardrail_trees or targets.load_guardrail_trees()
+    if not trees:
+        return None, "no guardrail trees declared"
+
+    tree_results: list[dict] = []
+    errors: list[str] = []
+
+    for tree in trees:
+        overlay = {
+            **config.target.environ(),
+            **tree.environ(),
+        }
+        facts, error = read_facts(
+            config.guardrail_command,
+            config.guardrail_timeout_seconds,
+            GUARDRAIL_FACT_KEYS,
+            subject=f"the guardrail for {tree.repo}",
+            list_keys=GUARDRAIL_LIST_FACTS,
+            overlay=overlay,
+        )
+        if facts is None:
+            err_msg = error or "command failed"
+            errors.append(f"{tree.repo}: {err_msg}")
+            tree_results.append({
+                "repo": tree.repo,
+                "ref": tree.ref,
+                "ref_head": None,
+                "rules": None,
+                "paths": None,
+                "unreviewed": None,
+                "protected": False,
+                "detail": f"{tree.repo}: could not be read ({err_msg})",
+                "error": err_msg,
+            })
+        else:
+            tree_facts = {**facts, "repo": tree.repo}
+            protected, detail = guardrail_verdict(tree_facts)
+            tree_results.append({
+                **tree_facts,
+                "protected": protected,
+                "detail": detail,
+                "error": None,
+            })
+
+    if all(t.get("error") is not None for t in tree_results):
+        return None, ("; ".join(errors) or "the guardrail could not be read")
+
+    all_protected = all(t["protected"] for t in tree_results)
+    details = [t["detail"] for t in tree_results if not t["protected"] and t.get("detail")]
+    overall_detail = "; ".join(details) or None
+
+    all_paths = [p for t in tree_results if t.get("paths") for p in t["paths"]]
+    all_unreviewed = [u for t in tree_results if t.get("unreviewed") for u in t["unreviewed"]]
+
+    if len(tree_results) == 1:
+        first = tree_results[0]
+        payload = {
+            "ref": first.get("ref"),
+            "ref_head": first.get("ref_head"),
+            "rules": first.get("rules"),
+            "paths": first.get("paths"),
+            "unreviewed": first.get("unreviewed"),
+            "protected": all_protected,
+            "detail": overall_detail,
+            "trees": tree_results,
+        }
+    else:
+        payload = {
+            "ref": ", ".join(t.get("ref") or "" for t in tree_results),
+            "ref_head": ", ".join(t.get("ref_head") or "unknown" for t in tree_results),
+            "rules": list(dict.fromkeys(r for t in tree_results if t.get("rules") for r in t["rules"])),
+            "paths": all_paths,
+            "unreviewed": all_unreviewed,
+            "protected": all_protected,
+            "detail": overall_detail,
+            "trees": tree_results,
+        }
+    return payload, None
 
 
 def guardrail_verdict(facts: dict) -> tuple[bool, str | None]:
@@ -753,26 +818,27 @@ def guardrail_verdict(facts: dict) -> tuple[bool, str | None]:
     """
     faults = []
     rules = facts.get("rules")
+    prefix = f"{facts['repo']}: " if facts.get("repo") else ""
     if rules is None:
-        faults.append(f"the rules on {facts.get('ref') or 'the ref'} could not be read")
+        faults.append(f"{prefix}the rules on {facts.get('ref') or 'the ref'} could not be read")
     else:
         missing = [rule for rule in REQUIRED_RULES if rule not in rules]
         if missing:
             faults.append(
-                f"{facts.get('ref') or 'the ref'} is missing "
+                f"{prefix}{facts.get('ref') or 'the ref'} is missing "
                 + ", ".join(missing)
             )
     unreviewed = facts.get("unreviewed")
     if unreviewed is None:
-        faults.append("the unreviewed-path comparison did not run")
+        faults.append(f"{prefix}the unreviewed-path comparison did not run")
     elif unreviewed:
         faults.append(
-            f"{len(unreviewed)} executed path(s) differ from "
+            f"{prefix}{len(unreviewed)} executed path(s) differ from "
             f"{facts.get('ref') or 'the protected ref'}: "
             + ", ".join(unreviewed)
         )
     if not facts.get("paths"):
-        faults.append("no executed paths were declared")
+        faults.append(f"{prefix}no executed paths were declared")
     return (not faults), ("; ".join(faults) or None)
 
 
@@ -1364,6 +1430,18 @@ def run_cycle(
     last_budget: dict | None = None
     updated_proposals: set = set()
     failed_proposals: set = set()
+    if not dry_run:
+        guardrail, guardrail_error = observe_guardrail(config)
+        journal.append(
+            conn,
+            *(
+                events.guardrail_observed(cycle=cycle_id, **guardrail)
+                if guardrail
+                else events.guardrail_unreadable(
+                    cycle=cycle_id, error=guardrail_error
+                )
+            ),
+        )
 
     while True:
         try:
@@ -1469,7 +1547,7 @@ def run_cycle(
             if first_pick is None:
                 first_pick = pick
 
-        # Before each dispatch: read box facts and guardrail.
+        # Before each dispatch: read box facts.
         # Not in a dry run: a dry run reaches the tracker and nothing else, and
         # that property is worth more than a status card on a cycle that changed
         # nothing.
@@ -1481,21 +1559,6 @@ def run_cycle(
                     events.box_observed(cycle=cycle_id, **facts)
                     if facts
                     else events.box_unreachable(cycle=cycle_id, error=box_error)
-                ),
-            )
-            # The other half of the same claim (#165): the box card says what is
-            # RUNNING, and this says whether it could have got there without a
-            # review. Read before each dispatch rather than once per cycle, and
-            # not in a dry run, which reaches the tracker and nothing else.
-            guardrail, guardrail_error = observe_guardrail(config)
-            journal.append(
-                conn,
-                *(
-                    events.guardrail_observed(cycle=cycle_id, **guardrail)
-                    if guardrail
-                    else events.guardrail_unreadable(
-                        cycle=cycle_id, error=guardrail_error
-                    )
                 ),
             )
 
