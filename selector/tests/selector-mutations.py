@@ -718,10 +718,22 @@ MUTATIONS = {
     # tree, on the mode whose property is that it reaches the tracker and
     # nothing else.
     "a-dry-run-reads-the-guardrail": (CYCLE, GUARDRAIL_SUITE,
-        "            guardrail, guardrail_error = observe_guardrail(config)",
-        "            guardrail, guardrail_error = observe_guardrail(config)\n"
-        "        if dry_run:\n"
-        "            guardrail, guardrail_error = observe_guardrail(config)",
+        "    if not dry_run:\n        guardrail, guardrail_error = observe_guardrail(config)",
+        "    if True:\n        guardrail, guardrail_error = observe_guardrail(config)",
+    ),
+    # Two declared trees are read in one cycle and the chip is green only when
+    # both are: one green tree is not enough.
+    "one-green-tree-protects-the-whole-guardrail": (CYCLE, GUARDRAIL_SUITE,
+        '    all_protected = all(t["protected"] for t in tree_results)',
+        '    all_protected = any(t["protected"] for t in tree_results)',
+    ),
+    # A tree the command did not answer for counts against the verdict; unknown
+    # is never green.
+    "an-unreadable-tree-is-treated-as-protected": (CYCLE, GUARDRAIL_SUITE,
+        '                "protected": False,\n'
+        '                "detail": f"{tree.repo}: could not be read ({err_msg})",',
+        '                "protected": True,\n'
+        '                "detail": f"{tree.repo}: could not be read ({err_msg})",',
     ),
     # The second half of the pair above: the same break, checked by the suite
     # that watches the guardrail rather than the one that watches the box.

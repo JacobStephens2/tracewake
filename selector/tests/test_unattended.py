@@ -257,20 +257,21 @@ def test_one_cycle_dispatches_several_runs_serially(db, box):
             )
 
 
-def test_the_box_facts_and_guardrail_are_read_before_each_dispatch(db, box):
-    """Criterion 4: The box's facts and the Guardrail are read before each
-    dispatch, not once per Cycle."""
+def test_the_box_facts_are_read_before_each_dispatch_and_guardrail_once_per_cycle(db, box):
+    """The box's facts are read before each dispatch, and the Guardrail is
+    journaled once per Cycle (#14 AC 4)."""
     result = box.run(db, [issue(640), issue(645)])
     assert result.returncode == 0, result.stderr
 
     assert len(events(db, "box.observed")) == 2
-    assert len(events(db, "guardrail.observed")) == 2
+    assert len(events(db, "guardrail.observed")) == 1
 
     all_kinds = [e["kind"] for e in events(db)]
     seq = [k for k in all_kinds if k in ("box.observed", "guardrail.observed", "run.dispatched")]
     assert seq == [
-        "box.observed", "guardrail.observed", "run.dispatched",
-        "box.observed", "guardrail.observed", "run.dispatched",
+        "guardrail.observed",
+        "box.observed", "run.dispatched",
+        "box.observed", "run.dispatched",
     ]
 
 

@@ -491,6 +491,11 @@ if add_label:
     # whole suite at the real `gh` and at this repository's own checkout.
     guardrail_command = _script(tmp_path / "guardrail.sh", fill('''
         printf 'guardrail %s\n' "$*" >> "@LOG@"
+        repo_safe="$(printf '%s' "${SELECTOR_PROTECTED_REPO:-}" | tr '/' '_')"
+        repo_file="$(dirname "@GUARDRAIL@")/guardrail-${repo_safe}.txt"
+        if [[ -n "${repo_safe}" && -f "${repo_file}" ]]; then
+            exec cat "${repo_file}"
+        fi
         exec cat "@GUARDRAIL@"
     '''))
 
@@ -582,8 +587,12 @@ if add_label:
         def facts(self, text):
             facts_file.write_text(text)
 
-        def guardrail(self, text):
-            guardrail_file.write_text(text)
+        def guardrail(self, text, repo=None):
+            if repo:
+                repo_safe = repo.replace("/", "_")
+                (tmp_path / f"guardrail-{repo_safe}.txt").write_text(text)
+            else:
+                guardrail_file.write_text(text)
 
         def progress(self, text):
             progress_file.write_text(text)
@@ -597,7 +606,7 @@ if add_label:
             """Replace the whole guardrail script - for the protection that
             cannot be read at all, which is a failing command rather than odd
             output."""
-            return _script(tmp_path / "guardrail.sh", body)
+            return _script(tmp_path / "guardrail.sh", fill(body))
 
         def git(self, *args, cwd=None):
             return git(*args, cwd=cwd)

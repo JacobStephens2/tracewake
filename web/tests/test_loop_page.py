@@ -1040,6 +1040,75 @@ def test_a_guardrail_that_could_not_be_read_is_not_green(db):
     assert "rate limit" in cell
 
 
+def test_the_chip_is_green_when_multiple_declared_trees_are_review_gated(db):
+    """Criterion 1: Two declared trees are read in one Cycle, and the chip is
+    green only when both are."""
+    trees = [
+        {"repo": "acme/tracewake", "ref": "main", "ref_head": "abc1234", "rules": ["deletion", "non_fast_forward", "pull_request"], "paths": ["loop", "selector"], "unreviewed": [], "protected": True, "detail": None},
+        {"repo": "acme/config", "ref": "master", "ref_head": "def5678", "rules": ["deletion", "non_fast_forward", "pull_request"], "paths": ["etc"], "unreviewed": [], "protected": True, "detail": None},
+    ]
+    with journal.connect(db) as conn:
+        _guardrail(
+            conn,
+            ref="main, master",
+            ref_head="abc1234, def5678",
+            trees=trees,
+            paths=["loop", "selector", "etc"],
+            protected=True,
+            detail=None,
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="green"' in cell
+    assert "acme/tracewake" in cell
+    assert "acme/config" in cell
+    assert "alarm" not in cell
+
+
+def test_the_chip_names_the_tree_and_rule_that_failed_when_one_tree_is_unprotected(db):
+    """Criterion 3: The chip names which tree and which rule failed."""
+    trees = [
+        {"repo": "acme/tracewake", "ref": "main", "ref_head": "abc1234", "rules": ["deletion", "non_fast_forward", "pull_request"], "paths": ["loop"], "unreviewed": [], "protected": True, "detail": None},
+        {"repo": "acme/config", "ref": "master", "ref_head": "def5678", "rules": ["deletion"], "paths": ["etc"], "unreviewed": [], "protected": False, "detail": "acme/config: master is missing pull_request, non_fast_forward"},
+    ]
+    with journal.connect(db) as conn:
+        _guardrail(
+            conn,
+            ref="main, master",
+            ref_head="abc1234, def5678",
+            trees=trees,
+            protected=False,
+            detail="acme/config: master is missing pull_request, non_fast_forward",
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="red"' in cell
+    assert "alarm" in cell
+    assert "acme/config" in cell
+    assert "pull_request" in cell
+
+
+def test_the_chip_names_the_tree_when_one_tree_could_not_be_read(db):
+    """Criterion 2: A tree the command did not answer for counts against the
+    verdict; unknown is never green."""
+    trees = [
+        {"repo": "acme/tracewake", "ref": "main", "ref_head": "abc1234", "rules": ["deletion", "non_fast_forward", "pull_request"], "paths": ["loop"], "unreviewed": [], "protected": True, "detail": None},
+        {"repo": "acme/config", "ref": "master", "ref_head": None, "rules": None, "paths": None, "unreviewed": None, "protected": False, "detail": "acme/config: could not be read (gh: not found)", "error": "gh: not found"},
+    ]
+    with journal.connect(db) as conn:
+        _guardrail(
+            conn,
+            ref="main, master",
+            ref_head="abc1234, unknown",
+            trees=trees,
+            protected=False,
+            detail="acme/config: could not be read (gh: not found)",
+        )
+    cell = chip(client.get("/loop").text)
+    assert 'data-guardrail="red"' in cell
+    assert "alarm" in cell
+    assert "acme/config" in cell
+
+
+
 def test_a_reading_too_old_to_stand_for_now_is_not_green(db):
     """The failure the timer cell already guards against, one panel along. A
     guardrail is a claim about the present, and the newest reading is only as

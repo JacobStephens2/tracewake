@@ -604,6 +604,7 @@ def _guardrail(rows: list[dict]) -> dict | None:
         paths=record.paths,
         unreviewed=record.unreviewed,
         detail=record.detail,
+        trees=record.trees,
         stale=card["age"] > GUARDRAIL_MAX_AGE,
     )
     return card

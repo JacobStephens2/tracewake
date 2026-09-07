@@ -282,7 +282,7 @@ _Avoid_: protected file, the code, the scripts
 The check that the Executed Paths cannot change without a review, and the chip on
 `/loop` that reports it. Two halves, because either alone can be green over
 unreviewed code: the rules GitHub holds over the ref those paths are deployed
-from, and whether the deployed tree still matches that ref. Read before each Dispatch
+from, and whether the deployed tree still matches that ref. Read once per Cycle
 and journaled; unknown is never green. It reports, and does not gate Dispatch.
 _Avoid_: branch protection, the ruleset (one half of it), lock
 

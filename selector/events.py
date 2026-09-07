@@ -381,14 +381,17 @@ def box_unreachable(*, cycle, error):
 
 
 def guardrail_observed(*, cycle, ref, ref_head, rules, paths, unreviewed,
-                       protected, detail):
+                       protected, detail, trees=None):
     """The write-protection reading, verdict included - `protected` is
     decided in reviewed Python before the row is written."""
-    return GUARDRAIL_OBSERVED, {
+    payload = {
         "cycle": cycle, "ref": ref, "ref_head": ref_head, "rules": rules,
         "paths": paths, "unreviewed": unreviewed, "protected": protected,
         "detail": detail,
     }
+    if trees is not None:
+        payload["trees"] = trees
+    return GUARDRAIL_OBSERVED, payload
 
 
 def guardrail_unreadable(*, cycle, error):
@@ -657,6 +660,7 @@ class GuardrailReading:
     protected: object
     detail: str | None
     error: str | None
+    trees: object = None
 
 
 def guardrail_record(row) -> GuardrailReading:
@@ -672,6 +676,7 @@ def guardrail_record(row) -> GuardrailReading:
         paths=payload.get("paths"), unreviewed=payload.get("unreviewed"),
         protected=payload.get("protected"), detail=payload.get("detail"),
         error=payload.get("error"),
+        trees=payload.get("trees"),
     )
 
 
