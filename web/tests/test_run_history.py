@@ -152,8 +152,8 @@ def test_the_history_serves_when_the_journal_is_unreachable(monkeypatch):
 
 
 def test_the_history_is_reachable_from_the_loop_and_back(db):
-    assert 'href="/loop/history"' in client.get("/loop").text
-    assert 'href="/loop"' in client.get("/loop/history").text
+    assert 'href="/history"' in client.get("/").text
+    assert 'href="/"' in client.get("/history").text
 
 
 # --- How far back it reaches ------------------------------------------------

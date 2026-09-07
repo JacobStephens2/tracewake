@@ -111,17 +111,6 @@ def _page(request: Request, name: str, context: dict, **kwargs):
     )
 
 
-# The pipeline a single-user factory would run. Static here — this endpoint
-# demonstrates the HTMX request -> server-rendered-fragment -> swap loop, not a
-# real run.
-PIPELINE = [
-    ("intake", "read the request as written"),
-    ("triage", "classify: fix, spec, or clarify"),
-    ("implement", "produce a bounded patch in a worktree"),
-    ("verify", "run the checks against the patch"),
-    ("output", "open a draft PR, evidence attached"),
-]
-
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _TITLE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
@@ -159,17 +148,6 @@ def _all_adrs() -> list[dict]:
         (_parse_adr(p) for p in ADR_DIR.glob("*.md")),
         key=lambda a: a["number"],
     )
-
-
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return _page(request, "index.html", {"stages": PIPELINE, "adrs": _all_adrs()})
-
-
-@app.post("/demo/run", response_class=HTMLResponse)
-async def demo_run(request: Request):
-    """HTMX POSTs here; the server returns an HTML fragment, not JSON."""
-    return _page(request, "_run.html", {"stages": PIPELINE})
 
 
 @app.get("/adr", response_class=HTMLResponse)
@@ -793,7 +771,7 @@ def _loop_context(request: Request) -> dict:
         # next one gets wired into the wrong half.
         "live_url": _path(request, "/loop/live"),
         "events_url": _path(request, "/loop/events"),
-        "history_url": _path(request, "/loop/history"),
+        "history_url": _path(request, "/history"),
         "pause_url": _path(request, "/loop/pause"),
         "resume_url": _path(request, "/loop/resume"),
     }
@@ -824,9 +802,11 @@ def _history_context(request: Request) -> dict:
         "live_url": _path(request, "/loop/history/live"),
         "events_url": _path(request, "/loop/events"),
         "loop_url": _path(request, "/loop"),
+        "board_url": _path(request, "/"),
     }
 
 
+@app.get("/", response_class=HTMLResponse)
 @app.get("/loop", response_class=HTMLResponse)
 def loop_page(request: Request):
     """The Loop's window: the Selector Journal, read at request time.
@@ -869,6 +849,7 @@ def resume_selector(request: Request):
     return _set_selector_paused(request, False)
 
 
+@app.get("/history", response_class=HTMLResponse)
 @app.get("/loop/history", response_class=HTMLResponse)
 def history_page(request: Request):
     """Every Run that has ended, and what is left of today's budget (#160)."""
@@ -931,6 +912,7 @@ async def _journal_stream(after: int | None):
         yield _sse(json.dumps({"error": str(exc)}), event="error")
 
 
+@app.get("/events")
 @app.get("/loop/events")
 async def loop_events(request: Request):
     """Journal rows pushed to an open /loop, the moment they land.

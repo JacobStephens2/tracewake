@@ -5,6 +5,7 @@ is the tracker's own state, fetched when the page is requested and columned by
 the same Eligibility predicate the Selector picks with. So these tests script
 the tracker rather than seeding rows, and assert on what the columns say.
 """
+import pytest
 from fastapi.testclient import TestClient
 
 from app import app
@@ -110,12 +111,21 @@ def test_an_empty_column_says_so_rather_than_vanishing(db, tracker):
     assert "nothing" in column(body, "eligible").lower()
 
 
-def test_a_tracker_that_cannot_be_read_does_not_take_the_page_down(db, tracker):
+@pytest.mark.parametrize("path", ["/", "/loop"])
+def test_a_tracker_that_cannot_be_read_does_not_take_the_page_down(path, db, tracker):
     tracker.fail("gh: could not resolve host github.com")
-    resp = client.get("/loop")
+    resp = client.get(path)
     assert resp.status_code == 200
     board = column(resp.text, "eligible")
     assert "could not resolve host" in board
+
+
+def test_front_page_is_the_queue_board(db, tracker):
+    tracker.queue("ready-for-agent", [tracker.issue(101)])
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "terminal.css" in resp.text
+    assert "#101" in column(resp.text, "eligible")
 
 
 def test_the_label_columns_follow_the_labels_the_selector_is_configured_with(

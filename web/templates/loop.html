@@ -1,4 +1,4 @@
-{# /loop: the Selector Journal and the queue, live.
+{# The front door: the Selector Journal and the queue, live.
 
    Everything a Journal row can change lives in _loop_live.html, which this
    page renders inline and then re-fetches whole whenever a row lands (#159).
@@ -7,7 +7,7 @@
 {% extends "terminal_base.html" %}
 {% block title %}The Loop{% endblock %}
 {% block logo %}THE LOOP // SELECTOR JOURNAL{% endblock %}
-{% block nav %}<a href="/">lab</a> <a href="{{ history_url }}">history</a>{% endblock %}
+{% block nav %}<a href="{{ history_url }}">history</a> <a href="/adr">decisions</a>{% endblock %}
 {% block main %}
     <h1>Selector Journal
       {%- include "_live_indicator.html" -%}
