@@ -34,6 +34,7 @@ subjects=(
     "boundary-harness.sh|tests/boundary.bats|tests/boundary-harness-mutations.py"
     "agents/claude.sh|tests/boundary.bats|tests/boundary-mutations.py"
     "agents/grok.sh|tests/boundary-grok.bats|tests/boundary-grok-mutations.py"
+    "agents/codex.sh|tests/boundary-codex.bats|tests/boundary-codex-mutations.py"
 )
 
 only=""

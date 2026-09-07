@@ -159,6 +159,14 @@ is_grok() {
     return 1
 }
 
+is_codex() {
+    local arg
+    for arg in "$@"; do
+        [[ ${arg} == codex || ${arg} == */codex ]] && return 0
+    done
+    return 1
+}
+
 # The installer the Grok adapter pipes into a shell inside the guest.
 is_the_install() {
     local arg
@@ -237,13 +245,19 @@ case "${1:-}" in
             case "${FAKE_SBX_BEHAVIOUR:-ok}" in
                 agent-fails) exit 3 ;;
                 agent-hangs) exec sleep 300 ;;
+                missing-host)
+                    printf 'fake-sbx: connection to api.openai.com:443 failed: Blocked by network policy\n' >&2
+                    exit 1
+                    ;;
                 # What each vendor does on reaching its own turn bound: a
                 # message, and the same exit status a broken invocation uses.
                 # Telling the two apart is the adapter's job (ADR 0004), which is
                 # what this exercises - and the words are not the same, which is
                 # why the knowledge lives there rather than in contract.sh.
                 turn-bound)
-                    if is_grok "$@"; then
+                    if is_codex "$@"; then
+                        printf 'Error: turn limit reached\n' >&2
+                    elif is_grok "$@"; then
                         printf 'Max turns reached\n\nError: max turns reached\n' >&2
                     else
                         printf 'Error: Reached max turns (40)\n' >&2

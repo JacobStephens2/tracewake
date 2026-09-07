@@ -65,6 +65,7 @@ loop_agent_grok_bin: /home/loop/.grok/bin/grok
 loop_agent_credentials_path_by_agent:
   claude: /home/loop/.claude/.credentials.json
   grok: /home/loop/.grok/auth.json
+  codex: /home/loop/.codex/auth.json
 loop_agent_credentials_path: "{{ loop_agent_credentials_path_by_agent[loop_agent_name] }}"
 
 # The walkthrough that establishes it, named in the message rather than left for
@@ -72,6 +73,7 @@ loop_agent_credentials_path: "{{ loop_agent_credentials_path_by_agent[loop_agent
 loop_agent_login_wizard_by_agent:
   claude: wizards/loop-claude-login.sh
   grok: wizards/loop-grok-login.sh
+  codex: wizards/loop-codex-login.sh
 loop_agent_login_wizard: "{{ loop_agent_login_wizard_by_agent[loop_agent_name] }}"
 
 # The adapter the Grok pin is read from, on the CONTROLLER rather than on the
