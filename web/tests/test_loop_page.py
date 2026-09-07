@@ -41,10 +41,11 @@ def test_terminal_css_is_served():
     assert "--global-font-size" in resp.text
 
 
-def test_home_links_to_loop():
+def test_home_renders_queue_board():
     resp = client.get("/")
     assert resp.status_code == 200
-    assert 'href="/loop"' in resp.text
+    assert "terminal.css" in resp.text
+    assert "Selector Journal" in resp.text
 
 
 def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
