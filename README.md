@@ -17,8 +17,10 @@ Output rather than a landing state, and a Journal that records why every
 decision went the way it did.
 
 `CONTEXT.md` is the vocabulary - every capitalised term above is defined there -
-and `docs/adr/` holds the decisions, numbered, with the reasoning that produced
-them.
+`SPEC.md` is the specification, stating Tracewake's bets side by side in the
+same terms as OpenAI's Symphony, `INSTALL.md` is the installation guide for both
+single-machine and two-machine setups, and `docs/adr/` holds the decisions,
+numbered, with the reasoning that produced them.
 
 ## Configuring an instance
 
@@ -39,6 +41,9 @@ controller. The target repository itself stays unaware that Tracewake exists.
 
 | Path | What lives there |
 | --- | --- |
+| `SPEC.md` | The specification: Tracewake's architecture, bounds, and guarantees stated in OpenAI Symphony's terms. |
+| `INSTALL.md` | The step-by-step walkthrough for both single-machine and two-machine setups, from nothing to a first dry-run cycle. |
+| `CONTEXT.md` | The single domain vocabulary for the project. |
 | `loop/` | The Run-side half: the Termination Contract, one Run, Seeding, the Proposal, the agent adapters, and the offline bats suite that drives all of it through scripted fakes. Start at `loop/README.md`. |
 | `selector/` | The controller: the Cycle, Eligibility, Dispatch, the Journal, the watcher, the notifier, the board, and its pytest suite. Start at `selector/README.md`. |
 | `web/` | The window: a FastAPI app that renders the Journal - the queue board, a Run's history, the ADRs - and its suite. |
@@ -49,6 +54,42 @@ controller. The target repository itself stays unaware that Tracewake exists.
 | `examples/` | One real instance's configuration - the env file, the targets file, the box's ansible variables and its cloud resource. No secrets. |
 | `notes/` | Evidence: what was run, what it printed, and what that settled. |
 | `research/` | The source-cited investigations the notes and the ADRs rest on. |
+
+## What Tracewake refuses to do
+
+The invariants that govern Tracewake are defined by what it guarantees and what it
+refuses to do:
+
+- **Proposal-Only Output (refuses autonomous merges)**: A Run's sole external output is
+  a draft pull request (ADR 0013). A human operator reviews, tests, and merges every
+  change. Nothing merges itself.
+- **Subscription Credentials (refuses metered keys)**: Agents authenticate against
+  flat-rate subscriptions, such as a 1-year `CLAUDE_CODE_OAUTH_TOKEN` or seat (ADR 0004,
+  ADR 0020). Preflight refuses metered API keys (such as `ANTHROPIC_API_KEY`),
+  eliminating runaway spend.
+- **Secret Scans on Diff (refuses credential leaks)**: `propose.sh` inspects outgoing git
+  diffs for known token patterns (such as `sk-ant-oat01-`) and refuses to publish a
+  proposal containing them.
+- **MicroVM Boundary (refuses unisolated execution)**: Every Iteration executes inside
+  an isolated microVM or container with pinned network egress and an ephemeral
+  filesystem (ADR 0003, ADR 0011).
+- **Out-of-Repo Configuration (refuses repo pollution)**: Target repositories carry zero
+  Tracewake configuration files, workflow templates, or hooks. Configuration lives
+  entirely on the controller.
+- **Termination Contract (refuses unverified done signals)**: A Run terminates only when
+  one of its five declared Contract bounds binds (ADR 0007). A model's "Completion
+  Promise" is advisory and never ends a Run or claims done on its own.
+- **Explicit Instance Config (refuses guessed defaults)**: Missing required instance or
+  target configuration aborts the cycle immediately at preflight with the missing key
+  named, refusing to fall back to arbitrary placeholder values (ADR 0003).
+- **Protected Executed Paths (refuses unreviewed execution)**: The Guardrail verifies
+  that all executed paths (scripts, selectors, unit files) are protected by GitHub
+  rulesets and clean against reviewed git refs (ADR 0026).
+- **Review Capacity Bounds (refuses reviewer flooding)**: Dispatches halt when open
+  proposals awaiting review reach the target's `review_cap` (ADR 0022), keeping
+  unattended throughput aligned with human review capacity.
+- **Bounded Retries (refuses infinite loops)**: Failed runs are retried at most once on
+  the same branch before escalating to `ready-for-human`.
 
 ## Running the suites
 
