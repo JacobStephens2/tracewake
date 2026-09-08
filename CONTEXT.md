@@ -84,6 +84,13 @@ the code has a default for any of it. An instance has no name of its own;
 ETA's is "ETA's Tracewake". `examples/` is one, filled in.
 _Avoid_: deployment, tenant, install, the Loop
 
+**Single-Host Mode**:
+The deployment shape where the Controller and the Box execute on the same machine
+without an SSH hop, using `box-sources/local.sh` (ADR 0019). Gated by
+`loop/assert-credentials.sh` passing on the host, ensuring the single-machine
+environment satisfies all Execution Boundary and credential isolation guarantees.
+_Avoid_: local loop, dev mode, standalone mode
+
 **Target**:
 One repository an Instance works, and the stanza that declares it: its labels,
 its labeler allowlist, its work checkout and box checkout, its repository
@@ -138,6 +145,20 @@ checks - and journaled under its own event kind, so the Journal is readable by
 outcome. A Route is bookkeeping, not judgement: it moves a card, it never
 decides whether the work is good.
 _Avoid_: triage, verdict, disposition, grading the Run
+
+**Review Cap**:
+The maximum number of open Proposals awaiting review in the target tracker before
+the Selector halts further dispatches (ADR 0022). Unattended throughput is bounded
+by the human operator's capacity to review code rather than by an arbitrary daily
+spend cap. Configured per target in `targets.toml` (default 20).
+_Avoid_: daily cap, spend cap, throughput limit
+
+**Proposal Freshness**:
+The automated rebasing/updating of open Proposals that are behind their base branch
+and mergeable, performed by the Selector via the forge command on each drain pass of
+a Cycle (ADR 0023). A Proposal that encounters merge conflicts is left un-updated
+and flagged with a conflict badge on the Queue Board.
+_Avoid_: auto-rebase, branch sync
 
 **Eligible**:
 The predicate a labeled task passes before the Selector may seed it: labeled by
@@ -286,6 +307,13 @@ from, and whether the deployed tree still matches that ref. Read once per Cycle
 and journaled; unknown is never green. It reports, and does not gate Dispatch.
 _Avoid_: branch protection, the ruleset (one half of it), lock
 
+**Guardrail Tree**:
+One declared `(repository, ref, tree, paths)` set evaluated by the Guardrail (ADR 0026).
+Supports multi-tree declarations, ensuring both the product repository and the
+instance's deployment and configuration repositories are simultaneously verified
+against unreviewed changes.
+_Avoid_: protected repo (only one half of it)
+
 **Proposal-Only Output**:
 The invariant that a Run's sole external effect is a draft pull request a human
 merges. No push to a protected branch, no merge, no deploy, no `apply`, no write to
@@ -310,6 +338,19 @@ turn bound, the environment names that supersede its subscription - lives here a
 nowhere else, which is what makes the agent a variable rather than a decision
 (ADR 0004).
 _Avoid_: the agent, the backend, the driver
+
+**Yearly Model Token**:
+The one-year subscription credential (`CLAUDE_CODE_OAUTH_TOKEN`, ADR 0020) exported into
+the microVM boundary for the agent CLI, replacing per-iteration OAuth renewal. Tracewake
+requires subscription authentication and strictly refuses metered API keys.
+_Avoid_: API key, session token, per-iteration token
+
+**Per-Target Token**:
+A fine-grained forge token held on the Box scoped strictly to exactly one repository
+(ADR 0009 amended). The Box holds three host credentials plus one per-target token file
+per declared target, ensuring a compromised or misbehaving Run cannot reach or affect
+any repository beyond the one it was dispatched to work.
+_Avoid_: personal access token, bot token, shared token
 
 **Structural Property**:
 Something true of the Execution Boundary and the Loop's shape, so true whatever
