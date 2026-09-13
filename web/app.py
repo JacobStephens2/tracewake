@@ -22,7 +22,7 @@ from typing import Callable, TypeVar
 
 import markdown as md
 import psycopg
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import APIRouter, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -96,11 +96,11 @@ def _path(request: Request, route: str) -> str:
 def _page(request: Request, name: str, context: dict, **kwargs):
     """Render a page with whatever every page needs.
 
-    Preview banner (ADR 0016) and the session's CSRF token (ADR 0028): a page
-    that forgot either would look fine and be wrong - unreviewed code without
-    a banner, or a state-changing form without a token.
+    Preview banner (ADR 0016), the session's CSRF token (ADR 0028), and
+    whether the account may use the page's controls (issue #40).
     """
     session = getattr(request.state, "session", None)
+    account = getattr(request.state, "account", None)
     return templates.TemplateResponse(
         name,
         {
@@ -109,7 +109,8 @@ def _page(request: Request, name: str, context: dict, **kwargs):
             "static_base": _static_base(request),
             "csrf_token": session.csrf_token if session else "",
             "logout_url": _path(request, "/logout"),
-            "account": getattr(request.state, "account", None),
+            "account": account,
+            "can_control": account is not None and account.role == "admin",
             **context,
         },
         **kwargs,
@@ -128,6 +129,11 @@ async def require_csrf(request: Request) -> None:
 @app.exception_handler(auth.CSRFDenied)
 async def _csrf_denied(request: Request, exc: auth.CSRFDenied):
     return HTMLResponse("CSRF token missing or invalid", status_code=403)
+
+
+@app.exception_handler(auth.NotAuthorised)
+async def _not_authorised(request: Request, exc: auth.NotAuthorised):
+    return auth.refuse()
 
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -909,14 +915,25 @@ def _set_selector_paused(request: Request, paused: bool):
     return _page(request, "_loop_live.html", _loop_context(request))
 
 
-@app.post("/loop/pause", response_class=HTMLResponse, dependencies=[Depends(require_csrf)])
+# Controls live on their own router so a later POST is gated by construction
+# rather than by remembering to add Depends(require_admin) to the decorator
+# (issue #40). CSRF rides the same list.
+controls = APIRouter(
+    dependencies=[Depends(auth.require_admin), Depends(require_csrf)],
+)
+
+
+@controls.post("/loop/pause", response_class=HTMLResponse)
 def pause_selector(request: Request):
     return _set_selector_paused(request, True)
 
 
-@app.post("/loop/resume", response_class=HTMLResponse, dependencies=[Depends(require_csrf)])
+@controls.post("/loop/resume", response_class=HTMLResponse)
 def resume_selector(request: Request):
     return _set_selector_paused(request, False)
+
+
+app.include_router(controls)
 
 
 @app.get("/history", response_class=HTMLResponse)

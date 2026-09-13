@@ -55,6 +55,7 @@ WINDOW = "../web/app.py"
 WINDOW_SUITE = "../web/tests/test_loop_page.py"
 AUTH = "../web/auth.py"
 AUTH_SUITE = "../web/tests/test_sign_in.py"
+ROLES_SUITE = "../web/tests/test_roles.py"
 
 # The push (#159). The stream is Journal SQL and lives with the Journal; the
 # region it re-fetches is a template, which is a mutation target like any
@@ -1367,6 +1368,29 @@ MUTATIONS = {
         "        raise AccountExists(email) from exc\n",
         "    except psycopg.errors.UniqueViolation as exc:\n"
         "        return 0\n",
+    ),
+    # Roles (issue #40). A reader may POST pause/resume, so the gate is layout.
+    "reader-may-use-controls": (AUTH, ROLES_SUITE,
+        "        if account is None or account.role != self.role:\n"
+        "            raise NotAuthorised()\n",
+        "        if False:\n"
+        "            raise NotAuthorised()\n",
+    ),
+    # An unauthenticated POST to a control 303s to sign-in instead of refusing.
+    "unauthenticated-control-redirects": (AUTH, ROLES_SUITE,
+        "            if scope.get(\"method\", \"GET\") not in (\"GET\", \"HEAD\"):\n"
+        "                response = refuse()\n"
+        "                await response(scope, receive, send)\n"
+        "                return\n",
+        "            if False:\n"
+        "                response = refuse()\n"
+        "                await response(scope, receive, send)\n"
+        "                return\n",
+    ),
+    # The board always renders pause/resume, so a reader sees the controls.
+    "reader-sees-the-pause-control": (WINDOW, ROLES_SUITE,
+        '"can_control": account is not None and account.role == "admin",\n',
+        '"can_control": True,\n',
     ),
 }
 
