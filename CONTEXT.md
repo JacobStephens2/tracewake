@@ -110,8 +110,10 @@ _Avoid_: scheduler, dispatcher, intake
 
 **Cycle**:
 One execution of the Selector: read the tracker, apply Eligibility to the whole
-labeled queue, order, apply the caps, journal the reasoning, and dispatch serial
-Runs until nothing is Eligible, a cap holds, or the operator has paused. The timer's
+labeled queue, order, apply the caps, journal the reasoning, and dispatch Runs
+until nothing is Eligible, a cap holds, or the operator has paused. Up to an
+instance-configured number of Dispatches may run at once, serial within a
+Target (ADR 0027). The timer's
 unit of work, and the Journal's unit of grouping - every event of one Cycle carries
 its id. It is emphatically not an Iteration, which is why "cycle" is a word the
 Iteration entry above tells you to avoid: a Cycle chooses work and an Iteration does it.

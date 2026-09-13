@@ -476,3 +476,24 @@ def test_a_missing_instance_value_also_stops_before_the_tracker(db, fakes):
     assert "SELECTOR_BOX_HOST" in result.stderr
     assert not fakes.args_file.exists(), "the tracker was read anyway"
     assert [e["kind"] for e in events(db)] == ["cycle.failed"]
+
+
+def test_a_zero_drain_concurrency_stops_before_the_tracker(db, fakes):
+    """K of zero aborts at preflight naming the key (issue #37)."""
+    result = fakes.run(db, [issue(645)], SELECTOR_DRAIN_CONCURRENCY="0")
+
+    assert result.returncode == 1
+    assert "SELECTOR_DRAIN_CONCURRENCY" in result.stderr
+    assert not fakes.args_file.exists(), "the tracker was read anyway"
+    assert [e["kind"] for e in events(db)] == ["cycle.failed"]
+    assert "SELECTOR_DRAIN_CONCURRENCY" in events(db, "cycle.failed")[0]["payload"]["error"]
+
+
+def test_a_negative_drain_concurrency_stops_before_the_tracker(db, fakes):
+    result = fakes.run(db, [issue(645)], SELECTOR_DRAIN_CONCURRENCY="-2")
+
+    assert result.returncode == 1
+    assert "SELECTOR_DRAIN_CONCURRENCY" in result.stderr
+    assert not fakes.args_file.exists(), "the tracker was read anyway"
+    assert [e["kind"] for e in events(db)] == ["cycle.failed"]
+    assert "SELECTOR_DRAIN_CONCURRENCY" in events(db, "cycle.failed")[0]["payload"]["error"]
