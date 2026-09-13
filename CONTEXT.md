@@ -85,10 +85,10 @@ ETA's is "ETA's Tracewake". `examples/` is one, filled in.
 _Avoid_: deployment, tenant, install, the Loop
 
 **Window Account**:
-An email-identified sign-in to the window, carrying a role of admin or reader.
-Not an Operator: the Operator remains exactly one, and accounts are viewers of
-an Instance.
-_Avoid_: user, login, viewer (the role is reader), operator
+An email-identified identity that may see an Instance's window, with a role of
+admin or reader. Distinct from the Operator - there is exactly one of those, and
+Handover is still only his.
+_Avoid_: user, login, operator
 
 **Single-Host Mode**:
 The deployment shape where the Controller and the Box execute on the same machine
