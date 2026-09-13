@@ -45,10 +45,11 @@ The order is not arbitrary: `missing-section` is the loud skip - see below -
 so the cheap, quiet reasons are tested first. An issue that is blocked anyway
 is not shouted at for a gap.
 
-**Caps.** One Run in flight, target's `review_cap` (default 20) Proposals
-awaiting review. A cap that halts a cycle still lets it reason and journal
-first, so the Journal answers "what would it have picked?" as well as "what
-did it?".
+**Caps.** One Run in flight per Target, at most `SELECTOR_DRAIN_CONCURRENCY`
+(default 1) Dispatches across Targets, and the target's `review_cap` (default
+20) Proposals awaiting review. A cap that halts a cycle still lets it reason
+and journal first, so the Journal answers "what would it have picked?" as well
+as "what did it?".
 
 **Proposal freshness** (ADR 0023). During each drain, every open Proposal that
 is behind its base and mergeable is brought up to date via `SELECTOR_ISSUE_COMMAND`
@@ -105,8 +106,11 @@ gap in with something plausible would put the old problem back with an extra
 file in front of it, and the first sign would be a comment on a stranger's
 issue.
 
-`cycle.py` works every declared target in turn, each with its own
+`cycle.py` works every declared target, each with its own
 `cycle.started`/`cycle.finished` pair; `--target owner/name` works one.
+With `SELECTOR_DRAIN_CONCURRENCY` greater than 1 (default 1), Dispatches on
+different Targets overlap up to that cap; within a Target the drain stays
+serial (ADR 0027).
 
 **The instance file** is environment, and the values that name a host, an
 address or a command have no default at all:
@@ -138,6 +142,7 @@ address or a command have no default at all:
 | `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
 | `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
 | `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |
+| `SELECTOR_DRAIN_CONCURRENCY` | `1` | how many Dispatches a Cycle may hold at once; serial within a Target |
 | `SELECTOR_SSE_KEEPALIVE_SECONDS` | `20` | how long an open `/loop` stream may say nothing before a keepalive |
 
 The last two are deliberately the **Loop's** names rather than `SELECTOR_*`
