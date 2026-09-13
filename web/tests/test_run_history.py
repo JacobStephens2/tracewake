@@ -146,9 +146,9 @@ def test_an_empty_journal_says_so_rather_than_rendering_nothing(db):
 
 def test_the_history_serves_when_the_journal_is_unreachable(monkeypatch):
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_test_no_such_db")
-    resp = client.get("/loop/history")
-    assert resp.status_code == 200
-    assert "unavailable" in resp.text.lower()
+    resp = client.get("/loop/history", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "/login" in resp.headers["location"]
 
 
 def test_the_history_is_reachable_from_the_loop_and_back(db):
@@ -272,9 +272,9 @@ def test_the_journal_being_down_does_not_take_the_history_region_with_it(
 ):
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_no_such_db")
     for path in ("/loop/history", "/loop/history/live"):
-        response = client.get(path)
-        assert response.status_code == 200
-        assert "journal unavailable" in response.text
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 303
+        assert "/login" in response.headers["location"]
 
 
 # --- The budget -------------------------------------------------------------

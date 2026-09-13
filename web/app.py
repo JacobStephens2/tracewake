@@ -22,8 +22,8 @@ from typing import Callable, TypeVar
 
 import markdown as md
 import psycopg
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -46,6 +46,7 @@ import journal  # noqa: E402
 import targets  # noqa: E402
 
 import preview  # noqa: E402
+import auth  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
 # instance publishes its window is a fact about that instance (issue #3),
@@ -65,6 +66,7 @@ for _tree in ("docs", "notes", "research", "site"):
         name=_tree,
     )
 templates = Jinja2Templates(directory=BASE / "templates")
+app.add_middleware(auth.RequireSignIn)
 
 def _static_base(request: Request) -> str:
     """Where this app's static files are, as the browser should ask for them.
@@ -94,21 +96,38 @@ def _path(request: Request, route: str) -> str:
 def _page(request: Request, name: str, context: dict, **kwargs):
     """Render a page with whatever every page needs.
 
-    Today that is exactly one thing: whether this instance is an Attended
-    Preview (ADR 0016). It goes in here rather than in each handler because a
-    page that forgot it would look like the live app while serving unreviewed
-    code, and the failure would be invisible - the page renders fine.
+    Preview banner (ADR 0016) and the session's CSRF token (ADR 0027): a page
+    that forgot either would look fine and be wrong - unreviewed code without
+    a banner, or a state-changing form without a token.
     """
+    session = getattr(request.state, "session", None)
     return templates.TemplateResponse(
         name,
         {
             "request": request,
             "preview": preview.banner(),
             "static_base": _static_base(request),
+            "csrf_token": session.csrf_token if session else "",
+            "logout_url": _path(request, "/logout"),
+            "account": getattr(request.state, "account", None),
             **context,
         },
         **kwargs,
     )
+
+
+async def require_csrf(request: Request) -> None:
+    offered = request.headers.get("x-csrf-token")
+    if not offered:
+        form = await request.form()
+        offered = form.get("csrf_token")
+    if not auth.csrf_ok(request, offered):
+        raise auth.CSRFDenied()
+
+
+@app.exception_handler(auth.CSRFDenied)
+async def _csrf_denied(request: Request, exc: auth.CSRFDenied):
+    return HTMLResponse("CSRF token missing or invalid", status_code=403)
 
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -148,6 +167,56 @@ def _all_adrs() -> list[dict]:
         (_parse_adr(p) for p in ADR_DIR.glob("*.md")),
         key=lambda a: a["number"],
     )
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request, next: str = "/"):
+    """Sign-in page. Public; mints an anonymous session to hold the CSRF token."""
+    session = getattr(request.state, "session", None)
+    minted = None
+    if session is None:
+        minted = auth.new_anonymous_session()
+        session = auth.load_session(minted)
+        request.state.session = session
+    response = _page(
+        request, "login.html",
+        {"error": None, "next_url": auth.safe_next(next)},
+    )
+    if minted:
+        auth.set_session_cookie(response, minted)
+    return response
+
+
+@app.post("/login", dependencies=[Depends(require_csrf)])
+def login_post(
+    request: Request,
+    email: str = Form(""),
+    password: str = Form(""),
+    next: str = Form("/"),
+):
+    account = auth.authenticate(email, password)
+    if account is None:
+        return _page(
+            request, "login.html",
+            {"error": auth.LOGIN_ERROR, "next_url": auth.safe_next(next)},
+        )
+    presented = auth.session_token_from_request(request)
+    raw = auth.create_session(account.id, replacing=presented)
+    root = request.scope.get("root_path", "") or ""
+    response = RedirectResponse(root + auth.safe_next(next), status_code=303)
+    auth.set_session_cookie(response, raw)
+    return response
+
+
+@app.post("/logout", dependencies=[Depends(require_csrf)])
+def logout(request: Request):
+    session = getattr(request.state, "session", None)
+    if session is not None:
+        auth.destroy_session(session.token_hash)
+    root = request.scope.get("root_path", "") or ""
+    response = RedirectResponse(root + "/login", status_code=303)
+    auth.clear_session_cookie(response)
+    return response
 
 
 @app.get("/adr", response_class=HTMLResponse)
@@ -840,12 +909,12 @@ def _set_selector_paused(request: Request, paused: bool):
     return _page(request, "_loop_live.html", _loop_context(request))
 
 
-@app.post("/loop/pause", response_class=HTMLResponse)
+@app.post("/loop/pause", response_class=HTMLResponse, dependencies=[Depends(require_csrf)])
 def pause_selector(request: Request):
     return _set_selector_paused(request, True)
 
 
-@app.post("/loop/resume", response_class=HTMLResponse)
+@app.post("/loop/resume", response_class=HTMLResponse, dependencies=[Depends(require_csrf)])
 def resume_selector(request: Request):
     return _set_selector_paused(request, False)
 

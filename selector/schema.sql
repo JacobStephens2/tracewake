@@ -90,3 +90,24 @@ DROP TRIGGER IF EXISTS events_no_truncate ON journal.events;
 CREATE TRIGGER events_no_truncate
     BEFORE TRUNCATE ON journal.events
     FOR EACH STATEMENT EXECUTE FUNCTION journal.forbid_mutation();
+
+-- Window accounts (issue #38, ADR 0027). Same Postgres instance as the
+-- Journal, same unix-socket peer-auth posture (ADR 0015). The role column is
+-- stored here so the roles ticket can enforce it; this schema does not.
+CREATE SCHEMA IF NOT EXISTS web;
+
+CREATE TABLE IF NOT EXISTS web.accounts (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email         text        NOT NULL UNIQUE,
+    password_hash text        NOT NULL,
+    role          text        NOT NULL CHECK (role IN ('admin', 'reader')),
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS web.sessions (
+    token_hash   text PRIMARY KEY,
+    account_id   bigint REFERENCES web.accounts (id),
+    csrf_token   text        NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    last_seen_at timestamptz NOT NULL DEFAULT now()
+);

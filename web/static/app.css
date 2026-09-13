@@ -78,6 +78,23 @@ ol.stages span { color: var(--muted); }
 footer { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--rule);
          color: var(--faint); font-size: 13px; }
 
+form.sign-in label {
+  display: block; margin: 0 0 14px; font-size: 14px; color: var(--muted);
+}
+form.sign-in input[type="email"],
+form.sign-in input[type="password"] {
+  display: block; width: 100%; margin-top: 6px; padding: 10px 12px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--ground);
+  color: var(--ink); font: 400 16px/1.4 system-ui, sans-serif;
+}
+form.sign-in button { margin-top: 8px; }
+.form-error { color: #b42318; font-weight: 600; }
+form.sign-out { display: inline; margin-left: 12px; }
+form.sign-out button {
+  background: none; border: 0; padding: 0; color: var(--muted);
+  cursor: pointer; font: inherit;
+}
+
 /* ---- top nav ---- */
 .topnav {
   max-width: 68ch; margin: 0 auto; padding: 20px 22px 0;
