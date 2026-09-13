@@ -25,4 +25,5 @@ watchfiles==1.1.1
 websockets==15.0.1
 zipp==3.23.1
 psycopg[binary]==3.2.13
+argon2-cffi==25.1.0
 tomli==2.2.1; python_version < "3.11"

@@ -1,19 +1,22 @@
-"""The window binds to the loopback interface and ships no authentication of its own (AC 3).
+"""The window binds to loopback and requires sign-in (issue #38, ADR 0028).
 
-Issue #13:
-The window binds to the loopback interface and ships no authentication of its own.
+The binding half of the old criterion remains: both systemd units listen on
+127.0.0.1. The auth half is reversed: unauthenticated requests 303 to sign-in.
 """
 from pathlib import Path
-import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import app
 
-client = TestClient(app)
+pytestmark = pytest.mark.anonymous
+
+client = TestClient(app, follow_redirects=False)
 
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEMD_DIR = ROOT / "deploy" / "systemd"
+ADR = ROOT / "docs" / "adr" / "0028-the-window-requires-sign-in.md"
 
 
 def test_systemd_units_bind_to_loopback():
@@ -36,16 +39,17 @@ def test_systemd_units_bind_to_loopback():
             )
 
 
-def test_window_ships_no_authentication_of_its_own():
-    """Unauthenticated requests succeed without 401 or 403 challenges."""
+def test_an_unauthenticated_request_is_sent_to_sign_in():
+    """The reversed criterion: pages 303 to sign-in; they do not 401-challenge."""
     for path in ["/", "/adr"]:
         resp = client.get(path)
-        assert resp.status_code == 200, f"{path} returned status {resp.status_code}"
+        assert resp.status_code == 303, f"{path} returned status {resp.status_code}"
+        assert "/sign-in" in resp.headers["location"]
         assert "WWW-Authenticate" not in resp.headers
 
-    # No security schemes or authentication dependencies configured on app
-    for route in app.routes:
-        dependant = getattr(route, "dependant", None)
-        if dependant:
-            security_reqs = getattr(dependant, "security_requirements", [])
-            assert not security_reqs, f"Route {route.path} has unexpected security requirements: {security_reqs}"
+
+def test_the_adr_records_the_reversal():
+    assert ADR.is_file(), f"missing {ADR.name}"
+    text = ADR.read_text()
+    assert "ships no authentication of its own" in text
+    assert "loopback" in text.lower()

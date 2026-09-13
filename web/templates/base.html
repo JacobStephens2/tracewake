@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="{{ static_base }}/app.css">
 <script src="{{ static_base }}/htmx.min.js" defer></script>
 </head>
-<body>
+<body{% if csrf_token %} hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'{% endif %}>
 {% include "_preview_banner.html" %}
 <nav class="topnav">
   <a class="brand mono" href="/">tracewake</a>
@@ -16,6 +16,12 @@
     <a href="/history">history</a>
     <a href="/adr">decisions</a>
     <a href="/site/index.html">lessons</a>
+    {% if account %}
+    <form method="post" action="{{ logout_url }}" class="sign-out">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">sign out</button>
+    </form>
+    {% endif %}
   </span>
 </nav>
 <div class="wrap">

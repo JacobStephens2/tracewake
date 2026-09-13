@@ -288,14 +288,8 @@ def test_an_unreachable_journal_closes_the_stream_rather_than_hanging(
     connection that will never carry an event."""
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_no_such_db")
     with open_stream(server) as response:
-        assert response.status_code == 200
-        stream = Stream(response)
-        frame = stream.event()
-        assert frame["event"] == "error"
-        assert json.loads(frame["data"])["error"]
-        # And it ends there, rather than holding a connection open.
-        with pytest.raises(AssertionError, match="closed"):
-            stream.frame(timeout=5)
+        # The stream is a window page: no session store, no stream.
+        assert response.status_code == 303
 
 
 # --- The live region --------------------------------------------------------
@@ -371,6 +365,6 @@ def test_the_journal_being_down_does_not_take_the_region_with_it(
     path, monkeypatch
 ):
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_no_such_db")
-    response = client.get(path)
-    assert response.status_code == 200
-    assert "journal unavailable" in response.text
+    response = client.get(path, follow_redirects=False)
+    assert response.status_code == 303
+    assert "/sign-in" in response.headers["location"]

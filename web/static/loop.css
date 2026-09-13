@@ -17,6 +17,12 @@
     border-left-width: 4px;
 }
 
+form.sign-out { display: inline; margin-left: 1rem; }
+form.sign-out button {
+    background: none; border: 0; padding: 0; color: var(--secondary-color);
+    cursor: pointer; font: inherit;
+}
+
 .cycle .badge,
 .run .badge {
     font-size: 0.8em;

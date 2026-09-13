@@ -328,16 +328,25 @@ to the Journal without modifying git branches or opening pull requests.
 
 ## 5. Starting the Web Window
 
-The Web window renders the real-time Queue Board and Run history.
+The Web window renders the real-time Queue Board and Run history. It requires
+sign-in (ADR 0028). There is no registration page: seed the first admin before
+the first request.
 
-1. Start the web server:
+1. Seed the first admin (fails loudly if that email already exists):
+   ```bash
+   cd /srv/tracewake/web
+   set -a && source /etc/tracewake/tracewake.env && set +a
+   WINDOW_ADMIN_PASSWORD='...' .venv/bin/python seed-admin.py you@example.com
+   ```
+
+2. Start the web server:
    ```bash
    cd /srv/tracewake/web
    set -a && source /etc/tracewake/tracewake.env && set +a
    .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8100
    ```
 
-2. Open `http://127.0.0.1:8100/` in your browser. You will see:
+3. Open `http://127.0.0.1:8100/` in your browser, sign in, and you will see:
    - The five-column Queue Board (`eligible`, `blocked`, `in-flight`, `awaiting-review`,
      `ready-for-human`).
    - The status strip reporting review capacity and the Guardrail chip.

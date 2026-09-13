@@ -53,6 +53,8 @@ SEARCH_SUITE = "tests/test_search_source.py"
 # naming both.
 WINDOW = "../web/app.py"
 WINDOW_SUITE = "../web/tests/test_loop_page.py"
+AUTH = "../web/auth.py"
+AUTH_SUITE = "../web/tests/test_sign_in.py"
 
 # The push (#159). The stream is Journal SQL and lives with the Journal; the
 # region it re-fetches is a template, which is a mutation target like any
@@ -1322,6 +1324,49 @@ MUTATIONS = {
         'elif [[ ${action} == update-branch ]]; then\n'
         '    if [[ ${number} =~ ^https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*$ ]]; then\n'
         '        :\n',
+    ),
+    # Sign-in (issue #38). An unauthenticated visitor is served the page.
+    "unauthenticated-pages-are-served": (AUTH, AUTH_SUITE,
+        "        if session is None or session.account is None:\n",
+        "        if False:\n",
+    ),
+    # CSRF comparison always succeeds, so a POST without the token is accepted.
+    "csrf-not-checked": (AUTH, AUTH_SUITE,
+        "    session = getattr(request.state, \"session\", None)\n"
+        "    if session is None or not offered:\n"
+        "        return False\n"
+        "    return secrets.compare_digest(offered, session.csrf_token)",
+        "    return True",
+    ),
+    # The session cookie is set without Secure, so it rides plain HTTP.
+    "session-cookie-not-secure": (AUTH, AUTH_SUITE,
+        "    response.set_cookie(\n"
+        "        key=cookie_name(),\n"
+        "        value=token,\n"
+        "        max_age=12 * 60 * 60,\n"
+        "        path=\"/\",\n"
+        "        secure=cookie_secure(),\n",
+        "    response.set_cookie(\n"
+        "        key=cookie_name(),\n"
+        "        value=token,\n"
+        "        max_age=12 * 60 * 60,\n"
+        "        path=\"/\",\n"
+        "        secure=False,\n",
+    ),
+    # Idle expiry is dropped from the read, so a stale session still opens a page.
+    "idle-expiry-not-enforced": (AUTH, AUTH_SUITE,
+        "                \"   AND s.created_at > now() - %s::interval\"\n"
+        "                \"   AND s.last_seen_at > now() - %s::interval\",\n"
+        "                (digest, ABSOLUTE, IDLE),\n",
+        "                \"   AND s.created_at > now() - %s::interval\",\n"
+        "                (digest, ABSOLUTE),\n",
+    ),
+    # Seeding an existing email succeeds instead of failing loudly.
+    "seed-admin-overwrites": (AUTH, AUTH_SUITE,
+        "    except psycopg.errors.UniqueViolation as exc:\n"
+        "        raise AccountExists(email) from exc\n",
+        "    except psycopg.errors.UniqueViolation as exc:\n"
+        "        return 0\n",
     ),
 }
 

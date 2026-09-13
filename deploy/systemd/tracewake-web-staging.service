@@ -17,6 +17,9 @@ ExecStart={{ tracewake_staging_dir }}/web/.venv/bin/uvicorn app:app --host 127.0
 # unreviewed code whatever the file held, quietly.
 Environment=SELECTOR_JOURNAL_DSN=dbname={{ tracewake_staging_journal_db }}
 Environment=LAB_PREVIEW_LEASE=/var/lib/lab-preview/lease.json
+# Plain HTTP loopback: `__Host-` / `Secure` cookies will not stick. Relaxes
+# only Secure (ADR 0028). The live unit leaves WINDOW_COOKIE_SECURE unset.
+Environment=WINDOW_COOKIE_SECURE=0
 # Read by the banner so it quotes the bound below rather than a copy of it.
 Environment=LAB_PREVIEW_MAX_AGE_SECONDS=14400
 # Tracker and box edges faked, so a cycle run inside a preview reaches nothing

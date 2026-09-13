@@ -84,6 +84,12 @@ the code has a default for any of it. An instance has no name of its own;
 ETA's is "ETA's Tracewake". `examples/` is one, filled in.
 _Avoid_: deployment, tenant, install, the Loop
 
+**Window Account**:
+An email-identified sign-in to the window, carrying a role of admin or reader.
+Not an Operator: the Operator remains exactly one, and accounts are viewers of
+an Instance.
+_Avoid_: user, login, viewer (the role is reader), operator
+
 **Single-Host Mode**:
 The deployment shape where the Controller and the Box execute on the same machine
 without an SSH hop, using `box-sources/local.sh` (ADR 0019). Gated by

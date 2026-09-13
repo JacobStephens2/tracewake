@@ -8,6 +8,7 @@ from psycopg.types.json import Json
 
 import journal
 from app import app
+from conftest import csrf_from
 
 client = TestClient(app)
 
@@ -29,10 +30,13 @@ def test_loop_page_renders_journal_newest_first(db):
 
 
 def test_loop_page_serves_when_journal_is_unreachable(monkeypatch):
+    """Sessions and the Journal share a database. A DSN that cannot be
+    reached cannot validate a session either, so the visitor is sent to
+    sign-in rather than served a 500."""
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_test_no_such_db")
-    resp = client.get("/loop")
-    assert resp.status_code == 200
-    assert "unavailable" in resp.text.lower()
+    resp = client.get("/loop", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "/sign-in" in resp.headers["location"]
 
 
 def test_terminal_css_is_served():
@@ -49,14 +53,24 @@ def test_home_renders_queue_board():
 
 
 def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
-    paused = client.post("/loop/pause", headers={"HX-Request": "true"})
+    token = csrf_from(client.get("/loop").text)
+    paused = client.post(
+        "/loop/pause",
+        data={"csrf_token": token},
+        headers={"HX-Request": "true"},
+    )
 
     assert paused.status_code == 200
     assert 'data-selector-pause="paused"' in paused.text
     assert "Resume dispatch" in paused.text
     assert 'data-selector-pause="paused"' in client.get("/loop").text
 
-    resumed = client.post("/loop/resume", headers={"HX-Request": "true"})
+    token = csrf_from(client.get("/loop").text)
+    resumed = client.post(
+        "/loop/resume",
+        data={"csrf_token": token},
+        headers={"HX-Request": "true"},
+    )
 
     assert resumed.status_code == 200
     assert 'data-selector-pause="paused"' not in resumed.text

@@ -13,6 +13,24 @@ import pytest
 import fixtures
 import testdb
 
+CSRF_FIELD = re.compile(
+    r'<input[^>]*name="csrf_token"[^>]*value="([^"]+)"',
+    re.IGNORECASE,
+)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "anonymous: do not seed a signed-in window account",
+    )
+
+
+def csrf_from(body: str) -> str:
+    match = CSRF_FIELD.search(body)
+    assert match, "page has no csrf_token field"
+    return match.group(1)
+
 # The end-of-run report on throwaway databases this run failed to drop
 # (#178). Imported rather than restated: one definition of what a leak is.
 from testdb import pytest_terminal_summary  # noqa: F401
@@ -103,6 +121,40 @@ def tracker(tmp_path, monkeypatch):
             return sorted(path.read_text().split()) if path.exists() else []
 
     return Tracker()
+
+
+_TEST_PASSWORD_HASH = None
+
+
+def _test_password_hash():
+    """One argon2 hash per process: hashing on every test is ~50ms of 64MiB."""
+    global _TEST_PASSWORD_HASH
+    if _TEST_PASSWORD_HASH is None:
+        import auth
+        _TEST_PASSWORD_HASH = auth.hash_password("correct-horse-battery")
+    return _TEST_PASSWORD_HASH
+
+
+@pytest.fixture(autouse=True)
+def signed_in_window_account(request, monkeypatch):
+    """Issue #38: the window requires a session. Existing page tests are not
+    about sign-in, so they run as the seeded admin without each one logging in.
+
+    Tests marked `anonymous` opt out - they are the sign-in suite.
+    """
+    if request.node.get_closest_marker("anonymous"):
+        return
+    request.getfixturevalue("db")
+    import auth
+    import journal
+    with journal.connect() as conn:
+        account_id = conn.execute(
+            "INSERT INTO web.accounts (email, password_hash, role)"
+            " VALUES (%s, %s, 'admin') RETURNING id",
+            ("operator@example.com", _test_password_hash()),
+        ).fetchone()[0]
+    raw = auth.create_session(account_id)
+    monkeypatch.setattr(auth, "session_token_from_request", lambda req: raw)
 
 
 def column(body, name):
