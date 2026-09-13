@@ -75,6 +75,11 @@ to applying `ready-for-agent`, which is why the Selector may seed with nobody at
 a keyboard.
 _Avoid_: approval, sign-off, triage
 
+**Operator**:
+The one person an Instance trusts: the identity whose Handover the Selector
+honours and whose review lands work. Not a Window Account and not a role of one.
+_Avoid_: admin, user, owner, maintainer
+
 **Instance**:
 One operator's running Tracewake: a controller, a box, a Journal, and the two
 files that configure them - `tracewake.env` and `targets.toml`. Everything an
@@ -85,10 +90,20 @@ ETA's is "ETA's Tracewake". `examples/` is one, filled in.
 _Avoid_: deployment, tenant, install, the Loop
 
 **Window Account**:
-An email-identified sign-in to the window, carrying a role of admin or reader.
-Not an Operator: the Operator remains exactly one, and accounts are viewers of
-an Instance.
+An email-identified identity for an Instance's window, carrying a role of admin
+or reader. Not an Operator.
 _Avoid_: user, login, viewer (the role is reader), operator
+
+**Admin**:
+The Window Account role that may change the Instance from the window - today,
+pause and resume. Any number of accounts may carry it; none of them is the
+Operator.
+_Avoid_: operator, owner, superuser
+
+**Reader**:
+The Window Account role that may look at every page and the live stream, and
+may change nothing.
+_Avoid_: viewer, guest, user, operator
 
 **Single-Host Mode**:
 The deployment shape where the Controller and the Box execute on the same machine
@@ -96,6 +111,11 @@ without an SSH hop, using `box-sources/local.sh` (ADR 0019). Gated by
 `loop/assert-credentials.sh` passing on the host, ensuring the single-machine
 environment satisfies all Execution Boundary and credential isolation guarantees.
 _Avoid_: local loop, dev mode, standalone mode
+
+**Host**:
+The machine this Instance's window and Selector run on. Distinct from the box,
+where Runs execute; in Single-Host Mode they are the same machine.
+_Avoid_: the box, server, node, telemetry
 
 **Target**:
 One repository an Instance works, and the stanza that declares it: its labels,
@@ -117,7 +137,7 @@ _Avoid_: scheduler, dispatcher, intake
 **Cycle**:
 One execution of the Selector: read the tracker, apply Eligibility to the whole
 labeled queue, order, apply the caps, journal the reasoning, and dispatch Runs
-until nothing is Eligible, a cap holds, or the operator has paused. Up to an
+until nothing is Eligible, a cap holds, or an admin has paused. Up to an
 instance-configured number of Dispatches may run at once, serial within a
 Target (ADR 0027). The timer's
 unit of work, and the Journal's unit of grouping - every event of one Cycle carries
@@ -190,11 +210,11 @@ _Avoid_: ledger, log, queue
 
 **Journal Event**:
 One append to the Selector Journal: a kind naming what happened and a payload
-carrying what a reader needs. The vocabulary of Events - every kind and each
-payload's shape - has one owning module, closed for writers and open for
-readers: shipping code constructs every row through it, while a reader renders
-a kind it does not know generically rather than failing, which is what keeps a
-hand append legitimate.
+carrying what the dashboard needs. The vocabulary of Events - every kind and
+each payload's shape - has one owning module, closed for writers and open for
+the dashboard: shipping code constructs every row through it, while the
+dashboard renders a kind it does not know generically rather than failing,
+which is what keeps a hand append legitimate.
 _Avoid_: log entry, message, notification
 
 **Queue Board**:
@@ -203,7 +223,10 @@ is requested rather than replayed from the Selector Journal: Eligible, blocked,
 in flight, `awaiting-review`, `ready-for-human`. Its columning is the Selector's
 own Eligibility predicate, imported - a board that decided for itself which
 tasks were Eligible would be a second Selector, and their first disagreement
-would be a bug in whichever one you did not read.
+would be a bug in whichever one you did not read. Beside the queue, the Host's
+live headroom - CPU, memory, and the disk this checkout lives on - and the
+count of Runs in flight, that last derived from the Journal's in-flight
+predicate and nothing else.
 _Avoid_: kanban, backlog, dashboard (the page is the dashboard; this is one
 panel on it)
 

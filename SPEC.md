@@ -312,11 +312,15 @@ Tracewake establishes five clear, predictable interaction surfaces across the
    - `awaiting-review`: Finished proposals with green CI checks waiting for human review.
    - `ready-for-human`: Runs that failed checks, hit consecutive stalls, or require
      manual operator resolution.
+   Beside the queue, the Host's live headroom (CPU, memory, and the disk this
+   checkout lives on) and the count of Runs in flight, derived from the
+   Journal's in-flight predicate. The figures ride the board's live region.
+   Per-Run resource attribution is out of scope.
 3. **Run Notifications**: When a Run finishes, the Selector invokes
    `SELECTOR_NOTIFY_COMMAND` (e.g., an email or messaging bridge), delivering a
    structured notification containing the outcome bound, duration, iteration count, and
    link to the Proposal PR.
-4. **Pause Control**: An operator can toggle the pause flag directly on `/loop`. A
+4. **Pause Control**: An admin can toggle the pause flag directly on `/loop`. A
    paused Selector continues to observe and journal cycles, but suspends new dispatches
    without killing in-flight Runs or disabling the timer.
 5. **Human Escalation**: If an agent cannot solve a problem within its Termination
