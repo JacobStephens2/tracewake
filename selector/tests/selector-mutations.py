@@ -55,6 +55,10 @@ WINDOW = "../web/app.py"
 WINDOW_SUITE = "../web/tests/test_loop_page.py"
 AUTH = "../web/auth.py"
 AUTH_SUITE = "../web/tests/test_sign_in.py"
+ROLES_SUITE = "../web/tests/test_roles.py"
+HOST = "../web/host.py"
+HOST_WIDGET = "../web/templates/_host.html"
+HOST_SUITE = "../web/tests/test_host_telemetry.py"
 
 # The push (#159). The stream is Journal SQL and lives with the Journal; the
 # region it re-fetches is a template, which is a mutation target like any
@@ -1367,6 +1371,88 @@ MUTATIONS = {
         "        raise AccountExists(email) from exc\n",
         "    except psycopg.errors.UniqueViolation as exc:\n"
         "        return 0\n",
+    ),
+    # Roles (issue #40). A reader may POST pause/resume, so the gate is layout.
+    "reader-may-use-controls": (AUTH, ROLES_SUITE,
+        "        if account is None or account.role != self.role:\n"
+        "            raise NotAuthorised()\n",
+        "        if False:\n"
+        "            raise NotAuthorised()\n",
+    ),
+    # An unauthenticated POST to a control 303s to sign-in instead of refusing.
+    "unauthenticated-control-redirects": (AUTH, ROLES_SUITE,
+        "            if scope.get(\"method\", \"GET\") not in (\"GET\", \"HEAD\"):\n"
+        "                response = refuse()\n"
+        "                await response(scope, receive, send)\n"
+        "                return\n",
+        "            if False:\n"
+        "                response = refuse()\n"
+        "                await response(scope, receive, send)\n"
+        "                return\n",
+    ),
+    # The board always renders pause/resume, so a reader sees the controls.
+    "reader-sees-the-pause-control": (WINDOW, ROLES_SUITE,
+        '"can_control": account is not None and account.role == "admin",\n',
+        '"can_control": True,\n',
+    ),
+
+    # --- The Host on the Queue Board (#42) ---------------------------------
+    #
+    # The widget is the operator's headroom reading. Every mutation here
+    # leaves a board that still draws while quietly ceasing to be that.
+
+    # A /proc read that failed takes the queue with it, so the page the
+    # operator opened to see the queue is a 500 instead.
+    "a-sampler-failure-takes-the-board-down": (WINDOW, HOST_SUITE,
+        "    try:\n"
+        "        facts = host.sample()\n"
+        "    except Exception as exc:\n"
+        "        return {**unknown, \"error\": str(exc)}\n",
+        "    facts = host.sample()\n",
+    ),
+    # The count is a constant, so a Run the Journal has in flight reads as
+    # none and the host looks idle.
+    "in-flight-count-ignores-the-journal": (WINDOW, HOST_SUITE,
+        "    in_flight = None if spend is None else spend.runs_in_flight()\n",
+        "    in_flight = 0\n",
+    ),
+    # Ended and stale dispatches still count, so the figure is not Eligibility's
+    # in-flight predicate - it is every dispatch the Journal has ever written.
+    "in-flight-count-counts-ended-runs": (WINDOW, HOST_SUITE,
+        "    in_flight = None if spend is None else spend.runs_in_flight()\n",
+        "    in_flight = None if spend is None else len(spend._dispatches)\n",
+    ),
+    # Unique issue numbers collapse two Targets sharing a number into one Run.
+    "in-flight-count-collapses-two-targets": (WINDOW, HOST_SUITE,
+        "    in_flight = None if spend is None else spend.runs_in_flight()\n",
+        "    in_flight = None if spend is None else len(spend.in_flight)\n",
+    ),
+    # Same collapse, from Spend's own count rather than from the window.
+    "spend-count-collapses-two-targets": (CYCLE, HOST_SUITE,
+        "        return len(self._in_flight_keys)\n",
+        "        return len(self.in_flight)\n",
+    ),
+    # The widget leaves the live region, so a Journal row landing does not
+    # refresh the figures and a reload is required.
+    "host-widget-not-in-the-live-region": (LIVE_REGION, HOST_SUITE,
+        '{% include "_host.html" %}\n',
+        "",
+    ),
+    # The page invents a CPU figure instead of showing the sampler's.
+    "host-figures-are-not-the-sampler-s": (WINDOW, HOST_SUITE,
+        '        "cpu": f"{round(facts.cpu_percent)}%",\n',
+        '        "cpu": "0%",\n',
+    ),
+    # The default adapter stops reading the machine, so production is a
+    # permanently degraded widget.
+    "the-host-sampler-does-not-read-the-machine": (HOST, HOST_SUITE,
+        "        cpu = _cpu_percent()\n",
+        '        raise SamplerError("no")\n        cpu = _cpu_percent()\n',
+    ),
+    # The template ignores the sampler's CPU and prints a constant.
+    "host-cpu-is-hardcoded-in-the-template": (HOST_WIDGET, HOST_SUITE,
+        '      <span class="cell-value">{{ host.cpu }}</span>\n',
+        '      <span class="cell-value">0%</span>\n',
     ),
 }
 

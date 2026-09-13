@@ -1,0 +1,37 @@
+{# The Host on the Queue Board (#42). Beside the queue: CPU, memory, the
+   disk this checkout lives on, and how many Runs the Journal has in flight.
+   Sampler failure degrades this widget, not the board. Figures are already
+   formatted; this template does not re-branch on ok per cell. #}
+<aside class="host" data-host="{% if host.ok %}ok{% else %}degraded{% endif %}">
+  <h2>The host</h2>
+  <p>Live headroom on this machine, and the count of Runs in flight.</p>
+  <section class="strip strip-host">
+    <div class="cell cell-cpu">
+      <span class="cell-label">cpu</span>
+      <span class="cell-value">{{ host.cpu }}</span>
+    </div>
+    <div class="cell cell-memory">
+      <span class="cell-label">memory</span>
+      <span class="cell-value">{{ host.memory }}</span>
+    </div>
+    <div class="cell cell-disk">
+      <span class="cell-label">disk</span>
+      <span class="cell-value">{{ host.disk }}</span>
+      {% if host.disk_path %}
+      <span class="detail"><code>{{ host.disk_path }}</code></span>
+      {% endif %}
+    </div>
+    <div class="cell cell-in-flight">
+      <span class="cell-label">runs in flight</span>
+      {% if host.in_flight is none %}
+      <span class="cell-value">unknown</span>
+      <span class="detail">the Journal could not be read.</span>
+      {% else %}
+      <span class="cell-value">{{ host.in_flight }}</span>
+      {% endif %}
+    </div>
+  </section>
+  {% if not host.ok %}
+  <p class="detail">{{ host.error }}</p>
+  {% endif %}
+</aside>

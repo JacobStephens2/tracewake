@@ -28,9 +28,11 @@ every sign-in, and expired on idle (30 minutes) and absolutely (12 hours) in
 the read query. State-changing POSTs carry a synchronizer CSRF token stored
 on the session row.
 
-Roles (`admin`, `reader`) are a column on the account. This ADR does not
-gate on them; the roles ticket does. The Operator remains exactly one.
-Window Accounts are viewers of an Instance, not Operators.
+Roles (`admin`, `reader`) are a column on the account. Gating is a
+dependency on the controls router: a reader sees every page and the live
+stream; pause and resume refuse anyone who is not an admin. The Operator
+remains exactly one. Window Accounts are viewers of an Instance, not
+Operators.
 
 This reverses the "window ships no authentication of its own" acceptance
 criterion. The binding half of that criterion is unchanged.
