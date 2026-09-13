@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}accounts — Tracewake{% endblock %}
+{% block content %}
+<header>
+  <p class="eyebrow">the window</p>
+  <h1>Accounts</h1>
+  <p class="lede">Invite a Window Account by email. They set a password through a single-use link.</p>
+</header>
+<section class="card">
+  {% if error %}
+  <p class="form-error">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="{{ accounts_url }}" class="sign-in">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      Email
+      <input type="email" name="email" autocomplete="off" required autofocus>
+    </label>
+    <label>
+      Role
+      <select name="role">
+        <option value="reader" selected>reader</option>
+        <option value="admin">admin</option>
+      </select>
+    </label>
+    <button type="submit" class="demo-btn">Invite</button>
+  </form>
+</section>
+<section>
+  <h2>Window accounts</h2>
+  <ul class="account-list">
+    {% for a in accounts %}
+    <li class="account" data-email="{{ a.email }}">
+      <div class="account-id">
+        <span class="account-email">{{ a.email }}</span>
+        <span class="badge {% if a.deactivated %}badge-deprecated{% elif a.activated %}badge-accepted{% else %}badge-proposed{% endif %}">
+          {% if a.deactivated %}deactivated{% elif a.activated %}{{ a.role }}{% else %}invited {{ a.role }}{% endif %}
+        </span>
+      </div>
+      {% if not a.deactivated %}
+      <form method="post" action="{{ accounts_url }}/{{ a.id }}/role" class="account-role">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>
+          <select name="role">
+            {% for r in roles %}
+            <option value="{{ r }}" {% if r == a.role %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">change role</button>
+      </form>
+      <form method="post" action="{{ accounts_url }}/{{ a.id }}/deactivate" class="account-deactivate">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">deactivate</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

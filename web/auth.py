@@ -1,8 +1,9 @@
-"""Window accounts: passwords, sessions, cookies, CSRF (issue #38, ADR 0028).
+"""Window accounts: passwords, sessions, cookies, CSRF, invites (issues #38, #41).
 
 Queries live here rather than in the Journal writer: the window is the only
-reader and writer of `web.accounts` / `web.sessions`. The connection is
-the Journal's, because the tables sit in the same postgres (ADR 0015).
+reader and writer of `web.accounts` / `web.sessions` / `web.account_tokens`.
+The connection is the Journal's, because the tables sit in the same postgres
+(ADR 0015).
 """
 from __future__ import annotations
 
@@ -34,7 +35,9 @@ _DUMMY_HASH = None
 
 IDLE = "30 minutes"
 ABSOLUTE = "12 hours"
+INVITE_TTL = "72 hours"
 TOKEN_BYTES = 32
+ROLES = ("admin", "reader")
 
 COOKIE_SECURE_NAME = "__Host-session"
 COOKIE_INSECURE_NAME = "session"
@@ -51,6 +54,22 @@ class AccountExists(Exception):
     def __init__(self, email: str):
         self.email = email
         super().__init__(email)
+
+
+class AdminRequired(Exception):
+    """A reader (or no account) reached an admin-only surface."""
+
+
+class InvalidRole(Exception):
+    """A role other than admin or reader was offered."""
+
+    def __init__(self, role: str):
+        self.role = role
+        super().__init__(role)
+
+
+class InviteInvalid(Exception):
+    """The invite token is missing, used, or past its expiry."""
 
 
 @dataclass(frozen=True)
@@ -120,7 +139,12 @@ def sign_in_location(request: Request, next_url: str = "/") -> str:
 
 
 def is_public(path: str) -> bool:
-    return path == "/healthz" or path == "/sign-in" or path.startswith("/static/")
+    return (
+        path == "/healthz"
+        or path == "/sign-in"
+        or path.startswith("/static/")
+        or path.startswith("/invite/")
+    )
 
 
 def set_session_cookie(response: Response, token: str) -> None:
@@ -244,29 +268,39 @@ def touch_session(token_hash: str) -> None:
         return
 
 
+def _dummy_verify(password: str) -> None:
+    """Spend the same argon2 cost as a real verify, discarding the result."""
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = _HASHER.hash("not-a-real-user-dummy-hash")
+    try:
+        _HASHER.verify(_DUMMY_HASH, password)
+    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        pass
+
+
 def authenticate(email: str, password: str) -> Optional[Account]:
     """Verify credentials. Same refusal for unknown email and wrong password."""
     email = email.strip().lower()
     try:
         with journal.connect() as conn:
             row = conn.execute(
-                "SELECT id, email, role, password_hash"
+                "SELECT id, email, role, password_hash, deactivated_at"
                 "  FROM web.accounts WHERE email = %s",
                 (email,),
             ).fetchone()
     except psycopg.Error:
         return None
     if row is None:
-        # Dummy verify so an unknown email costs the same as a wrong password.
-        global _DUMMY_HASH
-        if _DUMMY_HASH is None:
-            _DUMMY_HASH = _HASHER.hash("not-a-real-user-dummy-hash")
-        try:
-            _HASHER.verify(_DUMMY_HASH, password)
-        except (VerifyMismatchError, VerificationError, InvalidHashError):
-            pass
+        _dummy_verify(password)
         return None
-    account_id, stored_email, role, hashed = row
+    account_id, stored_email, role, hashed, deactivated_at = row
+    if hashed is None:
+        _dummy_verify(password)
+        return None
+    if deactivated_at is not None:
+        _dummy_verify(password)
+        return None
     ok, new_hash = verify_password(password, hashed)
     if not ok:
         return None
@@ -277,6 +311,160 @@ def authenticate(email: str, password: str) -> Optional[Account]:
                 (new_hash, account_id),
             )
     return Account(id=account_id, email=stored_email, role=role)
+
+
+def _tx() -> psycopg.Connection:
+    """A Journal connection that commits as one transaction.
+
+    `journal.connect` is autocommit so a NOTIFY fires per append. Invite
+    consume, deactivation, and invite issuance each need several writes to
+    land together or not at all.
+    """
+    return psycopg.connect(journal.dsn())
+
+
+def require_admin(request: Request) -> Account:
+    """Router-wide gate: only an admin reaches the account-management surface."""
+    account = getattr(request.state, "account", None)
+    if account is None or account.role != "admin":
+        raise AdminRequired()
+    return account
+
+
+def _normalize_role(role: str) -> str:
+    role = (role or "").strip().lower()
+    if role not in ROLES:
+        raise InvalidRole(role)
+    return role
+
+
+def create_invite(email: str, role: str) -> tuple[int, str]:
+    """Insert an invited account (or rotate its unused invite) and return the raw token.
+
+    The raw token is returned so the caller can mail it; it is never stored.
+    An already-activated email is AccountExists. A never-activated email is
+    re-invited: one live token per purpose.
+    """
+    email = email.strip().lower()
+    role = _normalize_role(role)
+    raw = mint_token()
+    with _tx() as conn:
+        existing = conn.execute(
+            "SELECT id, password_hash FROM web.accounts WHERE email = %s",
+            (email,),
+        ).fetchone()
+        if existing is None:
+            account_id = conn.execute(
+                "INSERT INTO web.accounts (email, password_hash, role)"
+                " VALUES (%s, NULL, %s) RETURNING id",
+                (email, role),
+            ).fetchone()[0]
+        else:
+            account_id, hashed = existing
+            if hashed is not None:
+                raise AccountExists(email)
+            conn.execute(
+                "UPDATE web.accounts SET role = %s WHERE id = %s",
+                (role, account_id),
+            )
+        conn.execute(
+            "UPDATE web.account_tokens SET used_at = now()"
+            " WHERE account_id = %s AND purpose = 'invite' AND used_at IS NULL",
+            (account_id,),
+        )
+        conn.execute(
+            "INSERT INTO web.account_tokens"
+            " (token_hash, account_id, purpose, expires_at)"
+            " VALUES (%s, %s, 'invite', now() + %s::interval)",
+            (hash_token(raw), account_id, INVITE_TTL),
+        )
+    return account_id, raw
+
+
+def invite_is_live(token: str) -> bool:
+    digest = hash_token(token)
+    try:
+        with journal.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM web.account_tokens"
+                " WHERE token_hash = %s AND purpose = 'invite'"
+                "   AND used_at IS NULL AND expires_at > now()",
+                (digest,),
+            ).fetchone()
+    except psycopg.Error:
+        return False
+    return row is not None
+
+
+def consume_invite(token: str, password: str) -> int:
+    """Set the password and stamp used_at in one transaction. Raises InviteInvalid."""
+    if not password:
+        raise InviteInvalid()
+    digest = hash_token(token)
+    hashed = hash_password(password)
+    with _tx() as conn:
+        row = conn.execute(
+            "UPDATE web.account_tokens SET used_at = now()"
+            " WHERE token_hash = %s AND purpose = 'invite'"
+            "   AND used_at IS NULL AND expires_at > now()"
+            " RETURNING account_id",
+            (digest,),
+        ).fetchone()
+        if row is None:
+            raise InviteInvalid()
+        account_id = row[0]
+        conn.execute(
+            "UPDATE web.accounts SET password_hash = %s WHERE id = %s",
+            (hashed, account_id),
+        )
+    return account_id
+
+
+def list_accounts() -> list[dict]:
+    with journal.connect() as conn:
+        rows = conn.execute(
+            "SELECT id, email, role,"
+            "       password_hash IS NOT NULL,"
+            "       deactivated_at IS NOT NULL"
+            "  FROM web.accounts ORDER BY id"
+        ).fetchall()
+    return [
+        {
+            "id": row[0],
+            "email": row[1],
+            "role": row[2],
+            "activated": row[3],
+            "deactivated": row[4],
+        }
+        for row in rows
+    ]
+
+
+def set_role(account_id: int, role: str) -> None:
+    role = _normalize_role(role)
+    with journal.connect() as conn:
+        conn.execute(
+            "UPDATE web.accounts SET role = %s WHERE id = %s",
+            (role, account_id),
+        )
+
+
+def deactivate(account_id: int) -> None:
+    """Stamp deactivated_at, drop sessions, and consume unused tokens in one transaction."""
+    with _tx() as conn:
+        conn.execute(
+            "UPDATE web.accounts SET deactivated_at = now() WHERE id = %s",
+            (account_id,),
+        )
+        conn.execute(
+            "DELETE FROM web.sessions WHERE account_id = %s",
+            (account_id,),
+        )
+        conn.execute(
+            "UPDATE web.account_tokens SET used_at = now()"
+            " WHERE account_id = %s AND used_at IS NULL",
+            (account_id,),
+        )
 
 
 def csrf_ok(request: Request, offered: Optional[str]) -> bool:

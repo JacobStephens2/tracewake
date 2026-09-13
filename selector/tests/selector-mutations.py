@@ -55,6 +55,8 @@ WINDOW = "../web/app.py"
 WINDOW_SUITE = "../web/tests/test_loop_page.py"
 AUTH = "../web/auth.py"
 AUTH_SUITE = "../web/tests/test_sign_in.py"
+MAIL = "../web/mail.py"
+INVITE_SUITE = "../web/tests/test_invite.py"
 
 # The push (#159). The stream is Journal SQL and lives with the Journal; the
 # region it re-fetches is a template, which is a mutation target like any
@@ -1367,6 +1369,82 @@ MUTATIONS = {
         "        raise AccountExists(email) from exc\n",
         "    except psycopg.errors.UniqueViolation as exc:\n"
         "        return 0\n",
+    ),
+    # Invite (issue #41). The raw token is stored, so a leaked table is the
+    # invite itself.
+    "invite-tokens-stored-plaintext": (AUTH, INVITE_SUITE,
+        "            (hash_token(raw), account_id, INVITE_TTL),\n",
+        "            (raw, account_id, INVITE_TTL),\n",
+    ),
+    # The mail command is not invoked, so the invitee never receives the link.
+    "invite-skips-the-mail": (MAIL, INVITE_SUITE,
+        '    """Hand one message to the mail command. Raises on anything but success."""\n'
+        "    timeout = int(os.environ.get(\"WINDOW_MAIL_TIMEOUT_SECONDS\") or 120)\n",
+        '    """Hand one message to the mail command. Raises on anything but success."""\n'
+        "    return\n"
+        "    timeout = int(os.environ.get(\"WINDOW_MAIL_TIMEOUT_SECONDS\") or 120)\n",
+    ),
+    # A reader reaches the account-management surface.
+    "reader-reaches-accounts": (AUTH, INVITE_SUITE,
+        "    if account is None or account.role != \"admin\":\n"
+        "        raise AdminRequired()\n",
+        "    if False:\n"
+        "        raise AdminRequired()\n",
+    ),
+    # Deactivation leaves sessions live, so the cookie still opens a page.
+    "deactivate-leaves-sessions": (AUTH, INVITE_SUITE,
+        "        conn.execute(\n"
+        "            \"DELETE FROM web.sessions WHERE account_id = %s\",\n"
+        "            (account_id,),\n"
+        "        )\n",
+        "",
+    ),
+    # A used invite can be redeemed again.
+    "invite-tokens-reusable": (AUTH, INVITE_SUITE,
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'invite'\"\n"
+        "            \"   AND used_at IS NULL AND expires_at > now()\"\n"
+        "            \" RETURNING account_id\",\n",
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'invite'\"\n"
+        "            \"   AND expires_at > now()\"\n"
+        "            \" RETURNING account_id\",\n",
+    ),
+    # An expired invite still sets a password.
+    "invite-expiry-ignored": (AUTH, INVITE_SUITE,
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'invite'\"\n"
+        "            \"   AND used_at IS NULL AND expires_at > now()\"\n"
+        "            \" RETURNING account_id\",\n",
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'invite'\"\n"
+        "            \"   AND used_at IS NULL\"\n"
+        "            \" RETURNING account_id\",\n",
+    ),
+    # A never-activated account can sign in without redeeming.
+    "unactivated-can-sign-in": (AUTH, INVITE_SUITE,
+        "    if hashed is None:\n"
+        "        _dummy_verify(password)\n"
+        "        return None\n",
+        "    if hashed is None:\n"
+        "        return Account(id=account_id, email=stored_email, role=role)\n",
+    ),
+    # An unset window mail command is filled in, so an invite sends with
+    # nobody configured.
+    "unconfigured-window-mail-gets-a-default": (MAIL, INVITE_SUITE,
+        "    return os.environ.get(\"WINDOW_MAIL_COMMAND\") or targets.missing(\n"
+        "        \"WINDOW_MAIL_COMMAND\", \"the window's mail surface\"\n"
+        "    )\n",
+        "    return os.environ.get(\"WINDOW_MAIL_COMMAND\") or \"/bin/true\"\n",
+    ),
+    # Deactivation leaves unused invite tokens live, so the link still works.
+    "deactivate-leaves-invite-tokens": (AUTH, INVITE_SUITE,
+        "        conn.execute(\n"
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE account_id = %s AND used_at IS NULL\",\n"
+        "            (account_id,),\n"
+        "        )\n",
+        "",
     ),
 }
 

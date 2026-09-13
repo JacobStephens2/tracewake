@@ -7,7 +7,7 @@
 {% extends "terminal_base.html" %}
 {% block title %}Run history{% endblock %}
 {% block logo %}THE LOOP // RUN HISTORY{% endblock %}
-{% block nav %}<a href="{{ board_url }}">board</a> <a href="/adr">decisions</a>{% endblock %}
+{% block nav %}<a href="{{ board_url }}">board</a> <a href="/adr">decisions</a>{% include "_accounts_nav.html" %}{% endblock %}
 {% block main %}
     <h1>Run history
       {%- include "_live_indicator.html" -%}

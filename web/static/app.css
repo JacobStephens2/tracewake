@@ -82,10 +82,24 @@ form.sign-in label {
   display: block; margin: 0 0 14px; font-size: 14px; color: var(--muted);
 }
 form.sign-in input[type="email"],
-form.sign-in input[type="password"] {
+form.sign-in input[type="password"],
+form.sign-in select {
   display: block; width: 100%; margin-top: 6px; padding: 10px 12px;
   border: 1px solid var(--rule); border-radius: 8px; background: var(--ground);
   color: var(--ink); font: 400 16px/1.4 system-ui, sans-serif;
+}
+.account-list { list-style: none; padding: 0; margin: 0; }
+.account {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 14px 0; border-bottom: 1px solid var(--rule);
+}
+.account-id { flex: 1; min-width: 16ch; display: flex; align-items: center; gap: 10px; }
+.account-email { font-weight: 550; }
+.account-role, .account-deactivate { display: flex; align-items: center; gap: 8px; margin: 0; }
+.account-role select, .account-role button, .account-deactivate button {
+  font: inherit; font-size: 14px; padding: 6px 10px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--raise);
+  color: var(--ink); cursor: pointer;
 }
 form.sign-in button { margin-top: 8px; }
 .form-error { color: #b42318; font-weight: 600; }

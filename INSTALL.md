@@ -351,6 +351,10 @@ the first request.
      `ready-for-human`).
    - The status strip reporting review capacity and the Guardrail chip.
    - The Run history at `http://127.0.0.1:8100/history`.
+   - **Accounts** (admins only): invite a Window Account by email. That send goes through
+     `WINDOW_MAIL_COMMAND` (`<to> <subject> [link]`, body on stdin) - the same
+     substitutable-command seam as `SELECTOR_NOTIFY_COMMAND`, with the recipient
+     named because the window addresses invitees. There is no default.
 
 ---
 

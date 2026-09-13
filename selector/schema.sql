@@ -99,10 +99,18 @@ CREATE SCHEMA IF NOT EXISTS web;
 CREATE TABLE IF NOT EXISTS web.accounts (
     id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email         text        NOT NULL UNIQUE,
-    password_hash text        NOT NULL,
+    password_hash text,
     role          text        NOT NULL CHECK (role IN ('admin', 'reader')),
     created_at    timestamptz NOT NULL DEFAULT now()
 );
+
+-- Invited accounts exist with no password until the link is redeemed
+-- (issue #41). Re-apply is a no-op on a fresh table and drops the NOT NULL
+-- that issue #38 shipped.
+ALTER TABLE web.accounts ALTER COLUMN password_hash DROP NOT NULL;
+
+ALTER TABLE web.accounts
+    ADD COLUMN IF NOT EXISTS deactivated_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS web.sessions (
     token_hash   text PRIMARY KEY,
@@ -110,4 +118,15 @@ CREATE TABLE IF NOT EXISTS web.sessions (
     csrf_token   text        NOT NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
     last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Invite and reset tokens share one table (issue #41, the research note).
+-- Hashed at rest; single-use via used_at consumed in the acting transaction.
+CREATE TABLE IF NOT EXISTS web.account_tokens (
+    token_hash text PRIMARY KEY,
+    account_id bigint      NOT NULL REFERENCES web.accounts (id),
+    purpose    text        NOT NULL CHECK (purpose IN ('invite', 'reset')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    used_at    timestamptz
 );
