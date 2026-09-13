@@ -510,7 +510,7 @@ def labeled_elsewhere(repo="acme/other", number=7, **over):
     return record
 
 
-def warning(dsn):
+def latest_unenrolled(dsn):
     rows = events(dsn, "target.unenrolled")
     assert rows, "expected a target.unenrolled row"
     return rows[-1]["payload"]
@@ -534,7 +534,7 @@ def test_a_handover_on_an_unenrolled_repo_is_journaled_as_new(db, fakes):
     result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()])
 
     assert result.returncode == 0, result.stderr
-    payload = warning(db)
+    payload = latest_unenrolled(db)
     assert payload["owner"] == "acme"
     assert payload["label"] == "ready-for-agent"
     assert [r["repo"] for r in payload["repos"]] == ["acme/other"]
@@ -550,8 +550,8 @@ def test_a_standing_gap_journals_without_being_new(db, fakes):
     assert result.returncode == 0, result.stderr
     rows = events(db, "target.unenrolled")
     assert len(rows) == 2
-    assert warning(db)["new"] == []
-    assert [r["repo"] for r in warning(db)["repos"]] == ["acme/other"]
+    assert latest_unenrolled(db)["new"] == []
+    assert [r["repo"] for r in latest_unenrolled(db)["repos"]] == ["acme/other"]
 
 
 def test_a_newly_appearing_unenrolled_repo_is_new(db, fakes):
@@ -565,7 +565,7 @@ def test_a_newly_appearing_unenrolled_repo_is_new(db, fakes):
     )
 
     assert result.returncode == 0, result.stderr
-    payload = warning(db)
+    payload = latest_unenrolled(db)
     assert payload["new"] == ["acme/stray"]
     assert {r["repo"] for r in payload["repos"]} == {"acme/other", "acme/stray"}
 
@@ -580,18 +580,43 @@ def test_labeled_issues_on_declared_targets_are_never_flagged(db, fakes):
     )
 
     assert result.returncode == 0, result.stderr
-    payload = warning(db)
+    payload = latest_unenrolled(db)
     assert [r["repo"] for r in payload["repos"]] == ["acme/other"]
     assert payload["new"] == ["acme/other"]
 
 
-def test_an_empty_gap_is_not_journaled(db, fakes):
+def test_an_empty_gap_is_not_journaled_when_none_was_open(db, fakes):
     result = fakes.run(db, [issue(645)], owner_issues=[
         labeled_elsewhere(repo="acme/widgets", number=645),
     ])
 
     assert result.returncode == 0, result.stderr
     assert events(db, "target.unenrolled") == []
+
+
+def test_a_cleared_gap_is_journaled_empty(db, fakes):
+    """A standing gap that goes away must leave a row, or a later
+    reappearance would match the last non-empty set and stay silent."""
+    seed_warning(db)
+    result = fakes.run(db, [issue(645)], owner_issues=[
+        labeled_elsewhere(repo="acme/widgets", number=645),
+    ])
+
+    assert result.returncode == 0, result.stderr
+    payload = latest_unenrolled(db)
+    assert payload["repos"] == []
+    assert payload["new"] == []
+
+
+def test_a_gap_that_returns_after_clearing_is_new_again(db, fakes):
+    seed_warning(db)
+    seed_warning(db, repos=[], new=[])
+    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()])
+
+    assert result.returncode == 0, result.stderr
+    payload = latest_unenrolled(db)
+    assert payload["new"] == ["acme/other"]
+    assert [r["repo"] for r in payload["repos"]] == ["acme/other"]
 
 
 def test_the_owner_search_runs_once_per_cycle_not_per_target(db, fakes):

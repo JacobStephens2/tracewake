@@ -1444,7 +1444,7 @@ def observe_unenrolled(
     *,
     dry_run: bool,
 ) -> None:
-    """Journal the unenrolled-Target gap, if there is one.
+    """Journal the unenrolled-Target gap, or the empty set when one closed.
 
     Warn-only: this function reads the tracker and writes the Journal. It
     does not comment, relabel, or edit any Target configuration.
@@ -1452,9 +1452,24 @@ def observe_unenrolled(
     label = _handover_label(declared)
     found = fetch_owner_search(instance.search_owner, label)
     gap = group_unenrolled(found, {target.repo for target in declared})
-    if not gap:
-        return
     seen = last_live_unenrolled_repos(conn)
+    if not gap:
+        # Record the empty set so a later reappearance is new, rather than
+        # matching the last non-empty row and staying silent. A gap that
+        # was never open is not journaled.
+        if not seen:
+            return
+        journal.append(
+            conn,
+            *events.target_unenrolled(
+                owner=instance.search_owner,
+                label=label,
+                repos=[],
+                new=[],
+                dry_run=dry_run,
+            ),
+        )
+        return
     new = [entry["repo"] for entry in gap if entry["repo"] not in seen]
     journal.append(
         conn,

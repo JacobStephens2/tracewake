@@ -1239,6 +1239,12 @@ MUTATIONS = {
         '    new = [entry["repo"] for entry in gap if entry["repo"] not in seen]\n',
         '    new = [entry["repo"] for entry in gap]\n',
     ),
+    # A gap that goes away leaves no row, so a later reappearance matches the
+    # last non-empty set and never notifies.
+    "cleared-gap-not-recorded": (CYCLE, CYCLE_SUITE,
+        "        if not seen:\n            return\n",
+        "        if True:\n            return\n",
+    ),
     # The searched owner gets a default, which is a company fact in the
     # product - the refusal issue #3 and #39 both require.
     "search-owner-not-refused-when-missing": (TARGETS, TARGETS_SUITE,
