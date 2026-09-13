@@ -36,7 +36,7 @@ def test_loop_page_serves_when_journal_is_unreachable(monkeypatch):
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_test_no_such_db")
     resp = client.get("/loop", follow_redirects=False)
     assert resp.status_code == 303
-    assert "/login" in resp.headers["location"]
+    assert "/sign-in" in resp.headers["location"]
 
 
 def test_terminal_css_is_served():

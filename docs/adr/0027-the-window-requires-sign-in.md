@@ -24,7 +24,7 @@ Preview can set a cookie on plain-HTTP loopback.
 
 Passwords are argon2id with the stock pinned hasher (RFC 9106's second
 recommended option). Session tokens are 256-bit, hashed at rest, rotated on
-every login, and expired on idle (30 minutes) and absolutely (12 hours) in
+every sign-in, and expired on idle (30 minutes) and absolutely (12 hours) in
 the read query. State-changing POSTs carry a synchronizer CSRF token stored
 on the session row.
 

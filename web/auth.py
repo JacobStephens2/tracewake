@@ -38,7 +38,7 @@ TOKEN_BYTES = 32
 
 COOKIE_SECURE_NAME = "__Host-session"
 COOKIE_INSECURE_NAME = "session"
-LOGIN_ERROR = "That email or password is wrong."
+SIGN_IN_ERROR = "That email or password is wrong."
 
 
 class CSRFDenied(Exception):
@@ -87,7 +87,7 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> tuple[bool, Optional[str]]:
-    """Argon2's documented login: verify, then rehash if parameters moved."""
+    """Argon2's documented verify-then-rehash: verify, then rehash if parameters moved."""
     try:
         _HASHER.verify(hashed, password)
     except (VerifyMismatchError, VerificationError, InvalidHashError):
@@ -114,13 +114,13 @@ def safe_next(value: Optional[str]) -> str:
     return value
 
 
-def login_location(request: Request, next_url: str = "/") -> str:
+def sign_in_location(request: Request, next_url: str = "/") -> str:
     root = request.scope.get("root_path", "") or ""
-    return f"{root}/login?{urlencode({'next': safe_next(next_url)}, safe='/')}"
+    return f"{root}/sign-in?{urlencode({'next': safe_next(next_url)}, safe='/')}"
 
 
 def is_public(path: str) -> bool:
-    return path == "/healthz" or path == "/login" or path.startswith("/static/")
+    return path == "/healthz" or path == "/sign-in" or path.startswith("/static/")
 
 
 def set_session_cookie(response: Response, token: str) -> None:
@@ -317,7 +317,7 @@ class RequireSignIn:
             if query:
                 next_url = f"{next_url}?{query.decode()}"
             response = RedirectResponse(
-                login_location(request, next_url), status_code=303
+                sign_in_location(request, next_url), status_code=303
             )
             await response(scope, receive, send)
             return

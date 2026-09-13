@@ -367,4 +367,4 @@ def test_the_journal_being_down_does_not_take_the_region_with_it(
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_no_such_db")
     response = client.get(path, follow_redirects=False)
     assert response.status_code == 303
-    assert "/login" in response.headers["location"]
+    assert "/sign-in" in response.headers["location"]

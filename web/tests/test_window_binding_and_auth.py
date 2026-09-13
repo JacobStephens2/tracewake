@@ -44,7 +44,7 @@ def test_an_unauthenticated_request_is_sent_to_sign_in():
     for path in ["/", "/adr"]:
         resp = client.get(path)
         assert resp.status_code == 303, f"{path} returned status {resp.status_code}"
-        assert "/login" in resp.headers["location"]
+        assert "/sign-in" in resp.headers["location"]
         assert "WWW-Authenticate" not in resp.headers
 
 

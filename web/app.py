@@ -169,8 +169,8 @@ def _all_adrs() -> list[dict]:
     )
 
 
-@app.get("/login", response_class=HTMLResponse)
-def login_form(request: Request, next: str = "/"):
+@app.get("/sign-in", response_class=HTMLResponse)
+def sign_in_form(request: Request, next: str = "/"):
     """Sign-in page. Public; mints an anonymous session to hold the CSRF token."""
     session = getattr(request.state, "session", None)
     minted = None
@@ -179,7 +179,7 @@ def login_form(request: Request, next: str = "/"):
         session = auth.load_session(minted)
         request.state.session = session
     response = _page(
-        request, "login.html",
+        request, "sign_in.html",
         {"error": None, "next_url": auth.safe_next(next)},
     )
     if minted:
@@ -187,8 +187,8 @@ def login_form(request: Request, next: str = "/"):
     return response
 
 
-@app.post("/login", dependencies=[Depends(require_csrf)])
-def login_post(
+@app.post("/sign-in", dependencies=[Depends(require_csrf)])
+def sign_in_post(
     request: Request,
     email: str = Form(""),
     password: str = Form(""),
@@ -197,8 +197,8 @@ def login_post(
     account = auth.authenticate(email, password)
     if account is None:
         return _page(
-            request, "login.html",
-            {"error": auth.LOGIN_ERROR, "next_url": auth.safe_next(next)},
+            request, "sign_in.html",
+            {"error": auth.SIGN_IN_ERROR, "next_url": auth.safe_next(next)},
         )
     presented = auth.session_token_from_request(request)
     raw = auth.create_session(account.id, replacing=presented)
@@ -214,7 +214,7 @@ def logout(request: Request):
     if session is not None:
         auth.destroy_session(session.token_hash)
     root = request.scope.get("root_path", "") or ""
-    response = RedirectResponse(root + "/login", status_code=303)
+    response = RedirectResponse(root + "/sign-in", status_code=303)
     auth.clear_session_cookie(response)
     return response
 

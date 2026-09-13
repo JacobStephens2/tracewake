@@ -18,15 +18,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import app
+from conftest import csrf_from
 
 WEB = Path(__file__).resolve().parents[1]
 SEED_ADMIN = WEB / "seed-admin.py"
 ADMIN_EMAIL = "operator@example.com"
 ADMIN_PASSWORD = "correct-horse-battery"
-CSRF_FIELD = re.compile(
-    r'<input[^>]*name="csrf_token"[^>]*value="([^"]+)"',
-    re.IGNORECASE,
-)
 NEXT_FIELD = re.compile(
     r'<input[^>]*name="next"[^>]*value="([^"]*)"',
     re.IGNORECASE,
@@ -45,13 +42,7 @@ def browser(**kwargs) -> TestClient:
     )
 
 
-def csrf_token(body: str) -> str:
-    match = CSRF_FIELD.search(body)
-    assert match, "sign-in form has no csrf_token field"
-    return match.group(1)
-
-
-def seed_operator(dsn: str, email=ADMIN_EMAIL, password=ADMIN_PASSWORD):
+def seed_admin(dsn: str, email=ADMIN_EMAIL, password=ADMIN_PASSWORD):
     env = os.environ.copy()
     env["SELECTOR_JOURNAL_DSN"] = dsn
     env["WINDOW_ADMIN_PASSWORD"] = password
@@ -67,21 +58,21 @@ def seed_operator(dsn: str, email=ADMIN_EMAIL, password=ADMIN_PASSWORD):
 
 def sign_in(client: TestClient, *, email=ADMIN_EMAIL, password=ADMIN_PASSWORD,
             next_path: str | None = None):
-    login_path = "/login"
+    path = "/sign-in"
     if next_path is not None:
-        login_path = f"/login?next={next_path}"
-    page = client.get(login_path)
+        path = f"/sign-in?next={next_path}"
+    page = client.get(path)
     assert page.status_code == 200, page.text
     next_match = NEXT_FIELD.search(page.text)
     data = {
         "email": email,
         "password": password,
-        "csrf_token": csrf_token(page.text),
+        "csrf_token": csrf_from(page.text),
         "next": next_path if next_path is not None else (
             next_match.group(1) if next_match else "/"
         ),
     }
-    return client.post("/login", data=data)
+    return client.post("/sign-in", data=data)
 
 
 def cookie_headers(response) -> str:
@@ -101,7 +92,7 @@ def test_an_unauthenticated_page_redirects_to_sign_in(path):
     assert response.status_code == 303
     location = response.headers["location"]
     parsed = urlparse(location)
-    assert parsed.path.endswith("/login")
+    assert parsed.path.endswith("/sign-in")
     assert parse_qs(parsed.query).get("next") == [path]
 
 
@@ -112,16 +103,16 @@ def test_the_health_endpoint_answers_without_a_session():
 
 
 def test_sign_in_returns_the_visitor_to_the_page_they_asked_for(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     denied = client.get("/history")
     assert denied.status_code == 303
-    login = client.get(denied.headers["location"])
-    next_match = NEXT_FIELD.search(login.text)
-    posted = client.post("/login", data={
+    form = client.get(denied.headers["location"])
+    next_match = NEXT_FIELD.search(form.text)
+    posted = client.post("/sign-in", data={
         "email": ADMIN_EMAIL,
         "password": ADMIN_PASSWORD,
-        "csrf_token": csrf_token(login.text),
+        "csrf_token": csrf_from(form.text),
         "next": next_match.group(1) if next_match else "/",
     })
     assert posted.status_code == 303
@@ -132,7 +123,7 @@ def test_sign_in_returns_the_visitor_to_the_page_they_asked_for(db):
 
 
 def test_a_foreign_next_is_not_followed(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     posted = sign_in(client, next_path="https://evil.example/steal")
     assert posted.status_code == 303
@@ -144,7 +135,7 @@ def test_a_foreign_next_is_not_followed(db):
 
 
 def test_wrong_password_is_refused_without_saying_which_half(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     posted = sign_in(client, password="not-the-password")
     assert posted.status_code == 200
@@ -156,7 +147,7 @@ def test_wrong_password_is_refused_without_saying_which_half(db):
 
 
 def test_unknown_email_uses_the_same_words_as_a_wrong_password(db):
-    seed_operator(db)
+    seed_admin(db)
     wrong_password = sign_in(browser(), password="not-the-password")
     unknown_email = sign_in(browser(), email="nobody@example.com")
     assert wrong_password.status_code == 200
@@ -174,7 +165,7 @@ def test_unknown_email_uses_the_same_words_as_a_wrong_password(db):
 
 
 def test_sign_out_ends_the_session_and_the_old_cookie_is_worthless(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     posted = sign_in(client)
     assert posted.status_code == 303
@@ -184,9 +175,9 @@ def test_sign_out_ends_the_session_and_the_old_cookie_is_worthless(db):
     issued = re.search(r"(?:__Host-)?session=([^;]+)", header).group(1)
 
     page = client.get("/")
-    ended = client.post("/logout", data={"csrf_token": csrf_token(page.text)})
+    ended = client.post("/logout", data={"csrf_token": csrf_from(page.text)})
     assert ended.status_code == 303
-    assert "/login" in ended.headers["location"]
+    assert "/sign-in" in ended.headers["location"]
     assert client.get("/").status_code == 303
 
     stolen = browser()
@@ -194,20 +185,20 @@ def test_sign_out_ends_the_session_and_the_old_cookie_is_worthless(db):
     assert stolen.get("/").status_code == 303
 
 
-def test_every_login_issues_a_fresh_session_token(db):
-    seed_operator(db)
+def test_every_sign_in_issues_a_fresh_session_token(db):
+    seed_admin(db)
     client = browser()
     first = sign_in(client)
     header_a = cookie_headers(first)
     token_a = re.search(r"(?:__Host-)?session=([^;]+)", header_a).group(1)
     name = session_cookie_name(header_a)
-    # Already signed in: the second login is a POST against the live session,
+    # Already signed in: the second sign-in is a POST against the live session,
     # which is the privilege-change the token must rotate on.
     page = client.get("/")
-    second = client.post("/login", data={
+    second = client.post("/sign-in", data={
         "email": ADMIN_EMAIL,
         "password": ADMIN_PASSWORD,
-        "csrf_token": csrf_token(page.text),
+        "csrf_token": csrf_from(page.text),
     })
     token_b = re.search(
         r"(?:__Host-)?session=([^;]+)", cookie_headers(second)
@@ -219,7 +210,7 @@ def test_every_login_issues_a_fresh_session_token(db):
 
 
 def test_session_tokens_and_password_hashes_are_not_stored_recoverably(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     posted = sign_in(client)
     header = cookie_headers(posted)
@@ -244,7 +235,7 @@ def test_session_tokens_and_password_hashes_are_not_stored_recoverably(db):
 
 
 def test_an_idle_session_is_refused(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     assert sign_in(client).status_code == 303
     assert client.get("/").status_code == 200
@@ -257,7 +248,7 @@ def test_an_idle_session_is_refused(db):
 
 
 def test_an_absolutely_expired_session_is_refused(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     assert sign_in(client).status_code == 303
     with psycopg.connect(db, autocommit=True) as conn:
@@ -273,7 +264,7 @@ def test_an_absolutely_expired_session_is_refused(db):
 
 
 def test_the_session_cookie_carries_the_researched_flags(db):
-    seed_operator(db)
+    seed_admin(db)
     posted = sign_in(browser())
     header = cookie_headers(posted).lower()
     assert "__host-session=" in header
@@ -286,7 +277,7 @@ def test_the_session_cookie_carries_the_researched_flags(db):
 
 def test_the_preview_toggle_relaxes_only_secure(db, monkeypatch):
     monkeypatch.setenv("WINDOW_COOKIE_SECURE", "0")
-    seed_operator(db)
+    seed_admin(db)
     posted = sign_in(browser())
     header = cookie_headers(posted)
     lowered = header.lower()
@@ -300,7 +291,7 @@ def test_the_preview_toggle_relaxes_only_secure(db, monkeypatch):
 
 
 def test_a_state_changing_post_without_its_csrf_token_is_refused(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
     assert sign_in(client).status_code == 303
     refused = client.post("/logout")
@@ -310,10 +301,10 @@ def test_a_state_changing_post_without_its_csrf_token_is_refused(db):
 
 
 def test_sign_in_without_its_csrf_token_is_refused(db):
-    seed_operator(db)
+    seed_admin(db)
     client = browser()
-    client.get("/login")
-    refused = client.post("/login", data={
+    client.get("/sign-in")
+    refused = client.post("/sign-in", data={
         "email": ADMIN_EMAIL,
         "password": ADMIN_PASSWORD,
     })
@@ -325,7 +316,7 @@ def test_sign_in_without_its_csrf_token_is_refused(db):
 
 
 def test_the_seeding_command_creates_the_first_admin(db):
-    seed_operator(db)
+    seed_admin(db)
     with psycopg.connect(db) as conn:
         row = conn.execute(
             "SELECT email, role, password_hash FROM web.accounts"
@@ -336,7 +327,7 @@ def test_the_seeding_command_creates_the_first_admin(db):
 
 
 def test_seeding_an_existing_account_fails_loudly(db):
-    seed_operator(db)
+    seed_admin(db)
     env = os.environ.copy()
     env["SELECTOR_JOURNAL_DSN"] = db
     env["WINDOW_ADMIN_PASSWORD"] = ADMIN_PASSWORD
