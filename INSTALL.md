@@ -257,6 +257,10 @@ export SELECTOR_NOTIFY_COMMAND="/bin/true"
 export SELECTOR_PROTECTED_REPO="my-org/tracewake-config"
 export SELECTOR_PROTECTED_REF="refs/heads/main"
 export SELECTOR_PROTECTED_PATHS="guardrail-sources/paths.txt"
+
+# Unenrolled-Target search: the account whose repositories a Cycle
+# searches for a Handover label with no Target stanza. Required; no default.
+export SELECTOR_SEARCH_OWNER="my-org"
 ```
 
 ##### Option 2: Two-Machine Shape (Remote Box via SSH)
@@ -281,6 +285,10 @@ export SELECTOR_NOTIFY_COMMAND="/srv/tracewake/scripts/send-email.sh"
 export SELECTOR_PROTECTED_REPO="my-org/tracewake-config"
 export SELECTOR_PROTECTED_REF="refs/heads/main"
 export SELECTOR_PROTECTED_PATHS="guardrail-sources/paths.txt"
+
+# Unenrolled-Target search: the account whose repositories a Cycle
+# searches for a Handover label with no Target stanza. Required; no default.
+export SELECTOR_SEARCH_OWNER="my-org"
 ```
 
 ---

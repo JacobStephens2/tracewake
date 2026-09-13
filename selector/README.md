@@ -56,6 +56,14 @@ is behind its base and mergeable is brought up to date via `SELECTOR_ISSUE_COMMA
 are not updated and are displayed as conflicting on the board. A forge refusal
 is journaled (`proposal.update-failed`) without failing or halting any dispatch.
 
+**Unenrolled-Target warning** (issue #39). Each Cycle also runs one owner-wide
+search for the Handover label, diffs the repositories found against the
+declared Targets, and journals the gap as `target.unenrolled`. A newly
+appearing gap is one notice through the existing notification surface; a
+standing gap journals without mailing again. The search is warn-only: it
+never enrolls a Target and never writes to any tracker. `SELECTOR_SEARCH_OWNER`
+is required instance configuration; there is no default that names an account.
+
 **Pause.** `/loop` is the flag's only writer. A paused Selector still runs its
 timer, reads the queue, applies Eligibility and journals the cycle; it stops
 before picking or dispatching and writes `halted: paused` on `cycle.finished`.
@@ -120,7 +128,9 @@ address or a command have no default at all:
 | `SELECTOR_NOTIFY_COMMAND` | required | the mail surface (see below) |
 | `SELECTOR_PROTECTED_REPO` | required | the repository holding the guardrail's rules |
 | `SELECTOR_PROTECTED_REF` | required | the ref the executed paths are deployed from |
+| `SELECTOR_SEARCH_OWNER` | required | the GitHub user or organization whose repositories a Cycle searches for a Handover label with no Target stanza |
 | `SELECTOR_TRACKER_COMMAND` | `tracker-sources/github.sh` | the labeled queue, read |
+| `SELECTOR_SEARCH_COMMAND` | `search-sources/github.sh` | the owner-wide Handover search, read |
 | `SELECTOR_JOURNAL_DSN` | `dbname=selector` | |
 | `SELECTOR_WORK_REMOTE` | `origin` | |
 | `SELECTOR_BRANCH_PREFIX` | `loop/` | |

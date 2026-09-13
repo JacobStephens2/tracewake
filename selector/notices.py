@@ -7,12 +7,14 @@ restart, the sending - is `notifier.py`, and it is here that the reasoning
 about *which* events are worth an email lives, because that is the part worth
 reading back.
 
-ADR 0018's four events, and the one row each is read off:
+ADR 0018's four events, and the one row each is read off, plus the
+unenrolled-Target warning (issue #39):
 
     (0) a Run finished with a green Proposal        run.outcome
     (1) a Run ended without one                     run.outcome
     (2) a dispatch or preflight failed              run.outcome, cycle.failed
     (3) the box's credential is close to expiring   box.observed
+    (4) a Handover label on an unenrolled Target    target.unenrolled
 
 Green and not-green are decided with the vocabulary's own naming rules
 (`events.RUN_FAILURE_BOUNDS`, `events.outcome_name`) rather than a second
@@ -38,6 +40,9 @@ oversight:
   `run.iteration`/`run.contract` row. These are the page's material. `/loop`
   is where the Loop is watched; mail is for what happens while nobody is
   watching.
+- a standing `target.unenrolled` row (`new` empty) and a dry-run one. The
+  gap is already in the Journal; mailing it every Cycle is the noise the
+  Journal-keyed dedup exists to stop.
 """
 from __future__ import annotations
 
@@ -140,6 +145,8 @@ def for_event(event: dict, *, now: datetime,
         return _cycle_failure_notice(events.cycle_failed_record(event), config)
     if kind == events.BOX_OBSERVED:
         return _credential_notice(events.box_record(event), now, config)
+    if kind == events.TARGET_UNENROLLED:
+        return _unenrolled_notice(events.target_unenrolled_record(event), config)
     return None
 
 
@@ -443,6 +450,66 @@ def _credential_notice(reading: events.BoxReading, now: datetime,
         body=body,
         link=config.loop_url,
         dedupe_key=_credential_key(expires_at),
+    )
+
+
+def _unenrolled_notice(record: events.UnenrolledTargets,
+                       config: NoticeConfig) -> Notice | None:
+    """(4) A Handover label sits on a repository with no Target stanza.
+
+    Only newly appearing repos are mailed. The Cycle journals the standing
+    gap every time so the Journal is the account; mailing it every thirty
+    minutes is the noise issue #39 forbids. A dry-run journals too, and
+    stays silent here, so a keyboard check cannot eat the live notice.
+    """
+    if record.dry_run:
+        return None
+    new = [name for name in (record.new or []) if name]
+    if not new:
+        return None
+    new_set = set(new)
+    entries = [
+        entry for entry in (record.repos or [])
+        if isinstance(entry, dict) and entry.get("repo") in new_set
+    ]
+    if len(new) == 1:
+        subject = f"Handover on an unenrolled repository: {new[0]}"
+        headline = (
+            "A Handover label sits on a repository this instance has no"
+            " Target stanza for."
+        )
+    else:
+        subject = f"Handover on {len(new)} unenrolled repositories"
+        headline = (
+            "A Handover label sits on repositories this instance has no"
+            " Target stanza for."
+        )
+    lines = [headline, ""]
+    first_url = None
+    for entry in entries:
+        lines.append(f"  {entry['repo']}")
+        for issue in entry.get("issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            number = issue.get("number")
+            title = issue.get("title") or ""
+            url = issue.get("url") or ""
+            lines.append(f"    #{number} {title}".rstrip())
+            if url:
+                lines.append(f"      {url}")
+                if first_url is None:
+                    first_url = url
+        lines.append("")
+    lines += [
+        "Nothing was enrolled. Minting a Target's token is a human act; the",
+        "Selector only warns.",
+        "",
+        f"The Loop's board: {config.loop_url}",
+    ]
+    return Notice(
+        subject=subject,
+        body="\n".join(lines),
+        link=first_url or config.loop_url,
     )
 
 

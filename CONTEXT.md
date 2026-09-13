@@ -115,6 +115,10 @@ Runs until nothing is Eligible, a cap holds, or the operator has paused. The tim
 unit of work, and the Journal's unit of grouping - every event of one Cycle carries
 its id. It is emphatically not an Iteration, which is why "cycle" is a word the
 Iteration entry above tells you to avoid: a Cycle chooses work and an Iteration does it.
+A Cycle also searches the configured owner for the Handover label on repositories
+with no Target stanza and journals the gap (`target.unenrolled`); it never enrolls
+anything. Deduplication is keyed off the Journal so a standing gap does not mail
+every half hour.
 _Avoid_: tick, sweep, poll, pass
 
 **Dispatch**:

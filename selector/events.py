@@ -272,6 +272,7 @@ GUARDRAIL_OBSERVED = "guardrail.observed"
 GUARDRAIL_UNREADABLE = "guardrail.unreadable"
 PROPOSAL_UPDATED = "proposal.updated"
 PROPOSAL_UPDATE_FAILED = "proposal.update-failed"
+TARGET_UNENROLLED = "target.unenrolled"
 
 
 
@@ -424,6 +425,23 @@ def proposal_update_failed(*, cycle, proposal, error, url=None, number=None, iss
     if issue is not None:
         payload["issue"] = issue
     return PROPOSAL_UPDATE_FAILED, payload
+
+
+def target_unenrolled(*, owner, label, repos, new, dry_run=False):
+    """The Handover label sits on a repository with no Target stanza.
+
+    Instance-level, not per-target: one owner-wide search per Cycle, the gap
+    against the declared Targets. `new` is the repos that were not in the
+    last live warning - the standing gap journals with `new=[]` so the
+    notifier can stay silent. Warn-only: nothing here enrolls a Target.
+    """
+    return TARGET_UNENROLLED, {
+        "owner": owner,
+        "label": label,
+        "repos": repos,
+        "new": new,
+        "dry_run": dry_run,
+    }
 
 
 
@@ -929,5 +947,31 @@ def proposal_update_failed_record(row) -> ProposalUpdateFailed:
         error=payload.get("error"),
         url=payload.get("url"),
         issue=payload.get("issue"),
+    )
+
+
+@dataclass(frozen=True)
+class UnenrolledTargets:
+    """The gap: Handover-labeled issues on repositories with no Target."""
+
+    id: int | None
+    at: object
+    owner: str | None
+    label: str | None
+    repos: object
+    new: object
+    dry_run: object
+
+
+def target_unenrolled_record(row) -> UnenrolledTargets:
+    payload = _payload_of(row, TARGET_UNENROLLED)
+    return UnenrolledTargets(
+        id=row.get("id"),
+        at=row.get("at"),
+        owner=payload.get("owner"),
+        label=payload.get("label"),
+        repos=payload.get("repos"),
+        new=payload.get("new"),
+        dry_run=payload.get("dry_run"),
     )
 

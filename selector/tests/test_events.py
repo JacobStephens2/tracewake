@@ -145,7 +145,7 @@ def test_shipping_code_spells_kinds_only_in_the_vocabulary():
     shipping = sorted(p for p in selector.glob("*.py") if p.name != "events.py")
     shipping += [web / "app.py", web / "preview.py"]
     pattern = re.compile(
-        r"""["'](cycle|run|issue|box|guardrail|proposal)\.([a-z][a-z-]*)["']"""
+        r"""["'](cycle|run|issue|box|guardrail|proposal|target)\.([a-z][a-z-]*)["']"""
     )
 
     strays = []
@@ -506,4 +506,69 @@ def test_proposal_updated_and_failed_events_and_records():
     assert rec_f.error == "GitHub refused update-branch"
     assert rec_f.url == "https://github.invalid/acme/widgets/pull/13"
     assert rec_f.issue == 631
+
+
+# --- Unenrolled-Target warning (#39) ----------------------------------------
+
+UNENROLLED_REPOS = [
+    {
+        "repo": "acme/other",
+        "issues": [
+            {
+                "number": 7,
+                "title": "Do the thing",
+                "url": "https://github.invalid/acme/other/issues/7",
+            }
+        ],
+    }
+]
+
+
+def test_target_unenrolled_is_its_own_kind_with_a_closed_payload():
+    kind, payload = events.target_unenrolled(
+        owner="acme",
+        label="ready-for-agent",
+        repos=UNENROLLED_REPOS,
+        new=["acme/other"],
+        dry_run=False,
+    )
+    assert kind == "target.unenrolled"
+    assert set(payload) == {
+        "owner", "label", "repos", "new", "dry_run",
+    }
+    assert payload["owner"] == "acme"
+    assert payload["label"] == "ready-for-agent"
+    assert payload["repos"] == UNENROLLED_REPOS
+    assert payload["new"] == ["acme/other"]
+    assert payload["dry_run"] is False
+
+
+def test_target_unenrolled_record_reads_the_gap_back():
+    kind, payload = events.target_unenrolled(
+        owner="acme",
+        label="ready-for-agent",
+        repos=UNENROLLED_REPOS,
+        new=["acme/other"],
+        dry_run=True,
+    )
+    rec = events.target_unenrolled_record(row(kind, payload, id=41))
+    assert rec.id == 41
+    assert rec.owner == "acme"
+    assert rec.label == "ready-for-agent"
+    assert rec.repos == UNENROLLED_REPOS
+    assert rec.new == ["acme/other"]
+    assert rec.dry_run is True
+
+
+def test_a_standing_gap_is_the_same_kind_with_an_empty_new():
+    kind, payload = events.target_unenrolled(
+        owner="acme",
+        label="ready-for-agent",
+        repos=UNENROLLED_REPOS,
+        new=[],
+    )
+    assert kind == "target.unenrolled"
+    assert payload["new"] == []
+    rec = events.target_unenrolled_record(row(kind, payload))
+    assert rec.new == []
 

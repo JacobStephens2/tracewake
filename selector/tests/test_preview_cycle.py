@@ -37,6 +37,9 @@ OUTWARD = {
     # plus a walk of the deployed tree.
     "SELECTOR_GUARDRAIL_COMMAND": "guardrail-sources/protection.sh",
     "SELECTOR_SEED_COMMAND": "seed-run.sh",
+    # The owner-wide Handover search (issue #39): `gh search` against the
+    # operator's account.
+    "SELECTOR_SEARCH_COMMAND": "search-sources/github.sh",
 }
 
 # The targets file is the other half, and it is not a command: it names the

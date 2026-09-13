@@ -85,6 +85,7 @@ def tracker(tmp_path, monkeypatch):
     monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
     monkeypatch.setenv("SELECTOR_PROTECTED_REPO", "acme/tracewake")
     monkeypatch.setenv("SELECTOR_PROTECTED_REF", "main")
+    monkeypatch.setenv("SELECTOR_SEARCH_OWNER", "acme")
 
     class Tracker:
         issue = staticmethod(fixtures.issue)

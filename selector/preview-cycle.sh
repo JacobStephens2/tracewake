@@ -90,6 +90,10 @@ export SELECTOR_BOX_FACTS_COMMAND="$HERE/preview-sources/facts.sh"
 # against the instance's repository and walks the deployed tree, and both are
 # reaches a preview must not make.
 export SELECTOR_GUARDRAIL_COMMAND="$HERE/preview-sources/guardrail.sh"
+# The owner-wide Handover search (issue #39). The real one lists the
+# operator's account; a preview that did that would journal (and, live,
+# mail) warnings about production repositories.
+export SELECTOR_SEARCH_COMMAND="$HERE/preview-sources/search.sh"
 
 # --- the repository it may push to ------------------------------------------
 # A local bare repo standing in for origin. dispatch.py pushes unconditionally,

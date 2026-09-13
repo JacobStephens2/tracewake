@@ -5,13 +5,16 @@ response, runs the real `cycle.py --dry-run` as a subprocess, and observes only
 what a cycle can be seen to do from outside: which commands it issued, and
 which rows it appended to the Journal.
 
-Two boundaries are watched:
+Three boundaries are watched:
 
-  Seam 1 - the tracker command. SELECTOR_TRACKER_COMMAND is the whole of the
-  cycle's outward reach in dry-run, so every scenario is a different canned
-  queue through that one seam.
+  Seam 1 - the tracker command. SELECTOR_TRACKER_COMMAND is the per-target
+  labeled queue. Every scenario is a canned queue through that seam.
 
-  Seam 2 - the Journal. A throwaway database per test (testdb.py), read back
+  Seam 2 - the owner-wide search. SELECTOR_SEARCH_COMMAND is the unenrolled-
+  Target warning's read (issue #39). Default canned hits are none; tests that
+  care pass `owner_issues`.
+
+  Seam 3 - the Journal. A throwaway database per test (testdb.py), read back
   through journal.events.
 
 A third thing is asserted everywhere: the tripwire. `gh`, `git`, `ssh` and
@@ -19,6 +22,7 @@ A third thing is asserted everywhere: the tripwire. `gh`, `git`, `ssh` and
 writing to anything but the Journal" is a checked property of every scenario
 rather than a claim in a docstring.
 """
+import events as event_vocab
 import journal
 from conftest import BODY, hours_ago_iso as _hours_ago_iso, issue
 
@@ -476,3 +480,162 @@ def test_a_missing_instance_value_also_stops_before_the_tracker(db, fakes):
     assert "SELECTOR_BOX_HOST" in result.stderr
     assert not fakes.args_file.exists(), "the tracker was read anyway"
     assert [e["kind"] for e in events(db)] == ["cycle.failed"]
+
+
+def test_a_missing_search_owner_stops_before_any_tracker_read(db, fakes):
+    """The searched owner is instance configuration (issue #39). A default
+    that named an account would be the thing issue #3 forbids."""
+    result = fakes.run(db, [issue(645)], SELECTOR_SEARCH_OWNER="")
+
+    assert result.returncode == 1
+    assert "SELECTOR_SEARCH_OWNER" in result.stderr
+    assert not fakes.args_file.exists(), "the tracker was read anyway"
+    assert not fakes.search_args.exists(), "the owner-wide search ran anyway"
+    assert [e["kind"] for e in events(db)] == ["cycle.failed"]
+    assert "SELECTOR_SEARCH_OWNER" in events(db, "cycle.failed")[0]["payload"]["error"]
+
+
+# --- Unenrolled-Target warning (#39) ----------------------------------------
+
+
+def labeled_elsewhere(repo="acme/other", number=7, **over):
+    """A Handover-labeled issue as the owner-wide search reports it."""
+    record = {
+        "repo": repo,
+        "number": number,
+        "title": f"Issue {number} on {repo}",
+        "url": f"https://github.invalid/{repo}/issues/{number}",
+    }
+    record.update(over)
+    return record
+
+
+def warning(dsn):
+    rows = events(dsn, "target.unenrolled")
+    assert rows, "expected a target.unenrolled row"
+    return rows[-1]["payload"]
+
+
+def seed_warning(dsn, **over):
+    """A previous live warning, so a later cycle can see a standing gap."""
+    payload = {
+        "owner": "acme",
+        "label": "ready-for-agent",
+        "repos": [{"repo": "acme/other", "issues": [{"number": 7}]}],
+        "new": ["acme/other"],
+        "dry_run": False,
+    }
+    payload.update(over)
+    with journal.connect(dsn) as conn:
+        journal.append(conn, *event_vocab.target_unenrolled(**payload))
+
+
+def test_a_handover_on_an_unenrolled_repo_is_journaled_as_new(db, fakes):
+    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()])
+
+    assert result.returncode == 0, result.stderr
+    payload = warning(db)
+    assert payload["owner"] == "acme"
+    assert payload["label"] == "ready-for-agent"
+    assert [r["repo"] for r in payload["repos"]] == ["acme/other"]
+    assert payload["repos"][0]["issues"][0]["number"] == 7
+    assert payload["new"] == ["acme/other"]
+    assert fakes.search_args.read_text().strip() == "acme ready-for-agent"
+
+
+def test_a_standing_gap_journals_without_being_new(db, fakes):
+    seed_warning(db)
+    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()])
+
+    assert result.returncode == 0, result.stderr
+    rows = events(db, "target.unenrolled")
+    assert len(rows) == 2
+    assert warning(db)["new"] == []
+    assert [r["repo"] for r in warning(db)["repos"]] == ["acme/other"]
+
+
+def test_a_newly_appearing_unenrolled_repo_is_new(db, fakes):
+    seed_warning(db)
+    result = fakes.run(
+        db, [issue(645)],
+        owner_issues=[
+            labeled_elsewhere(),
+            labeled_elsewhere(repo="acme/stray", number=3, title="Stray work"),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = warning(db)
+    assert payload["new"] == ["acme/stray"]
+    assert {r["repo"] for r in payload["repos"]} == {"acme/other", "acme/stray"}
+
+
+def test_labeled_issues_on_declared_targets_are_never_flagged(db, fakes):
+    result = fakes.run(
+        db, [issue(645)],
+        owner_issues=[
+            labeled_elsewhere(repo="acme/widgets", number=645),
+            labeled_elsewhere(repo="acme/other", number=7),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = warning(db)
+    assert [r["repo"] for r in payload["repos"]] == ["acme/other"]
+    assert payload["new"] == ["acme/other"]
+
+
+def test_an_empty_gap_is_not_journaled(db, fakes):
+    result = fakes.run(db, [issue(645)], owner_issues=[
+        labeled_elsewhere(repo="acme/widgets", number=645),
+    ])
+
+    assert result.returncode == 0, result.stderr
+    assert events(db, "target.unenrolled") == []
+
+
+def test_the_owner_search_runs_once_per_cycle_not_per_target(db, fakes):
+    result = fakes.run(
+        db, [issue(645)],
+        targets=[{"repo": "acme/widgets"}, {"repo": "acme/gadgets"}],
+        owner_issues=[labeled_elsewhere()],
+    )
+
+    assert result.returncode == 0, result.stderr
+    log = fakes.search_args.parent.joinpath("search.log").read_text().splitlines()
+    assert log == ["acme ready-for-agent"]
+    assert len(events(db, "target.unenrolled")) == 1
+
+
+def test_a_declared_target_worked_via_select_is_still_enrolled(db, fakes):
+    """`--target` narrows the drain, not the enrollment set. A labeled issue
+    on a declared Target the cycle did not work this time is not a gap."""
+    result = fakes.run(
+        db, [issue(645)],
+        targets=[{"repo": "acme/widgets"}, {"repo": "acme/gadgets"}],
+        select="acme/gadgets",
+        owner_issues=[labeled_elsewhere(repo="acme/widgets", number=645)],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert events(db, "target.unenrolled") == []
+
+
+def test_a_failed_owner_search_fails_the_cycle_before_the_queue(db, fakes):
+    failing = fakes.search_args.parent / "failing-search.sh"
+    failing.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo 'search: GitHub refused' >&2\n"
+        "exit 1\n"
+    )
+    failing.chmod(0o755)
+    result = fakes.run(
+        db, [issue(645)],
+        owner_issues=[labeled_elsewhere()],
+        search_command=failing,
+    )
+
+    assert result.returncode == 1
+    assert not fakes.args_file.exists(), "the per-target tracker ran anyway"
+    assert [e["kind"] for e in events(db)] == ["cycle.failed"]
+    assert "GitHub refused" in events(db, "cycle.failed")[0]["payload"]["error"]

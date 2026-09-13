@@ -78,6 +78,28 @@ def test_the_run_branch_is_created_and_pushed(db, box):
     assert "loop/645-the-nightly-sync-script" in box.remote_branches()
 
 
+def test_the_unenrolled_warning_does_not_write_to_the_tracker(db, box):
+    """Issue #39: the warning is a Journal row and a notice. It must not
+    comment, relabel, or otherwise mutate a repository the instance has not
+    been enrolled to work."""
+    result = box.run(
+        db, [],
+        owner_issues=[{
+            "repo": "acme/other",
+            "number": 7,
+            "title": "Do the thing",
+            "url": "https://github.invalid/acme/other/issues/7",
+        }],
+    )
+    assert result.returncode == 0, result.stderr
+    log = box.commands()
+    assert "search " in log
+    assert "issue " not in log
+    warned = events(db, "target.unenrolled")
+    assert warned
+    assert warned[-1]["payload"]["new"] == ["acme/other"]
+
+
 def test_the_plan_is_on_the_remote_before_the_run_starts(db, box):
     """The Plan reaches the box as a commit, like everything else (ADR 0010).
     The box command reports what it would have fetched, so a push that
@@ -425,14 +447,19 @@ def test_an_issue_is_returned_even_when_a_cap_halts_the_cycle(db, box, dispatch)
 def test_a_dry_run_hands_nothing_back(db, box):
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)], dry_run=True)
-    assert box.commands() == "", "a dry run wrote to the tracker"
+    log = box.commands()
+    assert "issue " not in log, "a dry run wrote to the tracker"
+    assert "seed " not in log
+    assert "box " not in log
     assert not events(db, "issue.returned")
     assert events(db, "issue.skipped"), "it still reasoned and journaled"
 
 
 def test_a_dry_run_dispatches_nothing(db, box):
     box.run(db, [issue(645)], dry_run=True)
-    assert box.commands() == ""
+    log = box.commands()
+    assert "seed " not in log
+    assert "box " not in log
     assert box.remote_branches() == ["master"]
     assert not events(db, "run.dispatched")
 

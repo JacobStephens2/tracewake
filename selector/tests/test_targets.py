@@ -255,9 +255,15 @@ def test_a_configured_instance_reads_back(monkeypatch):
     monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
     monkeypatch.setenv("SELECTOR_PROTECTED_REPO", "acme/tracewake")
     monkeypatch.setenv("SELECTOR_PROTECTED_REF", "main")
+    monkeypatch.setenv("SELECTOR_SEARCH_OWNER", "acme")
     instance = targets.Instance.from_env()
-    assert (instance.box_host, instance.protected_repo, instance.protected_ref) == (
-        "root@box.invalid", "acme/tracewake", "main")
+    assert (
+        instance.box_host,
+        instance.protected_repo,
+        instance.protected_ref,
+        instance.search_owner,
+    ) == (
+        "root@box.invalid", "acme/tracewake", "main", "acme")
 
 
 def test_the_example_instance_file_declares_every_required_value():
@@ -342,6 +348,7 @@ def test_malformed_guardrail_trees_refuses_by_name(monkeypatch):
 
 def test_guardrail_trees_satisfies_instance_configuration_without_legacy_vars(monkeypatch):
     monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
+    monkeypatch.setenv("SELECTOR_SEARCH_OWNER", "acme")
     monkeypatch.delenv("SELECTOR_PROTECTED_REPO", raising=False)
     monkeypatch.delenv("SELECTOR_PROTECTED_REF", raising=False)
     monkeypatch.setenv(
