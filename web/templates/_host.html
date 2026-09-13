@@ -1,0 +1,46 @@
+{# Host telemetry on the Queue Board (#42). Beside the queue: CPU, memory,
+   disk for the filesystem this Instance writes to, and how many Runs the
+   Journal has in flight. Sampler failure degrades this widget, not the board. #}
+<aside class="host" data-host="{% if host.ok %}ok{% else %}degraded{% endif %}">
+  <h2>The host</h2>
+  <p>Live headroom on this machine, and the count of Runs in flight.</p>
+  <section class="strip strip-host">
+    <div class="cell cell-cpu">
+      <span class="cell-label">cpu</span>
+      {% if host.ok %}
+      <span class="cell-value">{{ host.cpu_percent }}%</span>
+      {% else %}
+      <span class="cell-value">unknown</span>
+      {% endif %}
+    </div>
+    <div class="cell cell-memory">
+      <span class="cell-label">memory</span>
+      {% if host.ok %}
+      <span class="cell-value">{{ host.memory_used }} of {{ host.memory_total }}</span>
+      {% else %}
+      <span class="cell-value">unknown</span>
+      {% endif %}
+    </div>
+    <div class="cell cell-disk">
+      <span class="cell-label">disk</span>
+      {% if host.ok %}
+      <span class="cell-value">{{ host.disk_used }} of {{ host.disk_total }}</span>
+      <span class="detail"><code>{{ host.disk_path }}</code></span>
+      {% else %}
+      <span class="cell-value">unknown</span>
+      {% endif %}
+    </div>
+    <div class="cell cell-in-flight">
+      <span class="cell-label">runs in flight</span>
+      {% if host.in_flight is none %}
+      <span class="cell-value">unknown</span>
+      <span class="detail">the Journal could not be read.</span>
+      {% else %}
+      <span class="cell-value">{{ host.in_flight }}</span>
+      {% endif %}
+    </div>
+  </section>
+  {% if not host.ok %}
+  <p class="detail">{{ host.error }}</p>
+  {% endif %}
+</aside>

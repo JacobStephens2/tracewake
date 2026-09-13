@@ -55,6 +55,9 @@ WINDOW = "../web/app.py"
 WINDOW_SUITE = "../web/tests/test_loop_page.py"
 AUTH = "../web/auth.py"
 AUTH_SUITE = "../web/tests/test_sign_in.py"
+HOST = "../web/host.py"
+HOST_WIDGET = "../web/templates/_host.html"
+TELEMETRY_SUITE = "../web/tests/test_host_telemetry.py"
 
 # The push (#159). The stream is Journal SQL and lives with the Journal; the
 # region it re-fetches is a template, which is a mutation target like any
@@ -1367,6 +1370,69 @@ MUTATIONS = {
         "        raise AccountExists(email) from exc\n",
         "    except psycopg.errors.UniqueViolation as exc:\n"
         "        return 0\n",
+    ),
+
+    # --- Host telemetry on the Queue Board (#42) ---------------------------
+    #
+    # The widget is the operator's headroom reading. Every mutation here
+    # leaves a board that still draws while quietly ceasing to be that.
+
+    # A /proc read that failed takes the queue with it, so the page the
+    # operator opened to see the queue is a 500 instead.
+    "a-sampler-failure-takes-the-board-down": (WINDOW, TELEMETRY_SUITE,
+        "    try:\n"
+        "        facts = host_sampler.sample()\n"
+        "    except Exception as exc:\n"
+        "        return {\n"
+        '            "ok": False,\n'
+        '            "error": str(exc),\n'
+        '            "in_flight": in_flight,\n'
+        "        }\n",
+        "    facts = host_sampler.sample()\n",
+    ),
+    # The count is a constant, so a Run the Journal has in flight reads as
+    # none and the host looks idle.
+    "in-flight-count-ignores-the-journal": (WINDOW, TELEMETRY_SUITE,
+        "    in_flight = None if spend is None else spend.runs_in_flight()\n",
+        "    in_flight = 0\n",
+    ),
+    # Ended and stale dispatches still count, so the figure is not Eligibility's
+    # in-flight predicate - it is every dispatch the Journal has ever written.
+    "in-flight-count-counts-ended-runs": (WINDOW, TELEMETRY_SUITE,
+        "    in_flight = None if spend is None else spend.runs_in_flight()\n",
+        "    in_flight = None if spend is None else len(spend._dispatches)\n",
+    ),
+    # Unique issue numbers collapse two Targets sharing a number into one Run.
+    "in-flight-count-collapses-two-targets": (WINDOW, TELEMETRY_SUITE,
+        "    in_flight = None if spend is None else spend.runs_in_flight()\n",
+        "    in_flight = None if spend is None else len(spend.in_flight)\n",
+    ),
+    # Same collapse, from Spend's own count rather than from the window.
+    "spend-count-collapses-two-targets": (CYCLE, TELEMETRY_SUITE,
+        "        return len(self._in_flight_keys)\n",
+        "        return len(self.in_flight)\n",
+    ),
+    # The widget leaves the live region, so a Journal row landing does not
+    # refresh the figures and a reload is required.
+    "host-widget-not-in-the-live-region": (LIVE_REGION, TELEMETRY_SUITE,
+        '{% include "_host.html" %}\n',
+        "",
+    ),
+    # The page invents a CPU figure instead of showing the sampler's.
+    "host-figures-are-not-the-sampler-s": (WINDOW, TELEMETRY_SUITE,
+        '        "cpu_percent": round(facts.cpu_percent),\n',
+        '        "cpu_percent": 0,\n',
+    ),
+    # The default adapter stops reading the machine, so production is a
+    # permanently degraded widget.
+    "the-host-sampler-does-not-read-the-machine": (HOST, TELEMETRY_SUITE,
+        "        cpu = _cpu_percent()\n",
+        '        raise SamplerError("no")\n        cpu = _cpu_percent()\n',
+    ),
+    # The template ignores the sampler's CPU and prints a constant.
+    "host-cpu-is-hardcoded-in-the-template": (HOST_WIDGET, TELEMETRY_SUITE,
+        '      <span class="cell-value">{{ host.cpu_percent }}%</span>\n',
+        '      <span class="cell-value">0%</span>\n',
     ),
 }
 

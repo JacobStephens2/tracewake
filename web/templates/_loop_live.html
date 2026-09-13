@@ -154,6 +154,10 @@
         {% endif %}
       </div>
     </section>
+    {#- Host telemetry (#42). Beside the queue, riding this live region so
+        the figures refresh when a Journal row does - the same machinery,
+        not a second timer. -#}
+{% include "_host.html" %}
     {#- The queue board (#158). Every other panel here is the Journal
         replayed; this one is the tracker as it is right now, columned by the
         same Eligibility predicate the Selector picks with. The columns are

@@ -203,7 +203,10 @@ is requested rather than replayed from the Selector Journal: Eligible, blocked,
 in flight, `awaiting-review`, `ready-for-human`. Its columning is the Selector's
 own Eligibility predicate, imported - a board that decided for itself which
 tasks were Eligible would be a second Selector, and their first disagreement
-would be a bug in whichever one you did not read.
+would be a bug in whichever one you did not read. Beside the queue, the host's
+live headroom: CPU, memory, disk for the filesystem the Instance writes to, and
+the count of Runs in flight, that last derived from the Journal's in-flight
+predicate and nothing else.
 _Avoid_: kanban, backlog, dashboard (the page is the dashboard; this is one
 panel on it)
 

@@ -638,6 +638,15 @@ class Spend:
             issue for r, issue in self._in_flight_keys if r == repo
         )
 
+    def runs_in_flight(self) -> int:
+        """How many Runs currently hold a slot, across every Target.
+
+        One per (repo, issue), which is the lock Eligibility uses. Unique
+        issue numbers collapse two Targets sharing a number into one Run
+        (issue #37); the widget's count must not.
+        """
+        return len(self._in_flight_keys)
+
     def attempts(self, issue: int, since: str | None, repo: str | None = None) -> int:
         """Dispatches of `issue` since it was last labeled.
 

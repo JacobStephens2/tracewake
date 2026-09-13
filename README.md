@@ -105,7 +105,7 @@ cd loop && bats tests/
 cd selector && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 
-# The window - 163 tests, pytest
+# The window - 207 tests, pytest
 cd web && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```

@@ -47,6 +47,7 @@ import targets  # noqa: E402
 
 import preview  # noqa: E402
 import auth  # noqa: E402
+import host as host_sampler  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
 # instance publishes its window is a fact about that instance (issue #3),
@@ -777,6 +778,48 @@ def _config() -> tuple["cycle.Config | None", str | None]:
     return configs[0], None
 
 
+def _gib(n: int) -> str:
+    """Bytes as a GiB figure the widget can print.
+
+    Under 10 GiB keeps one decimal so 2.0 and 8.0 stay distinct from 2 and 8;
+    at 10 and above the tenth is noise on a disk measured in tens.
+    """
+    value = n / (1024 ** 3)
+    if value >= 10:
+        return f"{value:.0f} GiB"
+    return f"{value:.1f} GiB"
+
+
+def _host(spend: "cycle.Spend | None") -> dict:
+    """The host's headroom, plus how many Runs the Journal has in flight.
+
+    Sampler failure is a degraded widget, never a missing board: the queue
+    is the page, and a /proc read that failed is not a reason to hide it.
+    The in-flight count is the Journal's, through Eligibility's own Spend,
+    even when the sampler could not answer.
+    """
+    in_flight = None if spend is None else spend.runs_in_flight()
+    try:
+        facts = host_sampler.sample()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "in_flight": in_flight,
+        }
+    return {
+        "ok": True,
+        "error": None,
+        "cpu_percent": round(facts.cpu_percent),
+        "memory_used": _gib(facts.memory_used),
+        "memory_total": _gib(facts.memory_total),
+        "disk_used": _gib(facts.disk_used),
+        "disk_total": _gib(facts.disk_total),
+        "disk_path": facts.disk_path,
+        "in_flight": in_flight,
+    }
+
+
 def _loop_context(request: Request) -> dict:
     """Everything the live region renders, read now.
 
@@ -809,6 +852,7 @@ def _loop_context(request: Request) -> dict:
         queue_board.board(config, spend) if config
         else queue_board.unconfigured(unconfigured)
     )
+    host_view = _host(spend)
     review_col = next(
         (c for c in board_view.get("columns", []) if c.get("key") == "awaiting-review"),
         None,
@@ -829,6 +873,7 @@ def _loop_context(request: Request) -> dict:
         "box": _box(events),
         "guardrail": _guardrail(events),
         "board": board_view,
+        "host": host_view,
         "paused": paused if error is None else None,
         "state": (
             _selector_state(runs, budget, timer, paused)

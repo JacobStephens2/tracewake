@@ -102,6 +102,14 @@ form.sign-out button {
    long before the other cells do. */
 .strip .cell-box { grid-column: 1 / -1; }
 
+/* Host telemetry (#42): a strip of its own, sitting on the queue rather than
+   on the Selector strip above. Those cells prove the Selector can run; these
+   prove the host has headroom for another Run. */
+.host { margin: 1.5rem 0; }
+.host h2 { margin-bottom: 0.25rem; }
+.host > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
+.host .strip { margin: 0; }
+
 /* The page's only control (#161). Paused is a page-wide operating state, so
    its banner sits above the strip rather than pretending to be one status
    cell among four. */
