@@ -334,7 +334,7 @@ def test_the_fragment_and_the_page_render_the_same_panels(db, dispatch):
     append(db, "run.iteration", {"issue": 646, "iteration": 1})
     page = client.get("/loop").text
     fragment = client.get("/loop/live").text
-    for panel in ("The queue", "Runs", "Every event", "review capacity"):
+    for panel in ("The queue", "The host", "Runs", "Every event", "review capacity"):
         assert panel in page, panel
         assert panel in fragment, panel
 

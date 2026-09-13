@@ -47,6 +47,7 @@ import targets  # noqa: E402
 
 import preview  # noqa: E402
 import auth  # noqa: E402
+import host  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
 # instance publishes its window is a fact about that instance (issue #3),
@@ -783,6 +784,51 @@ def _config() -> tuple["cycle.Config | None", str | None]:
     return configs[0], None
 
 
+def _gib(n: int) -> str:
+    """Bytes as a GiB figure the widget can print.
+
+    Under 10 GiB keeps one decimal so 2.0 and 8.0 stay distinct from 2 and 8;
+    at 10 and above the tenth is noise on a disk measured in tens.
+    """
+    value = n / (1024 ** 3)
+    if value >= 10:
+        return f"{value:.0f} GiB"
+    return f"{value:.1f} GiB"
+
+
+def _host(spend: "cycle.Spend | None") -> dict:
+    """The Host's headroom, plus how many Runs the Journal has in flight.
+
+    Sampler failure is a degraded widget, never a missing board: the queue
+    is the page, and a /proc read that failed is not a reason to hide it.
+    The in-flight count is the Journal's, through Eligibility's own Spend,
+    even when the sampler could not answer. Figures are formatted here so
+    the template does not branch three times on the same ok flag.
+    """
+    in_flight = None if spend is None else spend.runs_in_flight()
+    unknown = {
+        "ok": False,
+        "cpu": "unknown",
+        "memory": "unknown",
+        "disk": "unknown",
+        "disk_path": None,
+        "in_flight": in_flight,
+    }
+    try:
+        facts = host.sample()
+    except Exception as exc:
+        return {**unknown, "error": str(exc)}
+    return {
+        "ok": True,
+        "error": None,
+        "cpu": f"{round(facts.cpu_percent)}%",
+        "memory": f"{_gib(facts.memory_used)} of {_gib(facts.memory_total)}",
+        "disk": f"{_gib(facts.disk_used)} of {_gib(facts.disk_total)}",
+        "disk_path": facts.disk_path,
+        "in_flight": in_flight,
+    }
+
+
 def _loop_context(request: Request) -> dict:
     """Everything the live region renders, read now.
 
@@ -815,6 +861,7 @@ def _loop_context(request: Request) -> dict:
         queue_board.board(config, spend) if config
         else queue_board.unconfigured(unconfigured)
     )
+    host_view = _host(spend)
     review_col = next(
         (c for c in board_view.get("columns", []) if c.get("key") == "awaiting-review"),
         None,
@@ -835,6 +882,7 @@ def _loop_context(request: Request) -> dict:
         "box": _box(events),
         "guardrail": _guardrail(events),
         "board": board_view,
+        "host": host_view,
         "paused": paused if error is None else None,
         "state": (
             _selector_state(runs, budget, timer, paused)
