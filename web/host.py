@@ -1,12 +1,11 @@
-"""The host's live headroom: CPU, memory, and the filesystem this Instance writes to.
+"""The Host's live headroom: CPU, memory, and the disk this checkout lives on.
 
 The window calls `sample()`. Tests replace it. A failure raises SamplerError;
 the window degrades the widget and still draws the board.
 
-Disk is the filesystem that holds this checkout - the tree the window serves,
-and on Single-Host Mode the tree a Run writes into. CPU is a /proc/stat delta
-against the previous sample so a later request does not sleep; the first call
-takes a short second reading so the figure is still CPU, not load.
+CPU is a /proc/stat delta against the previous sample so a later request does
+not sleep; the first call takes a short second reading so the figure is still
+CPU, not load.
 """
 from __future__ import annotations
 
@@ -15,8 +14,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# The repository the window is part of. Sampling `/` would report a disk this
-# Instance does not write to on a machine with more than one filesystem.
+# The checkout the window serves. Sampling `/` would report a disk this
+# checkout does not live on, on a machine with more than one filesystem.
 DISK_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -91,7 +90,8 @@ def _memory() -> tuple[int, int]:
     """used bytes, total bytes from /proc/meminfo.
 
     Used is Total minus Available, so cache the kernel can reclaim is not
-    counted as pressure.
+    counted as pressure. MemAvailable missing is a sampler failure, not a
+    reconstructed guess from MemFree.
     """
     values: dict[str, int] = {}
     with open("/proc/meminfo", encoding="ascii") as proc:
@@ -99,12 +99,5 @@ def _memory() -> tuple[int, int]:
             key, _, rest = line.partition(":")
             values[key] = int(rest.strip().split()[0]) * 1024
     total = values["MemTotal"]
-    available = values.get("MemAvailable")
-    if available is None:
-        available = (
-            values.get("MemFree", 0)
-            + values.get("Buffers", 0)
-            + values.get("Cached", 0)
-        )
-    used = max(0, total - available)
+    used = max(0, total - values["MemAvailable"])
     return used, total

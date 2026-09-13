@@ -1,33 +1,24 @@
-{# Host telemetry on the Queue Board (#42). Beside the queue: CPU, memory,
-   disk for the filesystem this Instance writes to, and how many Runs the
-   Journal has in flight. Sampler failure degrades this widget, not the board. #}
+{# The Host on the Queue Board (#42). Beside the queue: CPU, memory, the
+   disk this checkout lives on, and how many Runs the Journal has in flight.
+   Sampler failure degrades this widget, not the board. Figures are already
+   formatted; this template does not re-branch on ok per cell. #}
 <aside class="host" data-host="{% if host.ok %}ok{% else %}degraded{% endif %}">
   <h2>The host</h2>
   <p>Live headroom on this machine, and the count of Runs in flight.</p>
   <section class="strip strip-host">
     <div class="cell cell-cpu">
       <span class="cell-label">cpu</span>
-      {% if host.ok %}
-      <span class="cell-value">{{ host.cpu_percent }}%</span>
-      {% else %}
-      <span class="cell-value">unknown</span>
-      {% endif %}
+      <span class="cell-value">{{ host.cpu }}</span>
     </div>
     <div class="cell cell-memory">
       <span class="cell-label">memory</span>
-      {% if host.ok %}
-      <span class="cell-value">{{ host.memory_used }} of {{ host.memory_total }}</span>
-      {% else %}
-      <span class="cell-value">unknown</span>
-      {% endif %}
+      <span class="cell-value">{{ host.memory }}</span>
     </div>
     <div class="cell cell-disk">
       <span class="cell-label">disk</span>
-      {% if host.ok %}
-      <span class="cell-value">{{ host.disk_used }} of {{ host.disk_total }}</span>
+      <span class="cell-value">{{ host.disk }}</span>
+      {% if host.disk_path %}
       <span class="detail"><code>{{ host.disk_path }}</code></span>
-      {% else %}
-      <span class="cell-value">unknown</span>
       {% endif %}
     </div>
     <div class="cell cell-in-flight">

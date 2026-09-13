@@ -97,6 +97,11 @@ without an SSH hop, using `box-sources/local.sh` (ADR 0019). Gated by
 environment satisfies all Execution Boundary and credential isolation guarantees.
 _Avoid_: local loop, dev mode, standalone mode
 
+**Host**:
+The machine this Instance's window and Selector run on. Distinct from the box,
+where Runs execute; in Single-Host Mode they are the same machine.
+_Avoid_: the box, server, node, telemetry
+
 **Target**:
 One repository an Instance works, and the stanza that declares it: its labels,
 its labeler allowlist, its work checkout and box checkout, its repository
@@ -203,9 +208,9 @@ is requested rather than replayed from the Selector Journal: Eligible, blocked,
 in flight, `awaiting-review`, `ready-for-human`. Its columning is the Selector's
 own Eligibility predicate, imported - a board that decided for itself which
 tasks were Eligible would be a second Selector, and their first disagreement
-would be a bug in whichever one you did not read. Beside the queue, the host's
-live headroom: CPU, memory, disk for the filesystem the Instance writes to, and
-the count of Runs in flight, that last derived from the Journal's in-flight
+would be a bug in whichever one you did not read. Beside the queue, the Host's
+live headroom - CPU, memory, and the disk this checkout lives on - and the
+count of Runs in flight, that last derived from the Journal's in-flight
 predicate and nothing else.
 _Avoid_: kanban, backlog, dashboard (the page is the dashboard; this is one
 panel on it)

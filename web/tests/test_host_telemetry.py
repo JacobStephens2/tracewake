@@ -1,4 +1,4 @@
-"""Host telemetry on the Queue Board (#42), at HTTP level.
+"""The Host on the Queue Board (#42), at HTTP level.
 
 The sampler is the substitutable seam: tests replace it and assert the page
 shows the figures it returned. Runs in flight are not the sampler's - they
@@ -151,10 +151,12 @@ def test_a_stale_dispatch_is_not_in_flight(db, dispatch, monkeypatch):
 
 def test_the_default_sampler_reads_this_machine():
     import host
-    facts = host.sample()
-    assert facts.memory_total > 0
-    assert facts.disk_total > 0
-    assert facts.memory_used >= 0
-    assert facts.disk_used >= 0
-    assert facts.cpu_percent >= 0
-    assert facts.disk_path
+    first = host.sample()
+    second = host.sample()
+    for facts in (first, second):
+        assert facts.memory_total > 0
+        assert facts.disk_total > 0
+        assert facts.memory_used >= 0
+        assert facts.disk_used >= 0
+        assert 0 <= facts.cpu_percent <= 100
+        assert facts.disk_path

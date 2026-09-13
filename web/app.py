@@ -47,7 +47,7 @@ import targets  # noqa: E402
 
 import preview  # noqa: E402
 import auth  # noqa: E402
-import host as host_sampler  # noqa: E402
+import host  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
 # instance publishes its window is a fact about that instance (issue #3),
@@ -791,30 +791,33 @@ def _gib(n: int) -> str:
 
 
 def _host(spend: "cycle.Spend | None") -> dict:
-    """The host's headroom, plus how many Runs the Journal has in flight.
+    """The Host's headroom, plus how many Runs the Journal has in flight.
 
     Sampler failure is a degraded widget, never a missing board: the queue
     is the page, and a /proc read that failed is not a reason to hide it.
     The in-flight count is the Journal's, through Eligibility's own Spend,
-    even when the sampler could not answer.
+    even when the sampler could not answer. Figures are formatted here so
+    the template does not branch three times on the same ok flag.
     """
     in_flight = None if spend is None else spend.runs_in_flight()
+    unknown = {
+        "ok": False,
+        "cpu": "unknown",
+        "memory": "unknown",
+        "disk": "unknown",
+        "disk_path": None,
+        "in_flight": in_flight,
+    }
     try:
-        facts = host_sampler.sample()
+        facts = host.sample()
     except Exception as exc:
-        return {
-            "ok": False,
-            "error": str(exc),
-            "in_flight": in_flight,
-        }
+        return {**unknown, "error": str(exc)}
     return {
         "ok": True,
         "error": None,
-        "cpu_percent": round(facts.cpu_percent),
-        "memory_used": _gib(facts.memory_used),
-        "memory_total": _gib(facts.memory_total),
-        "disk_used": _gib(facts.disk_used),
-        "disk_total": _gib(facts.disk_total),
+        "cpu": f"{round(facts.cpu_percent)}%",
+        "memory": f"{_gib(facts.memory_used)} of {_gib(facts.memory_total)}",
+        "disk": f"{_gib(facts.disk_used)} of {_gib(facts.disk_total)}",
         "disk_path": facts.disk_path,
         "in_flight": in_flight,
     }

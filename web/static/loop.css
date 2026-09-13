@@ -102,9 +102,10 @@ form.sign-out button {
    long before the other cells do. */
 .strip .cell-box { grid-column: 1 / -1; }
 
-/* Host telemetry (#42): a strip of its own, sitting on the queue rather than
-   on the Selector strip above. Those cells prove the Selector can run; these
-   prove the host has headroom for another Run. */
+/* The Host (#42): a strip of its own, sitting on the queue rather than on
+   the Selector strip above. Those cells prove the Selector can run; these
+   prove this machine has headroom for another Run. Distinct from the box
+   card, which is what the Run side is holding. */
 .host { margin: 1.5rem 0; }
 .host h2 { margin-bottom: 0.25rem; }
 .host > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
