@@ -138,19 +138,22 @@ MUTATIONS = {
     # The budget stops being scoped to the current Handover, so re-labeling a
     # given-up issue - the operator saying "try that again" - does nothing.
     "budget-ignores-the-handover": (CYCLE, CYCLE_SUITE,
-        "if d.issue == issue and (after is None or d.at > after)",
-        "if d.issue == issue",
+        "and (after is None or d.at > after)",
+        "and True",
     ),
     # In flight is counted per issue rather than per attempt, so a retry of an
     # issue that already has an outcome does not hold the lock and a second
     # Run is dispatched underneath it.
     "in-flight-counted-per-issue": (CYCLE, CYCLE_SUITE,
-        "issue for issue, n in started.items() if n > ended.get(issue, 0)",
-        "issue for issue, n in started.items() if issue not in ended",
+        "key for key, n in started.items() if n > ended.get(key, 0)",
+        "key for key, n in started.items() if key[1] not in {i for _, i in ended}",
     ),
     # Concurrency arrives by accident: a second Run is dispatched while one is
     # still in flight.
-    "in-flight-cap-ignored": (CYCLE, CYCLE_SUITE, "elif cycle_spend.in_flight:", "elif False:"),
+    "in-flight-cap-ignored": (CYCLE, CYCLE_SUITE,
+        "elif config.drain_concurrency == 1 and cycle_spend.in_flight:",
+        "elif False:",
+    ),
     # The review cap stops bounding the review pile.
     "review-cap-ignored": (CYCLE, CYCLE_SUITE,
         'elif budget["remaining"] == 0:',
@@ -253,10 +256,11 @@ MUTATIONS = {
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
     "every-dispatch-is-the-first": (CYCLE, DISPATCH_SUITE,
-        '            attempt = cycle_spend.attempts(\n'
-        '                pick["number"], picked_record.get("labeledAt")\n'
-        '            ) + 1',
-        "            attempt = 1",
+        '                attempt = cycle_spend.attempts(\n'
+        '                    pick["number"], picked_record.get("labeledAt"),\n'
+        '                    repo=config.task_repo,\n'
+        '                ) + 1',
+        "                attempt = 1",
     ),
     # A Run that ended on a bound is reported as a dispatch failure, so the
     # Termination Contract working pages the operator every time.
@@ -407,8 +411,8 @@ MUTATIONS = {
     # tracker and nothing else is what makes it safe to run against
     # production from a keyboard.
     "a-dry-run-reaches-the-box": (CYCLE, UNATTENDED_SUITE,
-        "        if not dry_run:\n            facts, box_error = observe_box(config)",
-        "        if True:\n            facts, box_error = observe_box(config)",
+        "            if not dry_run:\n                facts, box_error = observe_box(config)",
+        "            if True:\n                facts, box_error = observe_box(config)",
     ),
     # The owning area stops falling back to the issue title, so every issue
     # without the section - which is most of them, and is why the requirement
@@ -529,18 +533,43 @@ MUTATIONS = {
     # The page says dispatch is paused, but the next cycle ignores the flag
     # and starts a Run anyway.
     "the-pause-flag-is-ignored": (CYCLE, UNATTENDED_SUITE,
-        "        if control.is_paused(conn):",
-        "        if False:",
+        "        if control.is_paused(conn):\n"
+        "            # The timer keeps running while paused.",
+        "        if False:\n"
+        "            # The timer keeps running while paused.",
     ),
     # A Cycle stops after one dispatch rather than draining the queue.
     "cycle-stops-after-one-dispatch": (CYCLE, UNATTENDED_SUITE,
         "            dispatches.append(pick[\"number\"])",
         "            dispatches.append(pick[\"number\"])\n            break",
     ),
+    # K=2 never overlaps: the drain stays sequential across Targets.
+    "parallel-drain-never-starts": (CYCLE, UNATTENDED_SUITE,
+        "    parallel = (not dry_run) and concurrency > 1 and len(configs) > 1",
+        "    parallel = False",
+    ),
+    # K of zero is accepted, so a misconfigured instance drains nothing and
+    # looks like a quiet queue.
+    "zero-drain-concurrency-accepted": (CYCLE, CYCLE_SUITE,
+        "    if value < 1:",
+        "    if False:",
+    ),
+    # Per-Target leftover no longer halts, so two Runs start on one Target.
+    "per-target-in-flight-ignored": (CYCLE, UNATTENDED_SUITE,
+        "        elif config.drain_concurrency > 1 and cycle_spend.in_flight_on(config.task_repo):",
+        "        elif False:",
+    ),
+    # The slot cap is not taken, so K=2 with three Targets starts all three.
+    "drain-slots-not-acquired": (CYCLE, UNATTENDED_SUITE,
+        "            if slots is not None:",
+        "            if False:",
+    ),
     # Pause is only honoured before the first dispatch, not between runs.
     "pause-not-checked-between-runs": (CYCLE, UNATTENDED_SUITE,
-        "        if control.is_paused(conn):",
-        "        if control.is_paused(conn) and not dispatches:",
+        "        if control.is_paused(conn):\n"
+        "            # The timer keeps running while paused.",
+        "        if control.is_paused(conn) and not dispatches:\n"
+        "            # The timer keeps running while paused.",
     ),
     # The systemd unit reverts to bounded start timeout rather than infinity.
     "cycle-unit-timeout-not-infinite": (CYCLE_SERVICE, CONTROLLER_UNITS_SUITE,

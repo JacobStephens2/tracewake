@@ -415,17 +415,28 @@ def box(tmp_path):
         #
         # Only when a Run was actually reported: a box that never connected
         # starts nothing, so it writes nothing.
+        #
+        # Guest dir is per-branch so two concurrent Dispatches (issue #37)
+        # cannot share one working tree. BOX_SLEEP holds the process the way
+        # a real Run does, so overlap is observable rather than a race that
+        # finishes before the other thread starts.
+        printf 'box-begin %s\n' "$1" >> "@LOG@"
+        if [[ -n ${BOX_SLEEP:-} && ${BOX_SLEEP} != 0 ]]; then
+            sleep "${BOX_SLEEP}"
+        fi
         if grep -q '^LOOP_RUN_ENDED_BY=' "@SUMMARY@"; then
-            rm -rf "@GUEST@"
-            git clone --quiet --branch "$1" "@BARE@" "@GUEST@"
+            guest="$(dirname "@GUEST@")/guest-$(printf '%s' "$1" | tr '/' '_')"
+            rm -rf "${guest}"
+            git clone --quiet --branch "$1" "@BARE@" "${guest}"
             {
                 printf '\n## Run started 2026-08-31 00:00:00\n\nTask: %s\n\n' "$2"
                 printf '### Iteration 1\n\nWhat the first attempt tried.\n\n'
-            } >> "@GUEST@/PROGRESS.md"
-            git -C "@GUEST@" -c user.email=box@example.invalid -c user.name="The Box" \
+            } >> "${guest}/PROGRESS.md"
+            git -C "${guest}" -c user.email=box@example.invalid -c user.name="The Box" \
                 commit --quiet -a -m "Loop: Run started"
-            git -C "@GUEST@" push --quiet origin "$1"
+            git -C "${guest}" push --quiet origin "$1"
         fi
+        printf 'box-end %s\n' "$1" >> "@LOG@"
         cat "@SUMMARY@"
         exit "${BOX_EXIT:-0}"
     '''))
@@ -457,32 +468,52 @@ num = int(sys.argv[2])
 add_label = sys.argv[3] if len(sys.argv) > 3 else ''
 rem_label = sys.argv[4] if len(sys.argv) > 4 else ''
 q_dir = os.path.dirname(q_path)
+repo = os.environ.get('SELECTOR_TASK_REPO', '').replace('/', '_')
+
+def load(path):
+    return json.load(open(path)) if os.path.exists(path) else {'issues': []}
+
+def save(path, data):
+    json.dump(data, open(path, 'w'))
+
+def take(data, n):
+    found = [i for i in data.get('issues', []) if int(i.get('number', 0)) == n]
+    data['issues'] = [i for i in data.get('issues', []) if int(i.get('number', 0)) != n]
+    return found
 
 removed = []
 if os.path.exists(q_path):
-    data = json.load(open(q_path))
-    removed = [i for i in data.get('issues', []) if int(i.get('number', 0)) == num]
-    data['issues'] = [i for i in data.get('issues', []) if int(i.get('number', 0)) != num]
-    json.dump(data, open(q_path, 'w'))
+    data = load(q_path)
+    removed = take(data, num) or removed
+    save(q_path, data)
+
+def strip(path):
+    global removed
+    if not os.path.exists(path):
+        return False
+    data = load(path)
+    found = take(data, num)
+    if found:
+        removed = found
+    save(path, data)
+    return True
 
 if rem_label:
-    rem_path = f'{q_dir}/queue-{rem_label}.json'
-    if os.path.exists(rem_path):
-        rem_data = json.load(open(rem_path))
-        if not removed:
-            removed = [i for i in rem_data.get('issues', []) if int(i.get('number', 0)) == num]
-        rem_data['issues'] = [i for i in rem_data.get('issues', []) if int(i.get('number', 0)) != num]
-        json.dump(rem_data, open(rem_path, 'w'))
+    strip(f'{q_dir}/queue-{rem_label}.json')
+    if repo:
+        strip(f'{q_dir}/queue-{repo}-{rem_label}.json')
 
 if add_label:
-    dest_path = f'{q_dir}/queue-{add_label}.json'
-    if os.path.exists(dest_path):
-        dest_data = json.load(open(dest_path))
-    else:
-        dest_data = {'issues': []}
     item = removed[0] if removed else {'number': num}
-    dest_data['issues'].append(item)
-    json.dump(dest_data, open(dest_path, 'w'))
+    dests = [f'{q_dir}/queue-{add_label}.json']
+    if repo:
+        dest_repo = f'{q_dir}/queue-{repo}-{add_label}.json'
+        if os.path.exists(dest_repo) or os.path.exists(f'{q_dir}/queue-{repo}-{rem_label}.json'):
+            dests.append(dest_repo)
+    for dest in dests:
+        data = load(dest)
+        data.setdefault('issues', []).append(item)
+        save(dest, data)
 " "@QUEUE@" "$num" "$add" "$rem"
         fi
         if [[ ${2:-} == checks ]]; then
@@ -542,6 +573,11 @@ if add_label:
     tracker = _script(tmp_path / "tracker.sh", fill('''
         set -euo pipefail
         queue_dir="$(dirname "@QUEUE@")"
+        repo_safe="$(printf '%s' "${1:-}" | tr '/' '_')"
+        labeled_repo="${queue_dir}/queue-${repo_safe}-${2}.json"
+        if [[ -n "${repo_safe}" && -f "${labeled_repo}" ]]; then
+            exec cat "${labeled_repo}"
+        fi
         labeled="${queue_dir}/queue-${2}.json"
         if [[ -f "${labeled}" ]]; then
             exec cat "${labeled}"
@@ -604,6 +640,29 @@ if add_label:
             (tmp_path / f"queue-{label}.json").write_text(
                 json.dumps({"issues": list(issues)})
             )
+
+        def queue_for(self, repo, label, issues):
+            """A labeled queue for one target, so two Targets in one drain
+            can hold different Eligible issues (issue #37)."""
+            repo_safe = str(repo).replace("/", "_")
+            (tmp_path / f"queue-{repo_safe}-{label}.json").write_text(
+                json.dumps({"issues": list(issues)})
+            )
+
+        def extra_work(self, name):
+            """A second controller-side checkout of the same remote.
+
+            Concurrent Dispatches cannot share one working tree: git checkout
+            of two branches in one directory is a race, and each Target
+            already has its own `work_repo` in production."""
+            dest = tmp_path / name
+            subprocess.run(
+                ["git", "clone", "--quiet", str(bare), str(dest)], check=True,
+            )
+            git("config", "user.email", "operator@example.invalid", cwd=dest)
+            git("config", "user.name", "The Operator", cwd=dest)
+            git("config", "commit.gpgsign", "false", cwd=dest)
+            return dest
 
         def commands(self):
             return log.read_text() if log.exists() else ""

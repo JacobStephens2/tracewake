@@ -20,6 +20,8 @@ from pathlib import Path
 
 import psycopg
 
+import events as journal_events
+import journal
 from conftest import BOX_FACTS, CYCLE, events, issue, last, one
 
 
@@ -463,4 +465,219 @@ def test_refused_proposal_update_is_journaled_and_fails_no_dispatch(db, box):
     assert failed[0]["payload"]["proposal"] == 14
     assert failed[0]["payload"]["issue"] == 630
     assert "could not update branch" in failed[0]["payload"]["error"]
+
+
+# --- The parallel drain (issue #37) -----------------------------------------
+#
+# Seam: the real cycle.py, a scripted box that can hold the process, and the
+# Journal. Overlap is a fact about timestamps and row order, not about
+# threads.
+
+
+def _gadget_target(work):
+    return {
+        "repo": "acme/gadgets",
+        "work_repo": str(work),
+        "box_repo": "/nonexistent/box-gadgets",
+        "token_file": "/nonexistent/token-gadgets",
+        "guest_template": "gadgets-guest:1",
+    }
+
+
+def _run_kinds(dsn):
+    return [
+        e["kind"]
+        for e in events(dsn)
+        if e["kind"] in ("run.dispatched", "run.outcome")
+    ]
+
+
+def test_a_leftover_in_flight_on_one_target_does_not_block_another(db, box):
+    """K>1: a leftover Run on widgets does not halt gadgets; widgets itself
+    still refuses a second Dispatch."""
+    gadgets_work = box.extra_work("work-gadgets")
+    with journal.connect(db) as conn:
+        journal.append(
+            conn,
+            *journal_events.run_dispatched(
+                cycle=None, issue=639, title=None, url=None,
+                task_ref="acme/widgets#639", attempt=1, branch=None,
+                area=None, check=None, kept_progress=None,
+            ),
+        )
+    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
+    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
+
+    result = box.run(
+        db, [],
+        targets=[{}, _gadget_target(gadgets_work)],
+        SELECTOR_DRAIN_CONCURRENCY="2",
+        BOX_SLEEP="0.2",
+    )
+    assert result.returncode == 0, result.stderr
+    assert sorted(
+        e["payload"]["issue"] for e in events(db, "run.dispatched")
+    ) == [639, 700]
+    assert any(
+        row["payload"]["halted"] == "run-in-flight"
+        for row in events(db, "cycle.finished")
+    )
+
+
+def test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2(db, box):
+    """K=2, two Targets, one Eligible each: both Runs are in flight at once,
+    and the Journal's account proves the overlap."""
+    gadgets_work = box.extra_work("work-gadgets")
+    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
+    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
+
+    result = box.run(
+        db, [],
+        targets=[{}, _gadget_target(gadgets_work)],
+        SELECTOR_DRAIN_CONCURRENCY="2",
+        BOX_SLEEP="0.4",
+    )
+    assert result.returncode == 0, result.stderr
+
+    dispatched = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
+    assert sorted(dispatched) == [640, 700]
+    assert len(events(db, "cycle.started")) == 2
+    assert len(events(db, "cycle.finished")) == 2
+    # Both dispatches land before either outcome: the second Run started
+    # while the first was still holding the process.
+    assert _run_kinds(db)[:2] == ["run.dispatched", "run.dispatched"]
+    for row in events(db, "cycle.finished"):
+        assert row["payload"]["dispatches"] in ([640], [700])
+        assert row["payload"]["halted"] == "queue-empty"
+
+
+def test_two_eligible_tasks_on_one_target_never_overlap_at_any_k(db, box):
+    """Within a Target the drain stays serial, even when K would allow more."""
+    result = box.run(
+        db, [issue(640), issue(645)],
+        SELECTOR_DRAIN_CONCURRENCY="2",
+        BOX_SLEEP="0.3",
+    )
+    assert result.returncode == 0, result.stderr
+    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [
+        640, 645,
+    ]
+    assert _run_kinds(db) == [
+        "run.dispatched", "run.outcome",
+        "run.dispatched", "run.outcome",
+    ]
+    finished = last(db, "cycle.finished")
+    assert finished["dispatches"] == [640, 645]
+    assert finished["halted"] == "queue-empty"
+
+
+def test_k_unset_keeps_the_serial_drain_across_targets(db, box):
+    """K unset defaults to 1: two Targets still drain one after the other,
+    and each still has its own cycle.started / cycle.finished pair."""
+    gadgets_work = box.extra_work("work-gadgets")
+    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
+    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
+
+    result = box.run(
+        db, [],
+        targets=[{}, _gadget_target(gadgets_work)],
+        BOX_SLEEP="0.2",
+    )
+    assert result.returncode == 0, result.stderr
+    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [
+        640, 700,
+    ]
+    assert _run_kinds(db) == [
+        "run.dispatched", "run.outcome",
+        "run.dispatched", "run.outcome",
+    ]
+    assert [
+        e["payload"]["repo"] for e in events(db, "cycle.started")
+    ] == ["acme/widgets", "acme/gadgets"]
+    finished = events(db, "cycle.finished")
+    assert [row["payload"]["dispatches"] for row in finished] == [
+        [640], [700],
+    ]
+
+
+def test_a_third_target_waits_when_k_is_2(db, box):
+    """K caps live Dispatches, not Targets: a third Target waits for a slot."""
+    gadgets_work = box.extra_work("work-gadgets")
+    sprockets_work = box.extra_work("work-sprockets")
+    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
+    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
+    box.queue_for("acme/sprockets", "ready-for-agent", [issue(800)])
+
+    result = box.run(
+        db, [],
+        targets=[
+            {},
+            _gadget_target(gadgets_work),
+            {
+                "repo": "acme/sprockets",
+                "work_repo": str(sprockets_work),
+                "box_repo": "/nonexistent/box-sprockets",
+                "token_file": "/nonexistent/token-sprockets",
+                "guest_template": "sprockets-guest:1",
+            },
+        ],
+        SELECTOR_DRAIN_CONCURRENCY="2",
+        BOX_SLEEP="0.4",
+    )
+    assert result.returncode == 0, result.stderr
+    assert sorted(
+        e["payload"]["issue"] for e in events(db, "run.dispatched")
+    ) == [640, 700, 800]
+    kinds = _run_kinds(db)
+    first_outcome = kinds.index("run.outcome")
+    assert kinds[:first_outcome].count("run.dispatched") == 2
+
+
+def test_pause_mid_parallel_drain_completes_in_flight_and_picks_nothing_more(
+    db, box, tmp_path,
+):
+    """Pause mid-drain: no new picks; in-flight Runs complete and Route."""
+    gadgets_work = box.extra_work("work-gadgets")
+    box.queue_for(
+        "acme/widgets", "ready-for-agent", [issue(640), issue(641)],
+    )
+    box.queue_for(
+        "acme/gadgets", "ready-for-agent", [issue(700), issue(701)],
+    )
+    pause_script = tmp_path / "pause-when-two-dispatched.sh"
+    pause_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"dsn={db!r}\n"
+        "for _ in $(seq 1 80); do\n"
+        "  n=$(psql \"$dsn\" -tAc "
+        "\"select count(*) from journal.events where kind = 'run.dispatched'\")\n"
+        "  if [[ ${n} -ge 2 ]]; then\n"
+        "    psql \"$dsn\" -c 'UPDATE selector.control SET paused = true'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  sleep 0.05\n"
+        "done\n"
+        "exit 1\n"
+    )
+    pause_script.chmod(0o755)
+
+    result = box.run(
+        db, [],
+        targets=[{}, _gadget_target(gadgets_work)],
+        SELECTOR_DRAIN_CONCURRENCY="2",
+        BOX_SLEEP="0.4",
+        NESTED_CYCLE=str(pause_script),
+    )
+    assert result.returncode == 0, result.stderr
+
+    dispatched = sorted(
+        e["payload"]["issue"] for e in events(db, "run.dispatched")
+    )
+    assert dispatched == [640, 700]
+    assert len(events(db, "issue.awaiting-review")) == 2
+    assert len(events(db, "run.outcome")) == 2
+    for row in events(db, "cycle.finished"):
+        assert row["payload"]["halted"] == "paused"
+        assert row["payload"]["dispatches"] in ([640], [700])
 

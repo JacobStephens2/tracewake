@@ -40,10 +40,12 @@ the Seeding command, the issue command; the **targets** are stanzas in
 allowlist, checkouts, repository token, guest image, review cap and landing
 mode. See README.md, and `examples/` for both files filled in.
 
-Without `--target` every declared target is worked in turn, each with its own
+Without `--target` every declared target is worked, each with its own
 `cycle.started`/`cycle.finished` pair: a second repository is a second stanza,
-not a second controller. A required value that is absent stops everything at
-preflight, naming the value, before the tracker is read.
+not a second controller. With `SELECTOR_DRAIN_CONCURRENCY` greater than 1,
+Dispatches on different Targets overlap up to that cap; within a Target they
+stay serial. A required value that is absent stops everything at preflight,
+naming the value, before the tracker is read.
 
 Exit codes:
 
@@ -60,11 +62,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -146,6 +150,13 @@ IN_FLIGHT_STALE_HOURS = 4
 # before it has read anything at all.
 CYCLE_LOCK_KEY = 0x5E1EC7
 
+# How many Dispatches one Cycle may hold at once (issue #37). Serial is the
+# established behavior, so the default is 1; zero or negative is not a drain
+# and is refused at preflight. Review Cap, not this number, remains the
+# throughput bound (ADR 0021 as amended).
+DRAIN_CONCURRENCY_VAR = "SELECTOR_DRAIN_CONCURRENCY"
+DEFAULT_DRAIN_CONCURRENCY = 1
+
 # What the box card on /loop is built from (#156, #260): four facts read off
 # the box, over the box surface, once per cycle. Keys are the box's own
 # `LOOP_BOX_*` names, mapped here to the Journal's.
@@ -218,6 +229,7 @@ class Config:
     guardrail_timeout_seconds: int
     board_timeout_seconds: int
     guardrail_trees: tuple[targets.GuardrailTree, ...]
+    drain_concurrency: int
 
     @property
     def task_repo(self) -> str:
@@ -283,6 +295,7 @@ class Config:
                 env("SELECTOR_BOARD_TIMEOUT_SECONDS", "10")
             ),
             guardrail_trees=targets.load_guardrail_trees(),
+            drain_concurrency=_drain_concurrency(),
         )
 
 
@@ -303,10 +316,36 @@ class Config:
         instance and not only of the targets.
         """
         targets.Instance.from_env()
+        _drain_concurrency()
         return tuple(
             cls.for_target(target)
             for target in targets.select(targets.load(), repo)
         )
+
+
+def _drain_concurrency() -> int:
+    """How many Dispatches this Cycle may hold at once.
+
+    Unset defaults to 1, which is today's serial drain. Zero or negative is
+    a configuration error: a cap of nothing is a paused instance, and pausing
+    has its own control. Named at preflight like every other instance value.
+    """
+    raw = os.environ.get(DRAIN_CONCURRENCY_VAR, str(DEFAULT_DRAIN_CONCURRENCY))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise targets.NotConfigured(
+            f"{DRAIN_CONCURRENCY_VAR} is {raw!r}, which is not a positive"
+            " whole number. It names how many Dispatches a Cycle may hold"
+            " at once."
+        ) from None
+    if value < 1:
+        raise targets.NotConfigured(
+            f"{DRAIN_CONCURRENCY_VAR} is {value}, and a concurrency of less"
+            f" than 1 is not a drain: {DRAIN_CONCURRENCY_VAR} names how many"
+            " Dispatches a Cycle may hold at once."
+        )
+    return value
 
 
 # --- Reading the issue body -------------------------------------------------
@@ -562,40 +601,58 @@ class Dispatch:
     issue: int
     at: datetime
     stale: bool
+    repo: str | None = None
 
 
 class Spend:
     """What the Selector has already spent, read back from the Journal."""
 
-    def __init__(self, dispatches: list[Dispatch], outcomes: list[int]):
+    def __init__(
+        self,
+        dispatches: list[Dispatch],
+        outcomes: list[tuple[str | None, int]],
+    ):
         self._dispatches = dispatches
-        started: dict[int, int] = {}
+        started: dict[tuple[str | None, int], int] = {}
         for d in dispatches:
             if d.stale:
                 continue
-            started[d.issue] = started.get(d.issue, 0) + 1
-        ended: dict[int, int] = {}
-        for issue in outcomes:
-            ended[issue] = ended.get(issue, 0) + 1
+            key = (d.repo, d.issue)
+            started[key] = started.get(key, 0) + 1
+        ended: dict[tuple[str | None, int], int] = {}
+        for repo, issue in outcomes:
+            key = (repo, issue)
+            ended[key] = ended.get(key, 0) + 1
         # Per attempt rather than per issue: an issue dispatched, finished,
         # and dispatched again is in flight, even though an outcome for it
-        # exists.
-        self.in_flight = sorted(
-            issue for issue, n in started.items() if n > ended.get(issue, 0)
+        # exists. Keyed by (repo, issue) so the same number on two Targets
+        # is two Runs (issue #37).
+        self._in_flight_keys = sorted(
+            key for key, n in started.items() if n > ended.get(key, 0)
+        )
+        self.in_flight = sorted({issue for _, issue in self._in_flight_keys})
+
+    def in_flight_on(self, repo: str) -> list[int]:
+        """Issues of `repo` that currently hold a Run slot."""
+        return sorted(
+            issue for r, issue in self._in_flight_keys if r == repo
         )
 
-    def attempts(self, issue: int, since: str | None) -> int:
+    def attempts(self, issue: int, since: str | None, repo: str | None = None) -> int:
         """Dispatches of `issue` since it was last labeled.
 
         `since` is the tracker's ISO-8601 labeling time. Without one (an
         issue whose timeline holds no labeling) every dispatch counts, which
-        is the conservative direction.
+        is the conservative direction. `repo` scopes the count to one Target
+        when two Targets share an issue number.
         """
         after = _parse_time(since)
         return sum(
             1
             for d in self._dispatches
-            if d.issue == issue and (after is None or d.at > after)
+            if d.issue == issue
+            and (repo is None or not d.repo or d.repo == repo)
+            and (after is None or d.at > after)
         )
 
 
@@ -611,15 +668,17 @@ def spend(conn: psycopg.Connection) -> Spend:
         Dispatch(*row)
         for row in conn.execute(
             "SELECT (payload->>'issue')::bigint, at,"
-            "       at < now() - make_interval(hours => %s)"
+            "       at < now() - make_interval(hours => %s),"
+            "       nullif(split_part(payload->>'task_ref', '#', 1), '')"
             "  FROM journal.events WHERE kind = %s",
             (IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),
         ).fetchall()
     ]
     outcomes = [
-        row[0]
+        (row[0], row[1])
         for row in conn.execute(
-            "SELECT (payload->>'issue')::bigint FROM journal.events"
+            "SELECT nullif(split_part(payload->>'task_ref', '#', 1), ''),"
+            "       (payload->>'issue')::bigint FROM journal.events"
             " WHERE kind = %s",
             (events.RUN_OUTCOME,),
         ).fetchall()
@@ -1547,8 +1606,13 @@ def run_cycle(
     dispatch_config: dispatch.DispatchConfig,
     *,
     dry_run: bool,
+    slots: threading.Semaphore | None = None,
 ) -> dict:
-    """One cycle. Returns the summary it journaled, plus what it then did."""
+    """One cycle. Returns the summary it journaled, plus what it then did.
+
+    `slots` is the instance-wide cap on concurrent Dispatches (issue #37).
+    None means this cycle is the only one running, which is K=1.
+    """
     cycle_id = journal.append(
         conn,
         *events.cycle_started(
@@ -1621,7 +1685,10 @@ def run_cycle(
             if number in dispatches:
                 continue
             verdict = eligibility(
-                record, config, cycle_spend.attempts(number, record.get("labeledAt"))
+                record, config,
+                cycle_spend.attempts(
+                    number, record.get("labeledAt"), repo=config.task_repo,
+                ),
             )
             if verdict is None:
                 eligible.append(record)
@@ -1656,6 +1723,7 @@ def run_cycle(
         last_eligible = [int(r["number"]) for r in eligible]
 
         pick = None
+        held_slot = False
         if control.is_paused(conn):
             # The timer keeps running while paused. It still reads the queue and
             # journals Eligibility so the page remains an explanation of what
@@ -1665,7 +1733,13 @@ def run_cycle(
         elif not queue:
             halted = "queue-empty"
             break
-        elif cycle_spend.in_flight:
+        elif config.drain_concurrency == 1 and cycle_spend.in_flight:
+            halted = "run-in-flight"
+            break
+        elif config.drain_concurrency > 1 and cycle_spend.in_flight_on(config.task_repo):
+            # Per-Target leftover: a Run this Target already holds, including
+            # one a previous cycle died before recording. Other Targets' live
+            # Dispatches are the slot cap, not a halt.
             halted = "run-in-flight"
             break
         elif budget["remaining"] == 0:
@@ -1677,6 +1751,16 @@ def run_cycle(
         else:
             # Lowest first: deterministic and explainable, and it works a
             # dependency chain bottom-up because the chain was numbered that way.
+            # Acquire a slot before journaling the pick so a pause during the
+            # wait still stops the pick rather than dispatching after it.
+            if slots is not None:
+                slots.acquire()
+                held_slot = True
+                if control.is_paused(conn):
+                    halted = "paused"
+                    slots.release()
+                    held_slot = False
+                    break
             picked_record = eligible[0]
             body_sections = sections(picked_record.get("body") or "")
             check = body_sections.get("check", "")
@@ -1696,36 +1780,41 @@ def run_cycle(
         # Not in a dry run: a dry run reaches the tracker and nothing else, and
         # that property is worth more than a status card on a cycle that changed
         # nothing.
-        if not dry_run:
-            facts, box_error = observe_box(config)
-            journal.append(
-                conn,
-                *(
-                    events.box_observed(cycle=cycle_id, **facts)
-                    if facts
-                    else events.box_unreachable(cycle=cycle_id, error=box_error)
-                ),
-            )
+        try:
+            if not dry_run:
+                facts, box_error = observe_box(config)
+                journal.append(
+                    conn,
+                    *(
+                        events.box_observed(cycle=cycle_id, **facts)
+                        if facts
+                        else events.box_unreachable(cycle=cycle_id, error=box_error)
+                    ),
+                )
 
-        if pick and not dry_run:
-            attempt = cycle_spend.attempts(
-                pick["number"], picked_record.get("labeledAt")
-            ) + 1
-            outcome = _dispatch_pick(
-                conn, cycle_id, config, dispatch_config, pick, attempt,
-            )
-            outcomes.append(outcome)
-            # Routing is separate from dispatching, and after it, because the two
-            # answer different questions: `_dispatch_pick` records what the Run
-            # did, and this decides what that means for the issue. Keeping the
-            # outcome row unconditional is what stops a label swap GitHub refused
-            # from erasing the Journal's record that a Run ever ran.
-            route = _route(
-                conn, cycle_id, config, dispatch_config, pick,
-                outcome, attempt,
-            )
-            routes.append(route)
-            dispatches.append(pick["number"])
+            if pick and not dry_run:
+                attempt = cycle_spend.attempts(
+                    pick["number"], picked_record.get("labeledAt"),
+                    repo=config.task_repo,
+                ) + 1
+                outcome = _dispatch_pick(
+                    conn, cycle_id, config, dispatch_config, pick, attempt,
+                )
+                outcomes.append(outcome)
+                # Routing is separate from dispatching, and after it, because the two
+                # answer different questions: `_dispatch_pick` records what the Run
+                # did, and this decides what that means for the issue. Keeping the
+                # outcome row unconditional is what stops a label swap GitHub refused
+                # from erasing the Journal's record that a Run ever ran.
+                route = _route(
+                    conn, cycle_id, config, dispatch_config, pick,
+                    outcome, attempt,
+                )
+                routes.append(route)
+                dispatches.append(pick["number"])
+        finally:
+            if held_slot:
+                slots.release()
 
         if dry_run or not pick:
             break
@@ -1756,6 +1845,76 @@ def run_cycle(
     summary["route"] = routes[-1] if routes else None
     summary["updated_proposals"] = sorted(str(p) for p in updated_proposals)
     return summary
+
+
+def _run_targets(
+    conn: psycopg.Connection,
+    configs: tuple[Config, ...],
+    *,
+    dry_run: bool,
+) -> tuple[list[dict | None], CycleFailed | None]:
+    """Work every target. Sequential when K is 1; concurrent otherwise.
+
+    One Cycle per target, each with its own `cycle.started` / `cycle.finished`
+    pair. Parallelism is K concurrent Dispatches across those Cycles, still
+    serial within a Target (issue #37). A target that fails does not cancel
+    in-flight Runs on the others; the first failure is returned after they
+    finish so the caller can page.
+    """
+    if not configs:
+        return [], None
+    concurrency = configs[0].drain_concurrency
+    parallel = (not dry_run) and concurrency > 1 and len(configs) > 1
+    if not parallel:
+        # One cycle per target, each with its own `cycle.started` and
+        # `cycle.finished` pair. A second target is a second stanza and a
+        # second pass here - not a second controller, a second timer or a
+        # second Journal (issue #3).
+        #
+        # A target that fails ends the whole invocation, and the targets
+        # after it are not worked. Deliberately: a cycle that failed exits
+        # non-zero and the unit's OnFailure pages, and carrying on to the
+        # next target would turn one page into a cycle that reports both a
+        # failure and a success. The timer fires again in thirty minutes, so
+        # what a failed first target costs the second is one cycle, not its
+        # queue.
+        return [
+            run_cycle(
+                conn,
+                config,
+                dispatch.DispatchConfig.for_target(config.target),
+                dry_run=dry_run,
+            )
+            for config in configs
+        ], None
+
+    slots = threading.BoundedSemaphore(concurrency)
+    summaries: list[dict | None] = [None] * len(configs)
+    errors: list[CycleFailed] = []
+
+    def run_one(index: int, config: Config) -> None:
+        try:
+            with journal.connect() as target_conn:
+                summaries[index] = run_cycle(
+                    target_conn,
+                    config,
+                    dispatch.DispatchConfig.for_target(config.target),
+                    dry_run=dry_run,
+                    slots=slots,
+                )
+        except CycleFailed as exc:
+            errors.append(exc)
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(configs)
+    ) as pool:
+        futs = [
+            pool.submit(run_one, i, config)
+            for i, config in enumerate(configs)
+        ]
+        for fut in concurrent.futures.as_completed(futs):
+            fut.result()
+    return summaries, (errors[0] if errors else None)
 
 
 def _report(summary: dict) -> None:
@@ -1861,29 +2020,18 @@ def main(argv: list[str] | None = None) -> int:
                 raise
 
             failures = 0
-            for config in configs:
-                # One cycle per target, each with its own `cycle.started`
-                # and `cycle.finished` pair. A second target is a second
-                # stanza and a second pass here - not a second controller,
-                # a second timer or a second Journal (issue #3).
-                #
-                # A target that fails ends the whole invocation, and the
-                # targets after it are not worked. Deliberately: a cycle that
-                # failed exits non-zero and the unit's OnFailure pages, and
-                # carrying on to the next target would turn one page into a
-                # cycle that reports both a failure and a success. The timer
-                # fires again in thirty minutes, so what a failed first
-                # target costs the second is one cycle, not its queue.
-                summary = run_cycle(
-                    conn,
-                    config,
-                    dispatch.DispatchConfig.for_target(config.target),
-                    dry_run=args.dry_run,
-                )
+            summaries, target_error = _run_targets(
+                conn, configs, dry_run=args.dry_run
+            )
+            for config, summary in zip(configs, summaries):
+                if summary is None:
+                    continue
                 if len(configs) > 1:
                     print(f"target       {config.task_repo}")
                 _report(summary)
                 failures += summary.get("return_failures") or 0
+            if target_error is not None:
+                raise target_error
     except CycleFailed as exc:
         print(f"cycle.py: {exc}", file=sys.stderr)
         return 1

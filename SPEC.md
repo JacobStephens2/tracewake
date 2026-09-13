@@ -23,7 +23,7 @@ diametrically opposite architectural bets across all eight primary dimensions:
 | --- | --- | --- |
 | **Work Discovery / Polling** | Continuous polling (default 30s) across active tracker workflow states (`Todo`, `In Progress`). | Scheduled Cycle (30m idle cadence or draining queue) filtering on an explicit Handover label (`ready-for-agent`) placed by an allowlisted operator. |
 | **Workspace Model** | Persistent workspaces reused across runs for the same issue; dirty working trees preserved. | Ephemeral microVM / container boundary per Iteration. LLM context discarded between Iterations; state lives strictly in git (`Plan` and `Progress Log`). |
-| **Concurrency & Capacity** | Concurrent agent swarms (default 10 parallel agents globally). | Serial execution (one active Run per target). Throughput bounded by human Review Capacity (`review_cap`), not concurrent agent threads or daily spend. |
+| **Concurrency & Capacity** | Concurrent agent swarms (default 10 parallel agents globally). | Serial execution within a Target; up to K concurrent Dispatches across Targets (default 1). Throughput bounded by human Review Cap (`review_cap`), not thread count or daily spend. |
 | **Stall & Fault Handling** | Inactivity timeout (default 5m) triggering worker restart with exponential backoff. | Termination Contract with five predeclared bounds (no-ops, iteration clock, run clock, iteration cap, turn cap). Structural no-op detection. Clean exit 0 on planned end. |
 | **What Done Means** | Agent drives issue to workflow-defined terminal state or automated acceptance. | Proposal-Only Output. Model completion claims are advisory. Done means a draft PR exists with verified CI checks, ready for human review. |
 | **Who Lands the Work** | Orchestrator or agent lands code into main branch upon passing checks. | The human operator exclusively. Nothing merges itself. The Selector ensures proposal freshness against base. |
@@ -47,8 +47,9 @@ Tracewake does not continuously poll tracker state transitions. Instead:
 
 1. **The Cycle Cadence**: The Selector executes in discrete **Cycles** triggered by a
    systemd timer (default: `OnCalendar=*:00/30`, every 30 minutes). When active work
-   exists, the Selector executes as a **Draining Cycle** (ADR 0021), processing eligible
-   issues serially until the queue is exhausted or capacity holds.
+   exists, the Selector executes as a **Draining Cycle** (ADR 0021, ADR 0027),
+   processing eligible issues until the queue is exhausted or capacity holds, with
+   at most one Run per Target and up to K concurrent Dispatches across Targets.
 2. **Handover at the Label**: Work discovery is governed by the **Handover** (ADR 0010,
    ADR 0014). An issue is only considered if it carries the target's configured
    `ready` label (default: `ready-for-agent`).
@@ -110,16 +111,20 @@ agent instances by default (`agent.max_concurrent_agents = 10`), with optional l
 partitioned by tracker state (`max_concurrent_agents_by_state`).
 
 ### Tracewake's Specification
-Tracewake enforces **strictly serial execution** per target:
+Tracewake enforces **strictly serial execution** per target, with an instance-wide
+cap on how many Targets may run at once:
 
 1. **Single-Run Serialization**: Exactly one Run executes on the box at any given time
-   for a target. A Postgres advisory lock and an in-flight Journal event
-   (`run.dispatched` without a matching `run.outcome`) prevent concurrent execution.
-2. **The Draining Cycle**: Rather than running multiple agents in parallel, a single
-   Cycle drains the queue serially (ADR 0021). It reads the tracker, picks the
-   lowest-numbered eligible issue, seeds the branch, dispatches the Run, observes
-   completion, routes the issue, updates open proposal branches, and loops to pick the
-   next eligible task.
+   for a target. An in-flight Journal event (`run.dispatched` without a matching
+   `run.outcome`) prevents a second Dispatch on that Target. Across Targets a Cycle
+   may hold up to K concurrent Dispatches (ADR 0027); K is instance configuration
+   defaulting to 1, which is today's serial drain. A Postgres advisory lock still
+   keeps one Selector process at a time.
+2. **The Draining Cycle**: A single Cycle drains the queue (ADR 0021). It reads the
+   tracker, picks the lowest-numbered eligible issue, seeds the branch, dispatches
+   the Run, observes completion, routes the issue, updates open proposal branches,
+   and loops to pick the next eligible task. With K greater than 1, Dispatches on
+   different Targets overlap; within a Target they stay serial.
 3. **Review Capacity Replaces Spend Caps**: Unattended throughput is bounded by the
    human operator's ability to review code, not by artificial daily quotas or thread
    counts (ADR 0022). Each target declares a `review_cap` in `targets.toml` (default: 20).

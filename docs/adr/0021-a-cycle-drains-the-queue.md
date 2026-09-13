@@ -13,10 +13,12 @@ operator has paused.
 
 Six architectural rules govern the draining Cycle:
 
-1. **Serial Runs under one Cycle.**
-   One Cycle dispatches several Runs serially, routing each before picking the
-   next. All dispatches in the drain share the Cycle's id in the Journal, giving
-   the operator an unbroken account of the work completed during that firing.
+1. **Up to K concurrent Runs, serial within a Target.**
+   One Cycle dispatches several Runs, routing each before picking the next on
+   that Target. Up to K Dispatches may run at once across Targets (ADR 0027);
+   K defaults to 1, which is this rule as originally written. All dispatches
+   in the drain share the Cycle's id in the Journal, giving the operator an
+   unbroken account of the work completed during that firing.
 2. **Deterministic stopping conditions.**
    A draining Cycle ends when nothing is Eligible (`queue-empty` or `none-eligible`),
    a cap holds (`run-in-flight` or `daily-cap-reached`), or the operator has
@@ -48,3 +50,7 @@ Six architectural rules govern the draining Cycle:
   immediately after checking the queue and journals its reasoning.
 - **Single drain summary.** The dashboard and readers inspect one `cycle.finished`
   record summarizing the full drain.
+
+**Amended by ADR 0027 (issue #37).** Rule 1's "serially" is now "up to K
+concurrently, serial within a Target". Review Cap, not thread count,
+remains the throughput bound. K unset is still this ADR's original drain.
