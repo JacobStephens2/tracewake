@@ -1,4 +1,4 @@
-"""The window binds to loopback and requires sign-in (issue #38, ADR 0027).
+"""The window binds to loopback and requires sign-in (issue #38, ADR 0028).
 
 The binding half of the old criterion remains: both systemd units listen on
 127.0.0.1. The auth half is reversed: unauthenticated requests 303 to sign-in.
@@ -16,7 +16,7 @@ client = TestClient(app, follow_redirects=False)
 
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEMD_DIR = ROOT / "deploy" / "systemd"
-ADR = ROOT / "docs" / "adr" / "0027-the-window-requires-sign-in.md"
+ADR = ROOT / "docs" / "adr" / "0028-the-window-requires-sign-in.md"
 
 
 def test_systemd_units_bind_to_loopback():

@@ -329,7 +329,7 @@ to the Journal without modifying git branches or opening pull requests.
 ## 5. Starting the Web Window
 
 The Web window renders the real-time Queue Board and Run history. It requires
-sign-in (ADR 0027). There is no registration page: seed the first admin before
+sign-in (ADR 0028). There is no registration page: seed the first admin before
 the first request.
 
 1. Seed the first admin (fails loudly if that email already exists):

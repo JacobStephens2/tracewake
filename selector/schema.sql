@@ -91,7 +91,7 @@ CREATE TRIGGER events_no_truncate
     BEFORE TRUNCATE ON journal.events
     FOR EACH STATEMENT EXECUTE FUNCTION journal.forbid_mutation();
 
--- Window accounts (issue #38, ADR 0027). Same Postgres instance as the
+-- Window accounts (issue #38, ADR 0028). Same Postgres instance as the
 -- Journal, same unix-socket peer-auth posture (ADR 0015). The role column is
 -- stored here so the roles ticket can enforce it; this schema does not.
 CREATE SCHEMA IF NOT EXISTS web;

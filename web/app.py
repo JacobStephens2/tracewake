@@ -96,7 +96,7 @@ def _path(request: Request, route: str) -> str:
 def _page(request: Request, name: str, context: dict, **kwargs):
     """Render a page with whatever every page needs.
 
-    Preview banner (ADR 0016) and the session's CSRF token (ADR 0027): a page
+    Preview banner (ADR 0016) and the session's CSRF token (ADR 0028): a page
     that forgot either would look fine and be wrong - unreviewed code without
     a banner, or a state-changing form without a token.
     """

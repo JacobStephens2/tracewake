@@ -1,4 +1,4 @@
-"""Window accounts: passwords, sessions, cookies, CSRF (issue #38, ADR 0027).
+"""Window accounts: passwords, sessions, cookies, CSRF (issue #38, ADR 0028).
 
 Queries live here rather than in the Journal writer: the window is the only
 reader and writer of `web.accounts` / `web.sessions`. The connection is
