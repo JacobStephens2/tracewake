@@ -75,6 +75,11 @@ to applying `ready-for-agent`, which is why the Selector may seed with nobody at
 a keyboard.
 _Avoid_: approval, sign-off, triage
 
+**Operator**:
+The one person an Instance trusts: the identity whose Handover the Selector
+honours and whose review lands work. Not a Window Account and not a role of one.
+_Avoid_: admin, user, owner, maintainer
+
 **Instance**:
 One operator's running Tracewake: a controller, a box, a Journal, and the two
 files that configure them - `tracewake.env` and `targets.toml`. Everything an
@@ -85,10 +90,20 @@ ETA's is "ETA's Tracewake". `examples/` is one, filled in.
 _Avoid_: deployment, tenant, install, the Loop
 
 **Window Account**:
-An email-identified sign-in to the window, carrying a role of admin or reader.
-Not an Operator: the Operator remains exactly one, and accounts are viewers of
-an Instance.
+An email-identified identity for an Instance's window, carrying a role of admin
+or reader. Not an Operator.
 _Avoid_: user, login, viewer (the role is reader), operator
+
+**Admin**:
+The Window Account role that may change the Instance from the window - today,
+pause and resume. Any number of accounts may carry it; none of them is the
+Operator.
+_Avoid_: operator, owner, superuser
+
+**Reader**:
+The Window Account role that may look at every page and the live stream, and
+may change nothing.
+_Avoid_: viewer, guest, user, operator
 
 **Single-Host Mode**:
 The deployment shape where the Controller and the Box execute on the same machine
@@ -122,7 +137,7 @@ _Avoid_: scheduler, dispatcher, intake
 **Cycle**:
 One execution of the Selector: read the tracker, apply Eligibility to the whole
 labeled queue, order, apply the caps, journal the reasoning, and dispatch Runs
-until nothing is Eligible, a cap holds, or the operator has paused. Up to an
+until nothing is Eligible, a cap holds, or an admin has paused. Up to an
 instance-configured number of Dispatches may run at once, serial within a
 Target (ADR 0027). The timer's
 unit of work, and the Journal's unit of grouping - every event of one Cycle carries
@@ -195,11 +210,11 @@ _Avoid_: ledger, log, queue
 
 **Journal Event**:
 One append to the Selector Journal: a kind naming what happened and a payload
-carrying what a reader needs. The vocabulary of Events - every kind and each
-payload's shape - has one owning module, closed for writers and open for
-readers: shipping code constructs every row through it, while a reader renders
-a kind it does not know generically rather than failing, which is what keeps a
-hand append legitimate.
+carrying what the dashboard needs. The vocabulary of Events - every kind and
+each payload's shape - has one owning module, closed for writers and open for
+the dashboard: shipping code constructs every row through it, while the
+dashboard renders a kind it does not know generically rather than failing,
+which is what keeps a hand append legitimate.
 _Avoid_: log entry, message, notification
 
 **Queue Board**:

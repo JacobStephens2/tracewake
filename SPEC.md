@@ -320,7 +320,7 @@ Tracewake establishes five clear, predictable interaction surfaces across the
    `SELECTOR_NOTIFY_COMMAND` (e.g., an email or messaging bridge), delivering a
    structured notification containing the outcome bound, duration, iteration count, and
    link to the Proposal PR.
-4. **Pause Control**: An operator can toggle the pause flag directly on `/loop`. A
+4. **Pause Control**: An admin can toggle the pause flag directly on `/loop`. A
    paused Selector continues to observe and journal cycles, but suspends new dispatches
    without killing in-flight Runs or disabling the timer.
 5. **Human Escalation**: If an agent cannot solve a problem within its Termination
