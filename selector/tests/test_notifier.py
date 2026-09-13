@@ -18,6 +18,8 @@ from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import events  # noqa: E402
+
 NOTIFIER = Path(__file__).resolve().parents[1] / "notifier.py"
 
 PROPOSAL = "https://github.invalid/acme/widgets/pull/12"
@@ -206,6 +208,34 @@ def test_a_row_already_delivered_is_not_delivered_again(db, notifier):
     notifier.run()
 
     assert len(notifier.subjects()) == 1
+
+
+def test_a_new_unenrolled_gap_is_mailed_once(db, notifier):
+    """Issue #39: a Handover on an unenrolled repository is one notice, and
+    the standing gap that follows is not a second one."""
+    notifier.run()
+    kind, payload = events.target_unenrolled(
+        owner="acme",
+        label="ready-for-agent",
+        repos=[{
+            "repo": "acme/other",
+            "issues": [{
+                "number": 7,
+                "title": "Do the thing",
+                "url": "https://github.invalid/acme/other/issues/7",
+            }],
+        }],
+        new=["acme/other"],
+        dry_run=False,
+    )
+    append(db, kind, payload)
+    notifier.run()
+    append(db, kind, {**payload, "new": []})
+    notifier.run()
+
+    assert notifier.subjects() == [
+        "Handover on an unenrolled repository: acme/other",
+    ]
 
 
 def test_the_body_and_the_link_reach_the_mail_surface(db, notifier):

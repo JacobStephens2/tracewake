@@ -45,6 +45,8 @@ PROTECTION_SUITE = "tests/test_protection_source.py"
 # own argument handling reach production unexercised.
 ISSUE_SOURCE = "issue-sources/github.sh"
 ISSUE_SOURCE_SUITE = "tests/test_issue_source.py"
+SEARCH_SOURCE = "search-sources/github.sh"
+SEARCH_SUITE = "tests/test_search_source.py"
 
 # The window (#156). Its path is relative to the Selector, and its suite is
 # the window's own - run from `web/`, which mutation-check.sh handles by
@@ -1242,6 +1244,74 @@ MUTATIONS = {
         '    update-branch)\n'
         '        die "update-branch is unsupported"\n'
         '        ;;\n',
+    ),
+    # Unenrolled-Target warning (#39): the Cycle stops looking, so a Handover
+    # on a repository with no stanza vanishes silently again.
+    "unenrolled-search-skipped": (CYCLE, CYCLE_SUITE,
+        "                observe_unenrolled(\n"
+        "                    conn,\n"
+        "                    targets.Instance.from_env(),\n"
+        "                    targets.load(),\n"
+        "                    dry_run=args.dry_run,\n"
+        "                )\n",
+        "                pass\n",
+    ),
+    # Declared Targets are flagged as unenrolled, so the warning cries wolf
+    # about the repositories the instance already works.
+    "declared-targets-flagged-as-unenrolled": (CYCLE, CYCLE_SUITE,
+        "        if not repo or repo in declared:\n            continue\n",
+        "        if not repo:\n            continue\n",
+    ),
+    # A standing gap is marked new every Cycle, so the operator is mailed
+    # every thirty minutes about a repository they already know about.
+    "standing-gap-always-new": (CYCLE, CYCLE_SUITE,
+        '    new = [entry["repo"] for entry in gap if entry["repo"] not in seen]\n',
+        '    new = [entry["repo"] for entry in gap]\n',
+    ),
+    # A gap that goes away leaves no row, so a later reappearance matches the
+    # last non-empty set and never notifies.
+    "cleared-gap-not-recorded": (CYCLE, CYCLE_SUITE,
+        "        if not seen:\n            return\n",
+        "        if True:\n            return\n",
+    ),
+    # The searched owner gets a default, which is a company fact in the
+    # product - the refusal issue #3 and #39 both require.
+    "search-owner-not-refused-when-missing": (TARGETS, TARGETS_SUITE,
+        '        if not os.environ.get("SELECTOR_SEARCH_OWNER"):\n'
+        "            missing(\n"
+        '                "SELECTOR_SEARCH_OWNER",\n'
+        '                REQUIRED_INSTANCE_VARS["SELECTOR_SEARCH_OWNER"],\n'
+        "            )\n",
+        "        if False:\n"
+        "            missing(\n"
+        '                "SELECTOR_SEARCH_OWNER",\n'
+        '                REQUIRED_INSTANCE_VARS["SELECTOR_SEARCH_OWNER"],\n'
+        "            )\n",
+    ),
+    # A standing gap is mailed every time, which is the noise the Journal-
+    # keyed dedup exists to stop.
+    "standing-unenrolled-gap-is-mailed": (NOTICES, NOTICES_SUITE,
+        "    new = [name for name in (record.new or []) if name]\n"
+        "    if not new:\n"
+        "        return None\n",
+        "    new = [name for name in (record.new or []) if name]\n"
+        "    if False and not new:\n"
+        "        return None\n",
+    ),
+    # The owner-wide search writes. A comment from this path is the Selector
+    # mutating a repository it has not been enrolled to work.
+    "owner-search-writes-a-comment": (SEARCH_SOURCE, SEARCH_SUITE,
+        'hits="$(gh search issues \\\n',
+        'gh issue comment 1 --repo "${owner}/widgets" --body warn >/dev/null 2>&1 || true\n'
+        'hits="$(gh search issues \\\n',
+    ),
+    # A repository slug is accepted as an owner, so the search is pointed at
+    # one repo and looks like a successful empty gap.
+    "owner-search-accepts-a-repo-slug": (SEARCH_SOURCE, SEARCH_SUITE,
+        '[[ ${owner} =~ ^[A-Za-z0-9._-]+$ ]] ||\n'
+        '    die "owner must be a GitHub user or organization, got ${owner}"\n',
+        "true ||\n"
+        '    die "owner must be a GitHub user or organization, got ${owner}"\n',
     ),
     # Freshness: foreign proposal URL in update-branch is accepted.
     "update-branch-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,

@@ -122,6 +122,10 @@ REQUIRED_INSTANCE_VARS = {
     "SELECTOR_BOX_HOST": "where this instance's box is",
     "SELECTOR_PROTECTED_REPO": "the repository holding the guardrail's rules",
     "SELECTOR_PROTECTED_REF": "the ref the executed paths are deployed from",
+    "SELECTOR_SEARCH_OWNER": (
+        "the account whose repositories this instance searches for a "
+        "Handover label on unenrolled Targets"
+    ),
 }
 
 
@@ -390,6 +394,7 @@ class Instance:
     box_host: str
     protected_repo: str
     protected_ref: str
+    search_owner: str
     guardrail_trees: tuple[GuardrailTree, ...]
 
     @classmethod
@@ -402,6 +407,11 @@ class Instance:
         """
         if not os.environ.get("SELECTOR_BOX_HOST"):
             missing("SELECTOR_BOX_HOST", REQUIRED_INSTANCE_VARS["SELECTOR_BOX_HOST"])
+        if not os.environ.get("SELECTOR_SEARCH_OWNER"):
+            missing(
+                "SELECTOR_SEARCH_OWNER",
+                REQUIRED_INSTANCE_VARS["SELECTOR_SEARCH_OWNER"],
+            )
         if not os.environ.get("SELECTOR_GUARDRAIL_TREES"):
             for name in ("SELECTOR_PROTECTED_REPO", "SELECTOR_PROTECTED_REF"):
                 if not os.environ.get(name):
@@ -413,6 +423,7 @@ class Instance:
             box_host=os.environ["SELECTOR_BOX_HOST"],
             protected_repo=protected_repo,
             protected_ref=protected_ref,
+            search_owner=os.environ["SELECTOR_SEARCH_OWNER"],
             guardrail_trees=trees,
         )
 

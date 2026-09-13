@@ -12,13 +12,14 @@ Deterministic code, never an agent: no model output executes here, which is
 what lets the Selector live on the VM that holds production credentials (ADR
 0014).
 
-A cycle has two modes and one body of reasoning. `--dry-run` reaches exactly
-one thing outside itself - the tracker command, read-only - and writes exactly
+A cycle has two modes and one body of reasoning. `--dry-run` reaches the
+tracker command and the owner-wide search, both read-only, and writes exactly
 one thing, the Journal. Without it the same reasoning is followed by acting on
 it (issue #154): the pick is dispatched - branch, Seeding, push, the Run
 started on the box - and an issue skipped for a missing section is returned to
 the operator with a comment and a `needs-info` swap rather than quietly passed
-over.
+over. The unenrolled-Target warning (issue #39) is a Journal row in both
+modes; mail is the notifier's, and only for a live newly appearing gap.
 
 The two modes share every line of the deciding, so a dry-run is the cycle that
 would have happened and not a separate approximation of one.
@@ -1397,6 +1398,150 @@ def fetch_queue(config: Config, label: str | None = None,
         raise CycleFailed(f"tracker command did not return a queue: {exc}") from exc
 
 
+def fetch_owner_search(owner: str, label: str) -> list[dict]:
+    """Handover-labeled issues across an owner's repositories.
+
+    One owner-wide search per Cycle (issue #39). Substitutable like the
+    per-target tracker command, and deliberately *not* overlaid with a
+    target's environment: a per-target token must not be the credential that
+    lists other repositories.
+    """
+    command = os.environ.get(
+        "SELECTOR_SEARCH_COMMAND",
+        str(HERE / "search-sources" / "github.sh"),
+    )
+    try:
+        completed = subprocess.run(
+            [command, owner, label],
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise CycleFailed(f"search command could not be run: {exc}") from exc
+    if completed.returncode:
+        raise CycleFailed(
+            f"search command exited {completed.returncode}: "
+            f"{completed.stderr.strip() or 'no output'}"
+        )
+    try:
+        payload = json.loads(completed.stdout)
+        return list(payload["issues"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise CycleFailed(
+            f"search command did not return a labeled-issue list: {exc}"
+        ) from exc
+
+
+def _handover_label(declared: tuple[targets.Target, ...]) -> str:
+    """The label the owner-wide search looks for.
+
+    Unenrolled repositories have no stanza, so they cannot declare a rename.
+    When every declared Target shares one ready label, that is the Handover
+    this instance uses; otherwise the product vocabulary.
+    """
+    labels = {target.labels.ready for target in declared}
+    if len(labels) == 1:
+        return labels.pop()
+    return targets.DEFAULT_LABELS["ready"]
+
+
+def last_live_unenrolled_repos(conn: psycopg.Connection) -> set[str]:
+    """Repos in the most recent non-dry-run unenrolled warning.
+
+    Deduplication is keyed off the Journal (issue #39): a standing gap
+    journals again with `new=[]`, and a dry-run must not eat the live
+    notification.
+    """
+    row = conn.execute(
+        "SELECT payload FROM journal.events"
+        " WHERE kind = %s"
+        "   AND COALESCE(payload->>'dry_run', 'false') NOT IN ('true', 'True')"
+        " ORDER BY id DESC LIMIT 1",
+        (events.TARGET_UNENROLLED,),
+    ).fetchone()
+    if not row:
+        return set()
+    payload = row[0] or {}
+    repos = payload.get("repos") or []
+    return {
+        str(entry["repo"])
+        for entry in repos
+        if isinstance(entry, dict) and entry.get("repo")
+    }
+
+
+def group_unenrolled(issues: list[dict], declared: set[str]) -> list[dict]:
+    """The gap: labeled issues whose repository is not a declared Target."""
+    grouped: dict[str, list[dict]] = {}
+    for record in issues:
+        repo = record.get("repo")
+        if not repo or repo in declared:
+            continue
+        grouped.setdefault(repo, []).append(
+            {
+                "number": record.get("number"),
+                "title": record.get("title"),
+                "url": record.get("url"),
+            }
+        )
+    gap = []
+    for repo in sorted(grouped):
+        found = grouped[repo]
+        found.sort(
+            key=lambda item: int(item["number"])
+            if str(item.get("number") or "").isdigit()
+            else 0
+        )
+        gap.append({"repo": repo, "issues": found})
+    return gap
+
+
+def observe_unenrolled(
+    conn: psycopg.Connection,
+    instance: targets.Instance,
+    declared: tuple[targets.Target, ...],
+    *,
+    dry_run: bool,
+) -> None:
+    """Journal the unenrolled-Target gap, or the empty set when one closed.
+
+    Warn-only: this function reads the tracker and writes the Journal. It
+    does not comment, relabel, or edit any Target configuration.
+    """
+    label = _handover_label(declared)
+    found = fetch_owner_search(instance.search_owner, label)
+    gap = group_unenrolled(found, {target.repo for target in declared})
+    seen = last_live_unenrolled_repos(conn)
+    if not gap:
+        # Record the empty set so a later reappearance is new, rather than
+        # matching the last non-empty row and staying silent. A gap that
+        # was never open is not journaled.
+        if not seen:
+            return
+        journal.append(
+            conn,
+            *events.target_unenrolled(
+                owner=instance.search_owner,
+                label=label,
+                repos=[],
+                new=[],
+                dry_run=dry_run,
+            ),
+        )
+        return
+    new = [entry["repo"] for entry in gap if entry["repo"] not in seen]
+    journal.append(
+        conn,
+        *events.target_unenrolled(
+            owner=instance.search_owner,
+            label=label,
+            repos=gap,
+            new=new,
+            dry_run=dry_run,
+        ),
+    )
+
+
 class CycleFailed(Exception):
     """The cycle could not run. Journaled, printed, and exits non-zero."""
 
@@ -1856,6 +2001,23 @@ def main(argv: list[str] | None = None) -> int:
                     conn, *events.cycle_failed(cycle=None, error=str(exc))
                 )
                 raise CycleFailed(str(exc)) from exc
+
+            # One owner-wide search per Cycle, before any per-target drain,
+            # so a Handover on an unenrolled repository cannot vanish
+            # silently while the declared Targets are worked (issue #39).
+            # `--target` narrows the drain, not the enrollment set.
+            try:
+                observe_unenrolled(
+                    conn,
+                    targets.Instance.from_env(),
+                    targets.load(),
+                    dry_run=args.dry_run,
+                )
+            except CycleFailed as exc:
+                journal.append(
+                    conn, *events.cycle_failed(cycle=None, error=str(exc))
+                )
+                raise
 
             failures = 0
             summaries, target_error = _run_targets(

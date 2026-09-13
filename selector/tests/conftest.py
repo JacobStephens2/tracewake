@@ -58,6 +58,7 @@ INSTANCE_ENV = {
     "SELECTOR_BOX_HOST": "root@box.invalid",
     "SELECTOR_PROTECTED_REPO": "acme/tracewake",
     "SELECTOR_PROTECTED_REF": "main",
+    "SELECTOR_SEARCH_OWNER": "acme",
 }
 
 
@@ -104,12 +105,28 @@ def fakes(tmp_path):
     )
     tracker.chmod(0o755)
 
+    search_file = tmp_path / "search.json"
+    search_file.write_text('{"issues": []}\n')
+    search = tmp_path / "search.sh"
+    search.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f'printf "%s %s\\n" "$1" "$2" >> "{tmp_path}/search.log"\n'
+        f'if [[ ! -f "{tmp_path}/search.args" ]]; then\n'
+        f'    printf "%s %s\\n" "$1" "$2" > "{tmp_path}/search.args"\n'
+        f'fi\n'
+        f'exec cat "{search_file}"\n'
+    )
+    search.chmod(0o755)
+
     class Runner:
         args_file = tmp_path / "tracker.args"
+        search_args = tmp_path / "search.args"
 
         targets_file = tmp_path / "targets.toml"
 
-        def run(self, dsn, issues=(), *, review_issues=(), tracker_command=None,
+        def run(self, dsn, issues=(), *, review_issues=(), owner_issues=(),
+                tracker_command=None, search_command=None,
                 dry_run=True, targets=None, select=None, **env):
             """One cycle against a canned queue.
 
@@ -119,6 +136,7 @@ def fakes(tmp_path):
             through the targets file (issue #3).
             """
             queue_file.write_text(json.dumps({"issues": list(issues)}))
+            search_file.write_text(json.dumps({"issues": list(owner_issues)}))
             stanzas = targets or ()
             review_label = "awaiting-review"
             if stanzas and isinstance(stanzas, (list, tuple)) and len(stanzas) > 0:
@@ -133,6 +151,7 @@ def fakes(tmp_path):
                     "PATH": f"{bin_dir}:{environ['PATH']}",
                     "SELECTOR_JOURNAL_DSN": dsn,
                     "SELECTOR_TRACKER_COMMAND": str(tracker_command or tracker),
+                    "SELECTOR_SEARCH_COMMAND": str(search_command or search),
                     "TRACEWAKE_TARGETS_FILE": str(self.targets_file),
                     **INSTANCE_ENV,
                 }
@@ -286,6 +305,8 @@ def box(tmp_path):
     progress_file.write_text(
         "# Progress Log\n\nSeeded by seed-run.sh. No Iteration has run yet.\n"
     )
+    search_file = tmp_path / "search.json"
+    search_file.write_text('{"issues": []}\n')
     queue_file = tmp_path / "queue.json"
 
     def git(*args, cwd=None):
@@ -320,6 +341,7 @@ def box(tmp_path):
             .replace("@PROGRESS@", str(progress_file))
             .replace("@QUEUE@", str(queue_file))
             .replace("@GUEST@", str(tmp_path / "guest"))
+            .replace("@SEARCH@", str(search_file))
         )
 
     # Seeding writes BOTH files, and refuses to overwrite a Progress Log that
@@ -566,6 +588,11 @@ if add_label:
         printf '{"issues": []}\n'
     '''))
 
+    search_command = _script(tmp_path / "search.sh", fill('''
+        printf 'search %s\n' "$*" >> "@LOG@"
+        exec cat "@SEARCH@"
+    '''))
+
     class Runner:
         # Assigned after the class body: `bare = bare` inside it would read
         # the class-local name, not the fixture's.
@@ -574,8 +601,10 @@ if add_label:
         # at, exposed so a test can assert Seeding happened in it.
         work_repo = work
 
-        def run(self, dsn, issues=(), *, review_issues=(), dry_run=False, targets=None, **env):
+        def run(self, dsn, issues=(), *, review_issues=(), owner_issues=(),
+                dry_run=False, targets=None, **env):
             queue_file.write_text(json.dumps({"issues": list(issues)}))
+            search_file.write_text(json.dumps({"issues": list(owner_issues)}))
             stanzas = targets or ({},)
             review_label = stanzas[0].get("labels", {}).get("review", "awaiting-review")
             (tmp_path / f"queue-{review_label}.json").write_text(
@@ -590,6 +619,7 @@ if add_label:
                 {
                     "SELECTOR_JOURNAL_DSN": dsn,
                     "SELECTOR_TRACKER_COMMAND": str(tracker),
+                    "SELECTOR_SEARCH_COMMAND": str(search_command),
                     "TRACEWAKE_TARGETS_FILE": str(self.targets_file),
                     **INSTANCE_ENV,
                     "SELECTOR_SEED_COMMAND": str(seed),

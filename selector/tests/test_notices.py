@@ -280,8 +280,80 @@ def test_the_kinds_that_are_not_failure_shaped_say_nothing():
         ("run.iteration", {"issue": 312, "iteration": 3}),
         ("run.contract", {"issue": 312}),
         ("guardrail.observed", {"cycle": 7}),
+        ("target.unenrolled", unenrolled(new=[])),
     ):
         assert notice(kind, payload) is None, kind
+
+
+# --- Unenrolled-Target warning (#39) ----------------------------------------
+
+
+def unenrolled(**over):
+    payload = {
+        "owner": "acme",
+        "label": "ready-for-agent",
+        "repos": [
+            {
+                "repo": "acme/other",
+                "issues": [
+                    {
+                        "number": 7,
+                        "title": "Do the thing",
+                        "url": "https://github.invalid/acme/other/issues/7",
+                    }
+                ],
+            }
+        ],
+        "new": ["acme/other"],
+        "dry_run": False,
+    }
+    payload.update(over)
+    return payload
+
+
+def test_a_new_unenrolled_gap_is_worth_one_notice():
+    said = notice("target.unenrolled", unenrolled())
+    assert said is not None
+    assert "acme/other" in said.subject
+    assert "acme/other" in said.body
+    assert "#7" in said.body
+    assert "Do the thing" in said.body
+    assert "unenrolled" in said.body.lower() or "no Target" in said.body
+    assert "human" in said.body.lower()
+    assert said.link == "https://github.invalid/acme/other/issues/7"
+
+
+def test_a_standing_unenrolled_gap_is_silent():
+    assert notice("target.unenrolled", unenrolled(new=[])) is None
+
+
+def test_a_dry_run_unenrolled_warning_is_silent():
+    """A dry-run journals the gap so the operator can see it; mail is for
+    the live Cycle that would otherwise leave it silent."""
+    assert notice("target.unenrolled", unenrolled(dry_run=True)) is None
+
+
+def test_a_newly_appearing_repo_names_only_what_is_new():
+    said = notice(
+        "target.unenrolled",
+        unenrolled(
+            repos=[
+                {
+                    "repo": "acme/other",
+                    "issues": [{"number": 7, "title": "Old", "url": "u1"}],
+                },
+                {
+                    "repo": "acme/stray",
+                    "issues": [{"number": 3, "title": "Stray work", "url": "u2"}],
+                },
+            ],
+            new=["acme/stray"],
+        ),
+    )
+    assert said is not None
+    assert "acme/stray" in said.subject
+    assert "Stray work" in said.body
+    assert "acme/other" not in said.body
 
 
 # --- The age floor ----------------------------------------------------------
