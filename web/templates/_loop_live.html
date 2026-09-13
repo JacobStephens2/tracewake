@@ -21,24 +21,30 @@
     {% endif %}
 
     {% if paused is none %}
+    {% if can_control %}
     <p class="pause-control detail">Pause control unavailable while the
        Selector database cannot be read.</p>
+    {% endif %}
     {% elif paused %}
     <aside class="pause-banner terminal-alert" data-selector-pause="paused">
       <div><strong>Selector paused.</strong> Scheduled cycles still inspect
         and journal the queue, but dispatch nothing.</div>
+      {% if can_control %}
       <button type="button" class="btn btn-primary"
               hx-post="{{ resume_url }}"
               hx-target="#live-region"
               hx-swap="outerHTML">Resume dispatch</button>
+      {% endif %}
     </aside>
     {% else %}
+    {% if can_control %}
     <div class="pause-control">
       <button type="button" class="btn btn-error btn-ghost"
               hx-post="{{ pause_url }}"
               hx-target="#live-region"
               hx-swap="outerHTML">Pause dispatch</button>
     </div>
+    {% endif %}
     {% endif %}
 
     {#- The status strip (#156). Unattended operation is a claim, and these four

@@ -1,4 +1,4 @@
-"""Window accounts: passwords, sessions, cookies, CSRF (issue #38, ADR 0028).
+"""Window accounts: passwords, sessions, cookies, CSRF, roles (issues #38 and #40, ADR 0028).
 
 Queries live here rather than in the Journal writer: the window is the only
 reader and writer of `web.accounts` / `web.sessions`. The connection is
@@ -22,7 +22,7 @@ from argon2.exceptions import (
 )
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 import journal
@@ -45,6 +45,15 @@ class CSRFDenied(Exception):
     """A state-changing request arrived without a matching synchronizer token."""
 
 
+class NotAuthorised(Exception):
+    """The session's role cannot use this control."""
+
+
+def refuse() -> HTMLResponse:
+    """The one refusal the window returns for a control the caller cannot use."""
+    return HTMLResponse("not authorised", status_code=403)
+
+
 class AccountExists(Exception):
     """The seeding command was pointed at an email that is already an account."""
 
@@ -65,6 +74,26 @@ class Session:
     token_hash: str
     csrf_token: str
     account: Optional[Account]
+
+
+class RequireRole:
+    """FastAPI dependency: the session must carry this role.
+
+    Callable-instance, attached router-wide so a control added to that
+    router is gated without a per-route reminder (issue #40).
+    """
+
+    def __init__(self, role: str):
+        self.role = role
+
+    def __call__(self, request: Request) -> Account:
+        account = getattr(request.state, "account", None)
+        if account is None or account.role != self.role:
+            raise NotAuthorised()
+        return account
+
+
+require_admin = RequireRole("admin")
 
 
 def cookie_secure() -> bool:
@@ -312,6 +341,13 @@ class RequireSignIn:
             await self.app(scope, receive, send)
             return
         if session is None or session.account is None:
+            # A control POST must not 303 into sign-in with the control as
+            # `next`: after a successful sign-in that would be a redirect
+            # into a success. Refuse instead. Pages still 303.
+            if scope.get("method", "GET") not in ("GET", "HEAD"):
+                response = refuse()
+                await response(scope, receive, send)
+                return
             next_url = path
             query = scope.get("query_string") or b""
             if query:
