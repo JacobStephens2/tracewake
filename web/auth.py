@@ -1,5 +1,5 @@
-"""Window accounts: passwords, sessions, cookies, CSRF, roles, invites
-(issues #38, #40, #41, ADR 0028).
+"""Window accounts: passwords, sessions, cookies, CSRF, roles, invites, reset
+(issues #38, #40, #41, #43, ADR 0028).
 
 Queries live here rather than in the Journal writer: the window is the only
 reader and writer of `web.accounts` / `web.sessions` / `web.account_tokens`.
@@ -37,6 +37,7 @@ _DUMMY_HASH = None
 IDLE = "30 minutes"
 ABSOLUTE = "12 hours"
 INVITE_TTL = "72 hours"
+RESET_TTL = "1 hour"
 TOKEN_BYTES = 32
 ROLES = ("admin", "reader")
 
@@ -76,6 +77,10 @@ class InvalidRole(Exception):
 
 class InviteInvalid(Exception):
     """The invite token is missing, used, or past its expiry."""
+
+
+class ResetInvalid(Exception):
+    """The reset token is missing, used, or past its expiry."""
 
 
 @dataclass(frozen=True)
@@ -168,8 +173,10 @@ def is_public(path: str) -> bool:
     return (
         path == "/healthz"
         or path == "/sign-in"
+        or path == "/forgot"
         or path.startswith("/static/")
         or path.startswith("/invite/")
+        or path.startswith("/reset/")
     )
 
 
@@ -434,6 +441,86 @@ def consume_invite(token: str, password: str) -> int:
         conn.execute(
             "UPDATE web.accounts SET password_hash = %s WHERE id = %s",
             (hashed, account_id),
+        )
+    return account_id
+
+
+def create_reset(email: str) -> Optional[str]:
+    """Mint a reset token for an activated, live account. None otherwise.
+
+    The raw token is returned so the caller can mail it; it is never stored.
+    Unknown, never-activated, and deactivated addresses return None, so the
+    public form cannot tell them apart.
+    """
+    email = email.strip().lower()
+    if not email:
+        return None
+    raw = mint_token()
+    with _tx() as conn:
+        existing = conn.execute(
+            "SELECT id, password_hash, deactivated_at"
+            "  FROM web.accounts WHERE email = %s",
+            (email,),
+        ).fetchone()
+        if existing is None:
+            return None
+        account_id, hashed, deactivated_at = existing
+        if hashed is None or deactivated_at is not None:
+            return None
+        conn.execute(
+            "UPDATE web.account_tokens SET used_at = now()"
+            " WHERE account_id = %s AND purpose = 'reset' AND used_at IS NULL",
+            (account_id,),
+        )
+        conn.execute(
+            "INSERT INTO web.account_tokens"
+            " (token_hash, account_id, purpose, expires_at)"
+            " VALUES (%s, %s, 'reset', now() + %s::interval)",
+            (hash_token(raw), account_id, RESET_TTL),
+        )
+    return raw
+
+
+def reset_is_live(token: str) -> bool:
+    digest = hash_token(token)
+    try:
+        with journal.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM web.account_tokens"
+                " WHERE token_hash = %s AND purpose = 'reset'"
+                "   AND used_at IS NULL AND expires_at > now()",
+                (digest,),
+            ).fetchone()
+    except psycopg.Error:
+        return False
+    return row is not None
+
+
+def consume_reset(token: str, password: str) -> int:
+    """Set the password, stamp used_at, and drop sessions in one transaction."""
+    if not password:
+        raise ResetInvalid()
+    digest = hash_token(token)
+    hashed = hash_password(password)
+    with _tx() as conn:
+        row = conn.execute(
+            "UPDATE web.account_tokens SET used_at = now()"
+            " WHERE token_hash = %s AND purpose = 'reset'"
+            "   AND used_at IS NULL AND expires_at > now()"
+            " RETURNING account_id",
+            (digest,),
+        ).fetchone()
+        if row is None:
+            raise ResetInvalid()
+        account_id = row[0]
+        conn.execute(
+            "UPDATE web.accounts SET password_hash = %s WHERE id = %s",
+            (hashed, account_id),
+        )
+        conn.execute(
+            "DELETE FROM web.sessions"
+            " WHERE account_id = %s",
+            (account_id,),
         )
     return account_id
 
