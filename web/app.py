@@ -17,8 +17,9 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 from typing import Callable, TypeVar
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import markdown as md
 import psycopg
@@ -48,6 +49,7 @@ import targets  # noqa: E402
 import preview  # noqa: E402
 import auth  # noqa: E402
 import host  # noqa: E402
+import mail  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
 # instance publishes its window is a fact about that instance (issue #3),
@@ -110,6 +112,7 @@ def _page(request: Request, name: str, context: dict, **kwargs):
             "static_base": _static_base(request),
             "csrf_token": session.csrf_token if session else "",
             "logout_url": _path(request, "/logout"),
+            "accounts_url": _path(request, "/accounts"),
             "account": account,
             "can_control": account is not None and account.role == "admin",
             **context,
@@ -223,6 +226,143 @@ def logout(request: Request):
     root = request.scope.get("root_path", "") or ""
     response = RedirectResponse(root + "/sign-in", status_code=303)
     auth.clear_session_cookie(response)
+    return response
+
+
+def _mint_anonymous(request: Request):
+    """Give a public form a CSRF session if the visitor has none."""
+    session = getattr(request.state, "session", None)
+    minted = None
+    if session is None:
+        minted = auth.new_anonymous_session()
+        session = auth.load_session(minted)
+        request.state.session = session
+    return minted
+
+
+def _invite_url(request: Request, token: str) -> str:
+    """Absolute redeem URL. Prefer the instance's public origin when set."""
+    public = os.environ.get("SELECTOR_LOOP_URL", "").strip()
+    if public:
+        parsed = urlparse(public)
+        if parsed.scheme and parsed.netloc:
+            root = request.scope.get("root_path", "") or ""
+            return f"{parsed.scheme}://{parsed.netloc}{root}/invite/{token}"
+    return str(request.base_url).rstrip("/") + f"/invite/{token}"
+
+
+def _accounts_page(request: Request, *, error: str | None = None):
+    return _page(request, "accounts.html", {
+        "accounts": auth.list_accounts(),
+        "error": error,
+        "roles": auth.ROLES,
+    })
+
+
+admin_pages = APIRouter(dependencies=[Depends(auth.require_admin)])
+
+
+@admin_pages.get("/accounts", response_class=HTMLResponse)
+def accounts_page(request: Request):
+    return _accounts_page(request)
+
+
+@admin_pages.post("/accounts", dependencies=[Depends(require_csrf)])
+def accounts_invite(
+    request: Request,
+    email: str = Form(""),
+    role: str = Form("reader"),
+):
+    email = email.strip()
+    if not email:
+        return _accounts_page(request, error="An email address is required.")
+    try:
+        mail.command()
+        _, raw = auth.create_invite(email, role)
+    except auth.InvalidRole:
+        return _accounts_page(request, error="Role must be admin or reader.")
+    except auth.AccountExists:
+        return _accounts_page(
+            request, error="That email is already an account.",
+        )
+    except targets.NotConfigured as exc:
+        return _accounts_page(request, error=str(exc))
+    link = _invite_url(request, raw)
+    body = (
+        f"You have been invited to this Tracewake window as {role}.\n\n"
+        f"Set your password at:\n{link}\n\n"
+        "This link works once and expires in about 72 hours.\n"
+    )
+    try:
+        mail.send(
+            to=email.strip().lower(),
+            subject="You're invited to this Tracewake window",
+            link=link,
+            body=body,
+        )
+    except mail.MailFailed as exc:
+        return _accounts_page(request, error=str(exc))
+    root = request.scope.get("root_path", "") or ""
+    return RedirectResponse(root + "/accounts", status_code=303)
+
+
+@admin_pages.post(
+    "/accounts/{account_id}/role", dependencies=[Depends(require_csrf)],
+)
+def accounts_role(
+    request: Request, account_id: int, role: str = Form(""),
+):
+    try:
+        auth.set_role(account_id, role)
+    except auth.InvalidRole:
+        return _accounts_page(request, error="Role must be admin or reader.")
+    root = request.scope.get("root_path", "") or ""
+    return RedirectResponse(root + "/accounts", status_code=303)
+
+
+@admin_pages.post(
+    "/accounts/{account_id}/deactivate", dependencies=[Depends(require_csrf)],
+)
+def accounts_deactivate(request: Request, account_id: int):
+    auth.deactivate(account_id)
+    root = request.scope.get("root_path", "") or ""
+    return RedirectResponse(root + "/accounts", status_code=303)
+
+
+app.include_router(admin_pages)
+
+
+@app.get("/invite/{token}", response_class=HTMLResponse)
+def invite_form(request: Request, token: str):
+    minted = _mint_anonymous(request)
+    live = auth.invite_is_live(token)
+    response = _page(request, "invite.html", {
+        "live": live,
+        "error": None if live else "This invite is not valid.",
+        "token": token,
+    })
+    if minted:
+        auth.set_session_cookie(response, minted)
+    return response
+
+
+@app.post("/invite/{token}", dependencies=[Depends(require_csrf)])
+def invite_redeem(
+    request: Request, token: str, password: str = Form(""),
+):
+    try:
+        account_id = auth.consume_invite(token, password)
+    except auth.InviteInvalid:
+        return _page(request, "invite.html", {
+            "live": False,
+            "error": "This invite is not valid.",
+            "token": token,
+        })
+    presented = auth.session_token_from_request(request)
+    raw = auth.create_session(account_id, replacing=presented)
+    root = request.scope.get("root_path", "") or ""
+    response = RedirectResponse(root + "/", status_code=303)
+    auth.set_session_cookie(response, raw)
     return response
 
 

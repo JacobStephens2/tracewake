@@ -43,7 +43,7 @@
 <div class="container">
   <header>
     <div class="logo">{% block logo %}THE LOOP{% endblock %}</div>
-    <nav aria-label="Navigation">{% block nav %}<a href="/">board</a> <a href="/history">history</a> <a href="/adr">decisions</a>{% endblock %}
+    <nav aria-label="Navigation">{% block nav %}<a href="/">board</a> <a href="/history">history</a> <a href="/adr">decisions</a>{% include "_accounts_nav.html" %}{% endblock %}
       {% if account %}
       <form method="post" action="{{ logout_url }}" class="sign-out">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

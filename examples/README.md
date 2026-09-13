@@ -8,7 +8,8 @@ honest way to show what a filled-in instance looks like is to show a real one.
 **Nothing here is a secret.** These are addresses, paths and account names.
 The GitHub token lives on the box in the file a target's `token_file` names,
 the model credential is minted on the box by a wizard in `wizards/`, and the
-mail relay's credential belongs to whatever `SELECTOR_NOTIFY_COMMAND` runs.
+mail relay's credential belongs to whatever `SELECTOR_NOTIFY_COMMAND` and
+`WINDOW_MAIL_COMMAND` run.
 `selector/tests/test_configuration.py` reads this directory to grade the
 shipping tree against it, so a value that appears here must not appear as a
 default in code.
