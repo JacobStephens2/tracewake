@@ -57,6 +57,7 @@ AUTH = "../web/auth.py"
 AUTH_SUITE = "../web/tests/test_sign_in.py"
 MAIL = "../web/mail.py"
 INVITE_SUITE = "../web/tests/test_invite.py"
+RESET_SUITE = "../web/tests/test_reset.py"
 ROLES_SUITE = "../web/tests/test_roles.py"
 HOST = "../web/host.py"
 HOST_WIDGET = "../web/templates/_host.html"
@@ -1529,6 +1530,78 @@ MUTATIONS = {
     "host-cpu-is-hardcoded-in-the-template": (HOST_WIDGET, HOST_SUITE,
         '      <span class="cell-value">{{ host.cpu }}</span>\n',
         '      <span class="cell-value">0%</span>\n',
+    ),
+
+    # --- Forgot password (#43) ---------------------------------------------
+    #
+    # A leaked table, a reusable link, or a form that talks are the ways
+    # this flow stops being a recovery and becomes an oracle or a takeover.
+
+    # The raw token is stored, so a leaked table is the reset itself.
+    "reset-tokens-stored-plaintext": (AUTH, RESET_SUITE,
+        "            (hash_token(raw), account_id, RESET_TTL),\n",
+        "            (raw, account_id, RESET_TTL),\n",
+    ),
+    # The mail command is not invoked, so the account never receives the link.
+    "reset-skips-the-mail": (WINDOW, RESET_SUITE,
+        "            mail.send(\n"
+        "                to=email.strip().lower(),\n"
+        '                subject="Reset your Tracewake window password",\n'
+        "                link=link,\n"
+        "                body=body,\n"
+        "            )\n",
+        "            pass\n",
+    ),
+    # A used reset can be redeemed again.
+    "reset-tokens-reusable": (AUTH, RESET_SUITE,
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'reset'\"\n"
+        "            \"   AND used_at IS NULL AND expires_at > now()\"\n"
+        "            \" RETURNING account_id\",\n",
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'reset'\"\n"
+        "            \"   AND expires_at > now()\"\n"
+        "            \" RETURNING account_id\",\n",
+    ),
+    # An expired reset still sets a password.
+    "reset-expiry-ignored": (AUTH, RESET_SUITE,
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'reset'\"\n"
+        "            \"   AND used_at IS NULL AND expires_at > now()\"\n"
+        "            \" RETURNING account_id\",\n",
+        "            \"UPDATE web.account_tokens SET used_at = now()\"\n"
+        "            \" WHERE token_hash = %s AND purpose = 'reset'\"\n"
+        "            \"   AND used_at IS NULL\"\n"
+        "            \" RETURNING account_id\",\n",
+    ),
+    # A never-activated account receives a reset, so an unclaimed invite
+    # can be hijacked through the public form.
+    "never-activated-gets-a-reset": (AUTH, RESET_SUITE,
+        "        if hashed is None or deactivated_at is not None:\n"
+        "            return None\n",
+        "        if deactivated_at is not None:\n"
+        "            return None\n",
+    ),
+    # The form names the miss, so it is an account-exists oracle.
+    "reset-response-leaks-unknown": (WINDOW, RESET_SUITE,
+        "    response = _page(request, \"forgot.html\", {\n"
+        "        \"sent\": True,\n"
+        "        \"error\": None,\n"
+        "    })\n",
+        "    response = _page(request, \"forgot.html\", {\n"
+        "        \"sent\": True,\n"
+        "        \"error\": None if raw else \"No account with that address.\",\n"
+        "    })\n",
+    ),
+    # A completed reset leaves other sessions live, so a stolen cookie
+    # still opens the window.
+    "reset-leaves-other-sessions": (AUTH, RESET_SUITE,
+        "        conn.execute(\n"
+        "            \"DELETE FROM web.sessions\"\n"
+        "            \" WHERE account_id = %s\",\n"
+        "            (account_id,),\n"
+        "        )\n",
+        "",
     ),
 }
 

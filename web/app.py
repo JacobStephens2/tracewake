@@ -240,15 +240,15 @@ def _mint_anonymous(request: Request):
     return minted
 
 
-def _invite_url(request: Request, token: str) -> str:
+def _token_url(request: Request, kind: str, token: str) -> str:
     """Absolute redeem URL. Prefer the instance's public origin when set."""
     public = os.environ.get("SELECTOR_LOOP_URL", "").strip()
     if public:
         parsed = urlparse(public)
         if parsed.scheme and parsed.netloc:
             root = request.scope.get("root_path", "") or ""
-            return f"{parsed.scheme}://{parsed.netloc}{root}/invite/{token}"
-    return str(request.base_url).rstrip("/") + f"/invite/{token}"
+            return f"{parsed.scheme}://{parsed.netloc}{root}/{kind}/{token}"
+    return str(request.base_url).rstrip("/") + f"/{kind}/{token}"
 
 
 def _accounts_page(request: Request, *, error: str | None = None):
@@ -287,7 +287,7 @@ def accounts_invite(
         )
     except targets.NotConfigured as exc:
         return _accounts_page(request, error=str(exc))
-    link = _invite_url(request, raw)
+    link = _token_url(request, "invite", raw)
     body = (
         f"You have been invited to this Tracewake window as {role}.\n\n"
         f"Set your password at:\n{link}\n\n"
@@ -330,6 +330,85 @@ def accounts_deactivate(request: Request, account_id: int):
 
 
 app.include_router(admin_pages)
+
+
+@app.get("/forgot", response_class=HTMLResponse)
+def forgot_form(request: Request):
+    minted = _mint_anonymous(request)
+    response = _page(request, "forgot.html", {"sent": False})
+    if minted:
+        auth.set_session_cookie(response, minted)
+    return response
+
+
+@app.post("/forgot", dependencies=[Depends(require_csrf)])
+def forgot_post(request: Request, email: str = Form("")):
+    minted = _mint_anonymous(request)
+    raw = None
+    try:
+        mail.command()
+        raw = auth.create_reset(email)
+    except targets.NotConfigured:
+        raw = None
+    if raw:
+        link = _token_url(request, "reset", raw)
+        body = (
+            "A password reset was requested for this Tracewake window.\n\n"
+            f"Set a new password at:\n{link}\n\n"
+            "This link works once and expires in about an hour. "
+            "If you did not request it, you can ignore this.\n"
+        )
+        try:
+            mail.send(
+                to=email.strip().lower(),
+                subject="Reset your Tracewake window password",
+                link=link,
+                body=body,
+            )
+        except mail.MailFailed:
+            pass
+    # The same page for every address: known, unknown, never-activated.
+    response = _page(request, "forgot.html", {
+        "sent": True,
+        "error": None,
+    })
+    if minted:
+        auth.set_session_cookie(response, minted)
+    return response
+
+
+@app.get("/reset/{token}", response_class=HTMLResponse)
+def reset_form(request: Request, token: str):
+    minted = _mint_anonymous(request)
+    live = auth.reset_is_live(token)
+    response = _page(request, "reset.html", {
+        "live": live,
+        "error": None if live else "This reset is not valid.",
+        "token": token,
+    })
+    if minted:
+        auth.set_session_cookie(response, minted)
+    return response
+
+
+@app.post("/reset/{token}", dependencies=[Depends(require_csrf)])
+def reset_redeem(
+    request: Request, token: str, password: str = Form(""),
+):
+    try:
+        account_id = auth.consume_reset(token, password)
+    except auth.ResetInvalid:
+        return _page(request, "reset.html", {
+            "live": False,
+            "error": "This reset is not valid.",
+            "token": token,
+        })
+    presented = auth.session_token_from_request(request)
+    raw = auth.create_session(account_id, replacing=presented)
+    root = request.scope.get("root_path", "") or ""
+    response = RedirectResponse(root + "/", status_code=303)
+    auth.set_session_cookie(response, raw)
+    return response
 
 
 @app.get("/invite/{token}", response_class=HTMLResponse)

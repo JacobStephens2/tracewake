@@ -1,28 +1,26 @@
 {% extends "base.html" %}
-{% block title %}sign in — Tracewake{% endblock %}
+{% block title %}forgot password — Tracewake{% endblock %}
 {% block content %}
 <header>
   <p class="eyebrow">the window</p>
-  <h1>Sign in</h1>
-  <p class="lede">The Journal is behind an account. There is no registration.</p>
+  <h1>Forgot password</h1>
+  <p class="lede">Enter the email on the account. If it has a password, a reset link is sent there.</p>
 </header>
 <section class="card">
   {% if error %}
   <p class="form-error">{{ error }}</p>
   {% endif %}
+  {% if sent %}
+  <p>If that address has an account, a reset link is on its way.</p>
+  {% else %}
   <form method="post" action="" class="sign-in">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="next" value="{{ next_url }}">
     <label>
       Email
       <input type="email" name="email" autocomplete="username" required autofocus>
     </label>
-    <label>
-      Password
-      <input type="password" name="password" autocomplete="current-password" required>
-    </label>
-    <button type="submit" class="demo-btn">Sign in</button>
+    <button type="submit" class="demo-btn">Send reset link</button>
   </form>
-  <p class="hint"><a href="/forgot">Forgot your password?</a></p>
+  {% endif %}
 </section>
 {% endblock %}
