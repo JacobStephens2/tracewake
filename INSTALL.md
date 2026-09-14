@@ -1,55 +1,42 @@
 # Installing Tracewake
 
 This guide walks an operator from an empty machine to a running instance of
-Tracewake and a verified first dry-run cycle. It covers both supported architectural
-shapes:
+Tracewake and a verified first dry-run cycle. The product teaches one setup:
+**Single-Host** (ADR 0019, ADR 0029). One Linux machine is the Host. It runs
+the Selector, the PostgreSQL Journal, the window, and the Box locally via
+`box-sources/local.sh`. Local dispatch is gated by `loop/assert-credentials.sh`.
 
-1. **Two-Machine Shape**: A **Controller** host running the Selector, PostgreSQL Journal,
-   and Web window, connected over SSH to a dedicated **Box** host that runs the
-   microVM Execution Boundary and agent processes.
-2. **Single-Machine Shape**: A single Linux machine or developer workstation running both
-   the Controller and the Box locally via `box-sources/local.sh` (ADR 0019).
+A remote Box remains possible as a substituted `SELECTOR_BOX_COMMAND`
+(`box-sources/ssh.sh` stays in the tree and in the suite). This guide does not
+describe standing that machine up.
 
 ---
 
 ## 1. System Requirements
 
-### Controller Requirements
-- **OS**: Linux (Rocky Linux 9, Ubuntu 22.04+, Debian 12+, or Fedora).
+One machine, with both the controller's and the Box's needs:
+
+- **OS**: Linux with hardware virtualization support (`/dev/kvm` present).
+  Ubuntu 22.04 LTS or 24.04 LTS recommended. Rocky Linux 9, Debian 12+, or
+  Fedora also work for the controller half; `sbx` itself wants Ubuntu 24.04
+  or later.
 - **PostgreSQL**: Version 14 or higher.
 - **Python**: Version 3.9 or higher with `python3-venv` and `pip`.
 - **Git & GitHub CLI**: `git` 2.30+ and `gh` 2.40+.
-- **Network**: Egress access to your forge (e.g. `api.github.com`) and local socket or
-  TCP access to PostgreSQL.
-
-### Box Requirements (Two-Machine or Single-Machine)
-- **OS**: Linux with hardware virtualization support (`/dev/kvm` present). Ubuntu 22.04
-  LTS or 24.04 LTS recommended.
-- **Virtualization / MicroVM Boundary**: Docker Sandboxes (`sbx`) installed and working.
+- **Virtualization / MicroVM Boundary**: Docker Sandboxes (`sbx`) installed
+  and working.
 - **Agent CLI**:
   - For Claude: `@anthropic-ai/claude-code` CLI installed and authenticated via a
     subscription token (`CLAUDE_CODE_OAUTH_TOKEN`, ADR 0020).
   - For Codex: `@openai/codex` CLI installed and authenticated (ADR 0025).
-- **SSH Access** (*Two-machine shape only*): Key-based SSH access from the Controller user
-  to an unprivileged `loop` user on the Box host.
+- **Network**: Egress access to your forge (e.g. `api.github.com`) and local
+  socket or TCP access to PostgreSQL.
 
 ---
 
-## 2. Choosing Your Architectural Shape
-
-| Decision Factor | Two-Machine Shape | Single-Machine Shape |
-| --- | --- | --- |
-| **Use Case** | Production unattended automation, team infrastructure, always-on servers. | Developer laptops, single-operator experimentation, fast local evaluation. |
-| **Boundary Isolation** | Strong physical isolation: Controller (holding tracker tokens and Journal) and Box (running arbitrary untrusted agent code) are separate VMs. | Logical isolation: MicroVM boundary (`sbx`) runs on the same machine, gated by `assert-credentials.sh`. |
-| **Box Driver** | `SELECTOR_BOX_COMMAND="box-sources/ssh.sh"` | `SELECTOR_BOX_COMMAND="box-sources/local.sh"` |
-| **Box Host Setting** | `SELECTOR_BOX_HOST="loop.example.com"` (or hostname/IP) | `SELECTOR_BOX_HOST="local"` (required by preflight validator). |
-
----
-
-## 3. Step-by-Step Installation
+## 2. Step-by-Step Installation
 
 ### Step 1: Clone Tracewake
-Clone the Tracewake repository onto your Controller machine:
 
 ```bash
 git clone <repository-url> /srv/tracewake
@@ -114,12 +101,12 @@ environments.
 ### Step 4: Prepare Target Workspaces
 
 Tracewake works target repositories without polluting them. You must establish two
-clean checkouts of the target repository:
+clean checkouts of the target repository, both on this Host:
 
-1. **The Work Checkout (`work_repo`)**: Located on the Controller. Used exclusively by
-   the Selector to run `seed-run.sh` and push the initial branch.
-2. **The Box Checkout (`box_repo`)**: Located on the Box (or locally in single-machine
-   mode). Used exclusively by the Run script to execute the microVM boundary and agent.
+1. **The Work Checkout (`work_repo`)**: Used exclusively by the Selector to run
+   `seed-run.sh` and push the initial branch.
+2. **The Box Checkout (`box_repo`)**: Used exclusively by the Run script to
+   execute the microVM boundary and agent.
 
 *Important: Do not point either path at your active personal editor checkout! A dispatch
 switches branches and pushes commits.*
@@ -138,10 +125,11 @@ git clone git@github.com:my-org/my-app.git /srv/workspaces/box/my-app
 
 ### Step 5: Configure Credentials
 
-Tracewake enforces strict credential isolation (ADR 0009, ADR 0020).
+Tracewake enforces strict credential isolation (ADR 0009, ADR 0020). Single-Host
+dispatch will not start until `loop/assert-credentials.sh` exits 0.
 
-#### 1. Controller GitHub Authentication
-The Controller reads issues and checks rulesets using the `gh` CLI:
+#### 1. Host GitHub Authentication
+The Selector reads issues and checks rulesets using the `gh` CLI:
 ```bash
 gh auth login
 ```
@@ -157,8 +145,8 @@ sudo mkdir -p /etc/tracewake/tokens
 sudo chown -R "$USER:$USER" /etc/tracewake
 ```
 
-On the Box (or local machine), create a dedicated GitHub Fine-Grained Personal Access
-Token scoped strictly to the target repository (ADR 0009):
+Create a dedicated GitHub Fine-Grained Personal Access Token scoped strictly to
+the target repository (ADR 0009):
 - **Repository access**: Only select the target repository (e.g. `my-org/my-app`).
 - **Permissions**:
   - `Contents`: Read & write
@@ -203,15 +191,19 @@ Run the mechanical credential audit:
 cd /srv/tracewake/loop
 ./assert-credentials.sh
 ```
-*The command must exit 0 with all checks green.*
+*The command must exit 0 with all checks green. Local dispatch uses this same
+check as a preflight gate (ADR 0019).*
 
 ---
 
 ### Step 6: Configure Tracewake
 
-An instance is configured through two files:
+An instance is configured through two files on this Host:
 1. `/etc/tracewake/tracewake.env` (Environment variables)
 2. `/etc/tracewake/targets.toml` (Target declarations)
+
+Nothing in the product fills these in. A missing required value stops the cycle
+at preflight, naming the key.
 
 #### A. Configure `targets.toml`
 Create `/etc/tracewake/targets.toml`:
@@ -236,7 +228,9 @@ human = "ready-for-human"
 
 #### B. Configure `tracewake.env`
 
-##### Option 1: Single-Machine Shape (Local Execution)
+Single-Host Mode (ADR 0019). `SELECTOR_BOX_COMMAND` defaults to
+`box-sources/local.sh`; it is written here so the file is the whole instance.
+
 ```bash
 # /etc/tracewake/tracewake.env
 export TRACEWAKE_TARGETS_FILE="/etc/tracewake/targets.toml"
@@ -263,37 +257,9 @@ export SELECTOR_PROTECTED_PATHS="guardrail-sources/paths.txt"
 export SELECTOR_SEARCH_OWNER="my-org"
 ```
 
-##### Option 2: Two-Machine Shape (Remote Box via SSH)
-```bash
-# /etc/tracewake/tracewake.env
-export TRACEWAKE_TARGETS_FILE="/etc/tracewake/targets.toml"
-export SELECTOR_JOURNAL_DSN="dbname=selector"
-
-# Remote Box over SSH
-export SELECTOR_BOX_HOST="loop.example.com"
-export SELECTOR_BOX_USER="loop"
-export SELECTOR_BOX_COMMAND="box-sources/ssh.sh"
-export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts.sh"
-export SELECTOR_BOX_PROGRESS_COMMAND="box-sources/progress.sh"
-export SELECTOR_BOX_LOOP="/home/loop/loop"
-
-# Web Window URL & Mail Surface
-export SELECTOR_LOOP_URL="https://tracewake.example.com"
-export SELECTOR_NOTIFY_COMMAND="/srv/tracewake/scripts/send-email.sh"
-
-# Write Protection / Guardrail
-export SELECTOR_PROTECTED_REPO="my-org/tracewake-config"
-export SELECTOR_PROTECTED_REF="refs/heads/main"
-export SELECTOR_PROTECTED_PATHS="guardrail-sources/paths.txt"
-
-# Unenrolled-Target search: the account whose repositories a Cycle
-# searches for a Handover label with no Target stanza. Required; no default.
-export SELECTOR_SEARCH_OWNER="my-org"
-```
-
 ---
 
-## 4. Run Your First Dry-Run Cycle
+## 3. Run Your First Dry-Run Cycle
 
 A dry-run cycle exercises the entire configuration, reads the tracker, checks
 allowlists and eligibility, queries the Box and Guardrail, and appends the reasoning
@@ -326,7 +292,7 @@ to the Journal without modifying git branches or opening pull requests.
 
 ---
 
-## 5. Starting the Web Window
+## 4. Starting the Web Window
 
 The Web window renders the real-time Queue Board and Run history. It requires
 sign-in (ADR 0028). There is no registration page: seed the first admin before
@@ -358,7 +324,7 @@ the first request.
 
 ---
 
-## 6. Automating with Systemd (Unattended Operation)
+## 5. Automating with Systemd (Unattended Operation)
 
 To run Tracewake continuously without human supervision, install the systemd units
 provided in `deploy/systemd/`:

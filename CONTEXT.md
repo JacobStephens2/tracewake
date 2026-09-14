@@ -86,7 +86,7 @@ files that configure them - `tracewake.env` and `targets.toml`. Everything an
 instance knows that Tracewake does not - which tracker, whose Handover counts,
 where the box is, how mail is sent - lives in those two files, and nothing in
 the code has a default for any of it. An instance has no name of its own;
-ETA's is "ETA's Tracewake". `examples/` is one, filled in.
+ETA's is "ETA's Tracewake".
 _Avoid_: deployment, tenant, install, the Loop
 
 **Window Account**:

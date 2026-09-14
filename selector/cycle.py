@@ -38,7 +38,7 @@ The **instance** is environment - the tracker command, the box, the Journal,
 the Seeding command, the issue command; the **targets** are stanzas in
 `targets.toml`, one per repository, each carrying its own labels, labeler
 allowlist, checkouts, repository token, guest image, review cap and landing
-mode. See README.md, and `examples/` for both files filled in.
+mode. See README.md. INSTALL.md shows the Single-Host shape of both files.
 
 Without `--target` every declared target is worked, each with its own
 `cycle.started`/`cycle.finished` pair: a second repository is a second stanza,

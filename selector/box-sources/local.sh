@@ -4,7 +4,8 @@
 #
 #   local.sh <branch> <task-ref>
 #
-# Sibling to box-sources/ssh.sh for single-host instances (ADR 0019). Prints the
+# The product-default SELECTOR_BOX_COMMAND (ADR 0029). Sibling to
+# box-sources/ssh.sh for Single-Host instances (ADR 0019). Prints the
 # Run's own stdout report - the LOOP_RUN_* block run.sh ends with - and exits
 # with the Run's exit code.
 #

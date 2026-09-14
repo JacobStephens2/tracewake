@@ -4,8 +4,10 @@
 #
 #   ssh.sh <branch> <task-ref>
 #
-# The default SELECTOR_BOX_COMMAND. Prints the Run's own stdout report - the
-# LOOP_RUN_* block run.sh ends with - and exits with the Run's exit code.
+# The remote-Box SELECTOR_BOX_COMMAND. An instance substitutes this for
+# box-sources/local.sh when the Box is a different machine (ADR 0004,
+# ADR 0029). Prints the Run's own stdout report - the LOOP_RUN_* block
+# run.sh ends with - and exits with the Run's exit code.
 #
 # It blocks for the length of the Run, and that is the point. The box persists
 # no record of a Run: run.sh prints its summary and exits, so the only moment
