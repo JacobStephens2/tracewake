@@ -1,6 +1,6 @@
 """Run history (#160), at HTTP level over a seeded Journal.
 
-The history is the half of /loop that owes nothing to GitHub. Every Run it
+The history is the half of the board that owes nothing to GitHub. Every Run it
 shows is read back from rows the Selector wrote, which is what makes it
 outlive the branch the Run worked on: a merged-and-deleted branch takes its
 tree with it, and the Journal keeps the title, the issue, the bound the Run
@@ -65,7 +65,7 @@ def history(body):
 def test_the_history_renders_from_the_journal_alone(db, tracker):
     """The first acceptance criterion: a seeded Journal is the whole input.
 
-    The board on /loop reads the tracker at request time, so /loop is only as
+    The board on `/` reads the tracker at request time, so `/` is only as
     available as GitHub. The history is not - and what proves it is that no
     tracker command was asked anything, not that the page happened to render.
     """
@@ -129,7 +129,7 @@ def test_a_run_shorter_than_a_minute_is_reported_in_seconds(db):
 def test_the_run_in_flight_is_not_history_yet(db):
     """History is what has ended. A Run still going has no bound, no duration
     and no Proposal, so a card for it here would be three empty cells - and
-    /loop already shows it, live, on the panel built for it."""
+    the board already shows it, live, on the panel built for it."""
     with journal.connect(db) as conn:
         _run(conn, issue=645, ended="4 hours")
         _run(conn, issue=652, started="1 hour", ended=None)
@@ -168,7 +168,7 @@ def test_a_run_buried_under_later_journal_rows_is_still_listed(db):
     """The failure this guards against is silent and total: the Run renders
     today, and one busy week later the same page renders without it and says
     nothing. Three hundred rows is past `journal.events`'s 200-row default,
-    which is what /loop reads and what this page must not."""
+    which is what the board reads and what this page must not."""
     with journal.connect(db) as conn:
         _run(conn, issue=600, started="30 hours", ended="29 hours")
         for n in range(300):
@@ -216,7 +216,7 @@ def test_a_history_inside_the_window_says_nothing_about_older_runs(db):
 
 # --- Liveness ---------------------------------------------------------------
 #
-# The history is a terminal page like /loop, so it is live like /loop (#159):
+# The history is a terminal page like the board, so it is live like it (#159):
 # a Run that ends while it is open appears on it without a reload. The only
 # thing that differs is which region gets re-fetched.
 
@@ -296,7 +296,7 @@ def budget(body):
 
 def test_the_budget_tile_shows_review_capacity_remaining(tracker):
     tracker.queue("awaiting-review", [tracker.issue(640), tracker.issue(641)])
-    cell = budget(client.get("/loop").text)
+    cell = budget(client.get("/").text)
     assert "18 remaining" in cell
     assert "2 of 20" in cell
     assert "awaiting review" in cell
@@ -304,7 +304,7 @@ def test_the_budget_tile_shows_review_capacity_remaining(tracker):
 
 def test_a_spent_budget_reads_as_zero_remaining(tracker):
     tracker.queue("awaiting-review", [tracker.issue(i) for i in range(20)])
-    cell = budget(client.get("/loop").text)
+    cell = budget(client.get("/").text)
     assert "0 remaining" in cell
     assert "20 of 20" in cell
 
@@ -313,6 +313,6 @@ def test_the_budget_is_unknown_rather_than_full_when_the_tracker_is_down(tracker
     """The direction that matters. An unreadable tracker defaulting to '20
     remaining' would be the page inventing capacity it cannot see."""
     tracker.fail("gh: could not resolve host github.com")
-    cell = budget(client.get("/loop").text)
+    cell = budget(client.get("/").text)
     assert "unknown" in cell
     assert "the tracker could not be read." in cell

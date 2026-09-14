@@ -1,4 +1,4 @@
-"""The /loop window at HTTP level: FastAPI test client over a seeded Journal."""
+"""The home board at HTTP level: FastAPI test client over a seeded Journal."""
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -21,7 +21,7 @@ def test_loop_page_renders_journal_newest_first(db):
     with journal.connect(db) as conn:
         journal.append(conn, "cycle.skipped", {"reason": "cycle-in-progress"})
         journal.append(conn, "run.dispatched", {"issue": 646})
-    resp = client.get("/loop")
+    resp = client.get("/")
     assert resp.status_code == 200
     assert "terminal.css" in resp.text
     body = resp.text
@@ -34,7 +34,7 @@ def test_loop_page_serves_when_journal_is_unreachable(monkeypatch):
     reached cannot validate a session either, so the visitor is sent to
     sign-in rather than served a 500."""
     monkeypatch.setenv("SELECTOR_JOURNAL_DSN", "dbname=selector_test_no_such_db")
-    resp = client.get("/loop", follow_redirects=False)
+    resp = client.get("/", follow_redirects=False)
     assert resp.status_code == 303
     assert "/sign-in" in resp.headers["location"]
 
@@ -53,7 +53,7 @@ def test_home_renders_queue_board():
 
 
 def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
-    token = csrf_from(client.get("/loop").text)
+    token = csrf_from(client.get("/").text)
     paused = client.post(
         "/loop/pause",
         data={"csrf_token": token},
@@ -63,9 +63,9 @@ def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
     assert paused.status_code == 200
     assert 'data-selector-pause="paused"' in paused.text
     assert "Resume dispatch" in paused.text
-    assert 'data-selector-pause="paused"' in client.get("/loop").text
+    assert 'data-selector-pause="paused"' in client.get("/").text
 
-    token = csrf_from(client.get("/loop").text)
+    token = csrf_from(client.get("/").text)
     resumed = client.post(
         "/loop/resume",
         data={"csrf_token": token},
@@ -75,12 +75,12 @@ def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
     assert resumed.status_code == 200
     assert 'data-selector-pause="paused"' not in resumed.text
     assert "Pause dispatch" in resumed.text
-    assert 'data-selector-pause="paused"' not in client.get("/loop").text
+    assert 'data-selector-pause="paused"' not in client.get("/").text
 
 
 def test_the_pause_control_posts_back_to_the_same_mounted_instance(db):
     prefixed = TestClient(app, root_path="/loop-staging")
-    body = prefixed.get("/loop").text
+    body = prefixed.get("/").text
 
     assert 'hx-post="/loop-staging/loop/pause"' in body
 
@@ -131,7 +131,7 @@ def test_the_cycle_card_shows_the_pick_and_every_skip_with_its_reason(db):
                 "dry_run": True,
             },
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "Widen the sync window" in body
     assert "The nightly sync script" in body
     assert "blocked-by-open-dependency" in body
@@ -158,7 +158,7 @@ def test_a_cycle_that_picked_nothing_says_why(db):
                 "dry_run": True,
             },
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "picked nothing" in body
     assert "run-in-flight" in body
 
@@ -182,7 +182,7 @@ def test_a_paused_cycle_card_says_paused(db):
             },
         )
 
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "picked nothing" in body
     assert "paused" in body
 
@@ -192,7 +192,7 @@ def test_events_outside_a_cycle_still_reach_the_page(db):
     `psql` INSERT with no cycle id must not vanish behind the cards."""
     with journal.connect(db) as conn:
         journal.append(conn, "test.hand", {"note": "appended by hand"})
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "test.hand" in body
     assert "appended by hand" in body
 
@@ -212,7 +212,7 @@ def test_a_cycle_cut_in_half_by_the_read_limit_is_not_rendered(db):
                 "detail": "from a cycle whose start scrolled off the page",
             },
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "from a cycle whose start scrolled off" not in body.split("Every event")[0]
     assert "from a cycle whose start scrolled off" in body, (
         "the raw event table still shows it"
@@ -244,7 +244,7 @@ def test_a_run_in_flight_has_a_card_of_its_own(db):
     with journal.connect(db) as conn:
         cycle = journal.append(conn, "cycle.started", {"dry_run": False})
         _dispatch_row(conn, cycle)
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "in flight" in body
     assert "loop/645-the-nightly-sync-script" in body
     assert "Widen the sync window" in body
@@ -272,7 +272,7 @@ def test_the_card_ends_showing_its_proposal_link(db):
                 "proposal": "https://github.invalid/acme/widgets/pull/12",
             },
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     runs = body.split("<h2>Cycles</h2>")[0]
     assert 'class="run run-in-flight"' not in runs
     assert "iteration-cap" in runs
@@ -294,7 +294,7 @@ def test_a_retry_is_its_own_card(db):
              "proposal": "https://github.invalid/acme/widgets/pull/12"},
         )
         _dispatch_row(conn, cycle, attempt=2)
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert runs.count('<section class="run') == 2
     assert 'class="run run-in-flight"' in runs
     assert "agent-failed" in runs
@@ -310,7 +310,7 @@ def test_a_dispatch_that_started_no_run_says_so(db):
             {"cycle": cycle, "issue": 645, "attempt": 1,
              "outcome": "dispatch-failed", "error": "ssh: no route to host"},
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "no Run was started" in body
     assert "ssh: no route to host" in body
 
@@ -331,7 +331,7 @@ def test_a_returned_issue_is_marked_on_the_skip_that_returned_it(db):
             {"cycle": cycle, "number": 596, "reason": "missing-section",
              "added_label": "needs-info", "removed_label": "ready-for-agent"},
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "commented, swapped to needs-info" in body
 
 
@@ -347,7 +347,7 @@ def test_a_return_that_failed_is_not_shown_as_a_return(db):
             conn, "issue.return-failed",
             {"cycle": cycle, "number": 596, "error": "GitHub refused the label swap"},
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "could not hand it back" in body
     assert "GitHub refused the label swap" in body
     assert "commented, swapped to needs-info" not in body
@@ -362,7 +362,7 @@ def test_a_run_whose_dispatch_scrolled_off_the_page_is_not_rendered(db):
             {"cycle": 999999, "issue": 111, "attempt": 1,
              "outcome": "iteration-cap", "proposal": "https://example.invalid/pull/1"},
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "<h2>Runs</h2>" not in body
     assert "111" in body, "the raw event table still shows it"
 
@@ -394,7 +394,7 @@ def test_a_green_run_shows_the_awaiting_review_badge(db):
              "label": "awaiting-review", "checks": "green",
              "proposal": "https://github.invalid/acme/widgets/pull/12"},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert '<span class="badge badge-awaiting-review">awaiting-review</span>' in runs
     assert "waiting on you" in runs
 
@@ -410,7 +410,7 @@ def test_a_red_run_names_the_failing_checks_on_its_card(db):
              "label": "ready-for-human", "checks": "red",
              "failing": ["phpunit", "lint"]},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert '<span class="badge badge-handed-to-human">ready-for-human</span>' in runs
     assert "phpunit" in runs and "lint" in runs
 
@@ -442,7 +442,7 @@ def test_a_run_whose_checks_never_ran_is_not_called_red(db):
             {"cycle": cycle, "issue": 645, "attempt": 1,
              "label": "ready-for-human", "checks": "none", "failing": []},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "checks are red" not in runs
     assert "No check ran" in runs
 
@@ -461,7 +461,7 @@ def test_a_route_row_with_no_outcome_falls_back_to_the_bound(db):
             {"cycle": cycle, "issue": 645, "attempt": 1,
              "label": "ready-for-human", "checks": "red", "failing": []},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert ">None<" not in runs
     assert "iteration-cap" in runs
 
@@ -478,7 +478,7 @@ def test_a_run_waiting_on_a_retry_says_so(db):
             {"cycle": cycle, "issue": 645, "attempt": 1, "of": 2,
              "outcome": "agent-failed"},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert '<span class="badge badge-retrying">retrying</span>' in runs
     assert "ready-for-agent" in runs
 
@@ -493,7 +493,7 @@ def test_a_given_up_run_shows_the_human_label(db):
             {"cycle": cycle, "issue": 645, "attempt": 2,
              "label": "ready-for-human", "outcome": "agent-failed"},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert '<span class="badge badge-given-up">ready-for-human</span>' in runs
     assert "will not be dispatched" in runs
 
@@ -518,7 +518,7 @@ def test_a_route_is_paired_to_its_own_attempt(db):
             {"cycle": cycle, "issue": 645, "attempt": 2,
              "label": "ready-for-human", "outcome": "agent-failed"},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert runs.count('<section class="run') == 2
     # Newest first, so the given-up card is the one above the retried one.
     given, retried = runs.split('<section class="run')[1:3]
@@ -533,7 +533,7 @@ def test_an_unrouted_run_shows_no_label_badge(db):
         cycle = journal.append(conn, "cycle.started", {"dry_run": False})
         _dispatch_row(conn, cycle)
         _ended(conn, cycle)
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "badge-awaiting-review" not in runs
     assert "badge-handed-to-human" not in runs
 
@@ -551,7 +551,7 @@ def test_a_no_proposal_run_reads_as_no_proposal_not_as_its_bound(db):
             {"cycle": cycle, "issue": 645, "attempt": 1, "of": 2,
              "outcome": "no-proposal"},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "no-proposal" in runs
     assert "iteration-cap" not in runs
 
@@ -592,7 +592,7 @@ def test_iterations_appear_on_the_card_of_the_run_in_flight(db):
         _iteration_row(conn, cycle, 1)
         _iteration_row(conn, cycle, 2, noop=True, agent_exit=124,
                        exit_note="killed at its 900s wall clock")
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert 'class="run run-in-flight"' in runs
     assert "killed at its 900s wall clock" in runs
     assert "no-op" in runs
@@ -607,7 +607,7 @@ def test_iterations_read_in_the_order_the_run_ran_them(db):
         _iteration_row(conn, cycle, 1, head_after="aaaaaaaaaaaa")
         _iteration_row(conn, cycle, 2, head_after="bbbbbbbbbbbb")
         _iteration_row(conn, cycle, 3, head_after="cccccccccccc")
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert runs.index("aaaaaaaaaaaa") < runs.index("bbbbbbbbbbbb") < \
         runs.index("cccccccccccc")
 
@@ -627,7 +627,7 @@ def test_an_iteration_is_shown_on_the_run_that_produced_it(db):
         )
         _dispatch_row(conn, cycle, attempt=2)
         _iteration_row(conn, cycle, 1, attempt=2, head_after="bbbbbbbbbbbb")
-    cards = client.get("/loop").text.split("<h2>Cycles</h2>")[0].split(
+    cards = client.get("/").text.split("<h2>Cycles</h2>")[0].split(
         '<section class="run'
     )[1:]
     assert len(cards) == 2
@@ -649,7 +649,7 @@ def test_a_run_whose_progress_log_could_not_be_read_says_so(db):
              "branch": "loop/645-the-nightly-sync-script",
              "error": "no Progress Log at /home/loop/tourbot/PROGRESS.md"},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "could not be read" in runs
     assert "no Progress Log at /home/loop/tourbot/PROGRESS.md" in runs
 
@@ -662,7 +662,7 @@ def test_a_watch_failure_alone_is_not_a_run(db):
             conn, "run.watch-failed",
             {"issue": 645, "attempt": 1, "error": "the box did not answer"},
         )
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert '<section class="run' not in runs
 
 
@@ -707,7 +707,7 @@ def _running_timer(monkeypatch, tmp_path):
 
 def test_the_strip_shows_review_capacity(tracker):
     tracker.queue("awaiting-review", [tracker.issue(640), tracker.issue(641)])
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "18 remaining" in cell
     assert "2 of 20" in cell
     assert "awaiting review" in cell
@@ -716,7 +716,7 @@ def test_the_strip_shows_review_capacity(tracker):
 def test_the_strip_says_idle_when_review_cap_reached(db, tracker, monkeypatch, tmp_path):
     _running_timer(monkeypatch, tmp_path)
     tracker.queue("awaiting-review", [tracker.issue(i) for i in range(20)])
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "idle - review cap reached" in cell
     assert "0 remaining" in cell
 
@@ -724,14 +724,14 @@ def test_the_strip_says_idle_when_review_cap_reached(db, tracker, monkeypatch, t
 def test_the_strip_names_the_run_in_flight(db, dispatch, monkeypatch, tmp_path):
     _running_timer(monkeypatch, tmp_path)
     dispatch(db, 646, outcome=None)
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "in flight" in cell
     assert "646" in cell
 
 
 def test_the_strip_says_idle_when_no_run_is_in_flight(db, monkeypatch, tmp_path):
     _running_timer(monkeypatch, tmp_path)
-    assert "idle" in strip(client.get("/loop").text)
+    assert "idle" in strip(client.get("/").text)
 
 
 def test_a_selector_that_cannot_run_does_not_read_as_idle(db, monkeypatch, tmp_path):
@@ -742,7 +742,7 @@ def test_a_selector_that_cannot_run_does_not_read_as_idle(db, monkeypatch, tmp_p
         "SELECTOR_TIMER_COMMAND",
         _timer_command(tmp_path, "ActiveState=inactive\nNextElapseUSecRealtime=n/a"),
     )
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "idle" not in cell
     assert "nothing will start a cycle" in cell
 
@@ -756,7 +756,7 @@ def test_a_run_in_flight_outranks_a_timer_that_is_down(db, dispatch, monkeypatch
         _timer_command(tmp_path, "ActiveState=inactive\nNextElapseUSecRealtime=n/a"),
     )
     dispatch(db, 646, outcome=None)
-    assert "in flight: #646" in strip(client.get("/loop").text)
+    assert "in flight: #646" in strip(client.get("/").text)
 
 
 def test_the_strip_shows_the_next_cycle_the_timer_will_fire(db, monkeypatch, tmp_path):
@@ -768,7 +768,7 @@ def test_the_strip_shows_the_next_cycle_the_timer_will_fire(db, monkeypatch, tmp
         ),
     )
     # systemd answers in the box's UTC; the page shows the operator's clock.
-    assert "Thu 2026-08-27 10:31:00 EDT" in strip(client.get("/loop").text)
+    assert "Thu 2026-08-27 10:31:00 EDT" in strip(client.get("/").text)
 
 
 def test_a_timer_that_is_not_running_is_said_so_rather_than_left_blank(
@@ -780,7 +780,7 @@ def test_a_timer_that_is_not_running_is_said_so_rather_than_left_blank(
         "SELECTOR_TIMER_COMMAND",
         _timer_command(tmp_path, "ActiveState=inactive\nNextElapseUSecRealtime=n/a"),
     )
-    assert "not running" in strip(client.get("/loop").text).lower()
+    assert "not running" in strip(client.get("/").text).lower()
 
 
 def test_the_page_still_renders_when_the_timer_cannot_be_read(
@@ -789,7 +789,7 @@ def test_the_page_still_renders_when_the_timer_cannot_be_read(
     monkeypatch.setenv(
         "SELECTOR_TIMER_COMMAND", _timer_command(tmp_path, "", exit_code=1)
     )
-    resp = client.get("/loop")
+    resp = client.get("/")
     assert resp.status_code == 200
     assert "unknown" in strip(resp.text).lower()
 
@@ -806,7 +806,7 @@ def test_the_box_card_shows_the_scripts_hash_and_the_agent_version(db):
                 "agent_version": "2.1.221 (Claude Code)",
             },
         )
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "8c1f3a90d2" in cell
     assert "2.1.221 (Claude Code)" in cell
     # The guest template, and it is asserted separately from the agent for a
@@ -822,7 +822,7 @@ def test_the_box_card_shows_the_newest_observation(db):
     with journal.connect(db) as conn:
         journal.append(conn, "box.observed", {"scripts_hash": "olderhash1"})
         journal.append(conn, "box.observed", {"scripts_hash": "newerhash2"})
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "newerhash2" in cell
     assert "olderhash1" not in cell
 
@@ -832,7 +832,7 @@ def test_a_fact_the_box_did_not_report_is_blank_rather_than_guessed(db):
         journal.append(
             conn, "box.observed", {"scripts_hash": "deadbeef01", "agent_version": None}
         )
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "deadbeef01" in cell
     assert "not reported" in cell
 
@@ -869,7 +869,7 @@ def test_the_box_card_shows_when_the_credential_expires_and_what_is_left(db):
         .astimezone(ZoneInfo("America/New_York"))
         .strftime("%Y-%m-%d %H:%M:%S %Z")
     )
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert shown in cell
     assert "6h 19m left" in cell or "6h 20m left" in cell
 
@@ -885,7 +885,7 @@ def test_the_remaining_time_is_measured_from_the_request_not_from_the_read(db):
             "box.observed",
             {"credential_expires_at": _expiring_in(3600)},
         )
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "59m" in cell or "1h 0m" in cell
 
 
@@ -899,7 +899,7 @@ def test_an_expired_credential_is_visibly_distinct_from_a_live_one(db):
             "box.observed",
             {"scripts_hash": "8c1f3a90d2", "credential_expires_at": lapsed},
         )
-    body = client.get("/loop").text
+    body = client.get("/").text
     cell = strip(body)
     assert "expired" in cell.lower()
     # Distinct in the markup as well as in the words: the alarm class is what
@@ -925,7 +925,7 @@ def test_a_live_credential_does_not_raise_the_alarm(db):
             "box.observed",
             {"scripts_hash": "8c1f3a90d2", "credential_expires_at": _expiring_in(28800)},
         )
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "expired" not in cell.lower()
 
 
@@ -935,7 +935,7 @@ def test_a_box_that_did_not_report_an_expiry_says_so_rather_than_assuming(db):
     other would assert a working login nobody observed."""
     with journal.connect(db) as conn:
         journal.append(conn, "box.observed", {"scripts_hash": "deadbeef01"})
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "expired" not in cell.lower()
     assert "not reported" in cell
 
@@ -948,18 +948,18 @@ def test_an_unparsable_expiry_is_left_unknown_rather_than_called_expired(db):
         journal.append(
             conn, "box.observed", {"credential_expires_at": "sometime next Tuesday"}
         )
-    cell = strip(client.get("/loop").text)
+    cell = strip(client.get("/").text)
     assert "expired" not in cell.lower()
 
 
 def test_a_box_that_could_not_be_read_says_so_on_the_card(db):
     with journal.connect(db) as conn:
         journal.append(conn, "box.unreachable", {"error": "no route to host"})
-    assert "no route to host" in strip(client.get("/loop").text)
+    assert "no route to host" in strip(client.get("/").text)
 
 
 def test_a_box_never_observed_is_absent_rather_than_invented(db):
-    assert "not read yet" in strip(client.get("/loop").text).lower()
+    assert "not read yet" in strip(client.get("/").text).lower()
 
 
 # --- The guardrail chip (#165) ----------------------------------------------
@@ -996,7 +996,7 @@ def _guardrail(conn, **over):
 def test_the_chip_is_green_when_the_executed_paths_are_review_gated(db):
     with journal.connect(db) as conn:
         _guardrail(conn)
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="green"' in cell
     assert "master" in cell
     assert "alarm" not in cell
@@ -1011,7 +1011,7 @@ def test_the_chip_names_the_rule_that_went_missing(db):
             conn, rules=["deletion"], protected=False,
             detail="master is missing pull_request, non_fast_forward",
         )
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="red"' in cell
     assert "alarm" in cell
     assert "pull_request" in cell
@@ -1028,7 +1028,7 @@ def test_the_chip_names_an_executed_path_that_is_ahead_of_the_protected_ref(db):
                 "selector/cycle.py"
             ),
         )
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="red"' in cell
     assert "cycle.py" in cell
 
@@ -1040,7 +1040,7 @@ def test_the_chip_shows_the_newest_reading(db):
     with journal.connect(db) as conn:
         _guardrail(conn)
         _guardrail(conn, protected=False, detail="master is missing pull_request")
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="red"' in cell
 
 
@@ -1049,7 +1049,7 @@ def test_a_guardrail_that_could_not_be_read_is_not_green(db):
         journal.append(
             conn, "guardrail.unreadable", {"error": "gh: API rate limit exceeded"}
         )
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="green"' not in cell
     assert "rate limit" in cell
 
@@ -1071,7 +1071,7 @@ def test_the_chip_is_green_when_multiple_declared_trees_are_review_gated(db):
             protected=True,
             detail=None,
         )
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="green"' in cell
     assert "acme/tracewake" in cell
     assert "acme/config" in cell
@@ -1093,7 +1093,7 @@ def test_the_chip_names_the_tree_and_rule_that_failed_when_one_tree_is_unprotect
             protected=False,
             detail="acme/config: master is missing pull_request, non_fast_forward",
         )
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="red"' in cell
     assert "alarm" in cell
     assert "acme/config" in cell
@@ -1116,7 +1116,7 @@ def test_the_chip_names_the_tree_when_one_tree_could_not_be_read(db):
             protected=False,
             detail="acme/config: could not be read (gh: not found)",
         )
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="red"' in cell
     assert "alarm" in cell
     assert "acme/config" in cell
@@ -1135,7 +1135,7 @@ def test_a_reading_too_old_to_stand_for_now_is_not_green(db):
             " VALUES (now() - interval '5 hours', %s, %s)",
             ("guardrail.observed", Json(PROTECTED)),
         )
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="green"' not in cell
     assert "5 hours ago" in cell or "no cycle has read it" in cell
 
@@ -1150,14 +1150,14 @@ def test_a_reading_from_the_last_cycle_is_still_green(db):
             " VALUES (now() - interval '31 minutes', %s, %s)",
             ("guardrail.observed", Json(PROTECTED)),
         )
-    assert 'data-guardrail="green"' in chip(client.get("/loop").text)
+    assert 'data-guardrail="green"' in chip(client.get("/").text)
 
 
 def test_a_guardrail_never_read_is_not_green_either(db):
     """Unknown is not protected. The chip asserts something, and a page that
     asserted it before anything had checked would be the reassurance the
     ticket was written to avoid."""
-    cell = chip(client.get("/loop").text)
+    cell = chip(client.get("/").text)
     assert 'data-guardrail="green"' not in cell
     assert "not checked yet" in cell.lower()
 
@@ -1200,7 +1200,7 @@ def test_the_card_of_the_run_in_flight_names_the_discipline_skills(db):
         cycle = journal.append(conn, "cycle.started", {"dry_run": False})
         _dispatch_row(conn, cycle)
         _contract_row(conn, cycle)
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "/tdd" in runs
     assert "/diagnosing-bugs" in runs
     assert "/code-review" in runs
@@ -1214,7 +1214,7 @@ def test_the_contract_card_shows_the_bounds_the_box_reported(db):
         cycle = journal.append(conn, "cycle.started", {"dry_run": False})
         _dispatch_row(conn, cycle)
         _contract_row(conn, cycle)
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "Iterations per Run: 5" in runs
     assert "Run wall clock: 5400s" in runs
 
@@ -1225,7 +1225,7 @@ def test_a_run_with_no_contract_row_shows_no_contract_card(db):
     with journal.connect(db) as conn:
         cycle = journal.append(conn, "cycle.started", {"dry_run": False})
         _dispatch_row(conn, cycle)
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "Termination Contract" not in runs
 
 
@@ -1246,7 +1246,7 @@ def test_a_contract_is_shown_on_the_run_it_was_read_for(db):
         _dispatch_row(conn, cycle, attempt=2)
         _contract_row(conn, cycle, attempt=2,
                       contract=["Iterations per Run: 9"])
-    cards = client.get("/loop").text.split("<h2>Cycles</h2>")[0].split(
+    cards = client.get("/").text.split("<h2>Cycles</h2>")[0].split(
         '<section class="run'
     )[1:]
     assert len(cards) == 2

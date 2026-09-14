@@ -14,7 +14,7 @@ from app import app
 
 client = TestClient(app)
 
-PAGES = ["/", "/adr", "/loop"]
+PAGES = ["/", "/adr", "/history"]
 
 
 def _lease(tmp_path, **over):
@@ -52,7 +52,7 @@ def test_the_sha_is_shown_short_not_whole(monkeypatch, tmp_path):
     """Forty hex characters in a banner is noise; seven is a thing you can
     compare against `git log` at a glance."""
     monkeypatch.setenv("LAB_PREVIEW_LEASE", str(_lease(tmp_path)))
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "1c904956e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5" not in body
 
 
@@ -65,7 +65,7 @@ def test_the_banner_says_how_long_the_preview_has_been_up(monkeypatch, tmp_path)
     monkeypatch.setenv(
         "LAB_PREVIEW_LEASE", str(_lease(tmp_path, started_at=started.isoformat()))
     )
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "2h05m" in body
 
 
@@ -74,7 +74,7 @@ def test_a_preview_with_no_lease_file_still_declares_itself(monkeypatch, tmp_pat
     which branch. Losing the lease must not turn the banner off, or the one
     page that cannot afford to look live starts looking live."""
     monkeypatch.setenv("LAB_PREVIEW_LEASE", str(tmp_path / "absent.json"))
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "attended preview" in body.lower()
     assert "lease is unreadable" in body.lower()
 
@@ -83,7 +83,7 @@ def test_an_unreadable_lease_does_not_break_the_page(monkeypatch, tmp_path):
     bad = tmp_path / "lease.json"
     bad.write_text("{not json")
     monkeypatch.setenv("LAB_PREVIEW_LEASE", str(bad))
-    resp = client.get("/loop")
+    resp = client.get("/")
     assert resp.status_code == 200
     assert "lease is unreadable" in resp.text.lower()
 
@@ -93,6 +93,6 @@ def test_the_banner_quotes_the_bound_that_is_configured(monkeypatch, tmp_path):
     its own copy would keep saying "4 hours" the day the unit said six."""
     monkeypatch.setenv("LAB_PREVIEW_LEASE", str(_lease(tmp_path)))
     monkeypatch.setenv("LAB_PREVIEW_MAX_AGE_SECONDS", str(6 * 60 * 60))
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "after 6 hours" in body
     assert "after 4 hours" not in body

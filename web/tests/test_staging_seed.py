@@ -63,7 +63,7 @@ def seeded(db):
 
 
 def test_the_fixture_renders_every_state_the_page_has(seeded):
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "unavailable" not in body.lower()
     for state in STATES:
         assert state in body, f"the fixture no longer shows: {state}"
@@ -91,7 +91,7 @@ def test_the_fixture_renders_every_state_the_history_has(seeded):
     # outlives its branch.
     assert re.search(r"after \d+[hms]", body), "no Run duration on the history"
     assert "/pull/701" in body
-    # And not the Run still going, which belongs on /loop. The badge rather
+    # And not the Run still going, which belongs on the board. The badge rather
     # than the words: the page's own prose says where the in-flight Run is.
     assert '<span class="badge">in flight</span>' not in body
 
@@ -99,20 +99,20 @@ def test_the_fixture_renders_every_state_the_history_has(seeded):
 def test_both_ends_of_the_retry_are_visible(seeded):
     """A retried attempt and the give-up that followed it are two cards, and
     the fixture has to hold both or the pairing rule goes untested."""
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "badge-retrying" in runs
     assert "badge-given-up" in runs
     assert "attempt 2" in runs
 
 
 def test_a_red_proposal_names_its_failing_checks(seeded):
-    runs = client.get("/loop").text.split("<h2>Cycles</h2>")[0]
+    runs = client.get("/").text.split("<h2>Cycles</h2>")[0]
     assert "badge-handed-to-human" in runs
     assert "phpunit" in runs and "lint" in runs
 
 
 def test_every_skip_reason_the_selector_can_journal_is_shown(seeded):
-    body = client.get("/loop").text
+    body = client.get("/").text
     for reason in ("blocked-by-open-dependency", "proposal-open", "missing-section"):
         assert reason in body
 
@@ -265,7 +265,7 @@ BOARD_COLUMNS = [
 
 def test_the_preview_tracker_fills_every_column_of_the_board(db, monkeypatch):
     monkeypatch.setenv("SELECTOR_TRACKER_COMMAND", str(PREVIEW_TRACKER))
-    body = client.get("/loop").text
+    body = client.get("/").text
     for name in BOARD_COLUMNS:
         cards = column(body, name)
         assert "nothing here" not in cards, (

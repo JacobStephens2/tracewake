@@ -299,9 +299,9 @@ LIVE_REGION = re.compile(r'<div id="live-region"[^>]*>')
 
 
 def test_the_page_carries_a_live_region_that_asks_for_itself(db):
-    body = client.get("/loop").text
+    body = client.get("/").text
     match = LIVE_REGION.search(body)
-    assert match, "no live region on /loop"
+    assert match, "no live region on /"
     opening = match.group(0)
     assert 'hx-get="/loop/live"' in opening
     assert 'hx-swap="outerHTML"' in opening
@@ -311,11 +311,11 @@ def test_the_page_carries_a_live_region_that_asks_for_itself(db):
 
 
 def test_the_page_opens_the_stream(db):
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "/loop/events" in body
     assert "EventSource" in body
-    # HTMX does the swapping, so the page has to actually load it. /loop does
-    # not extend base.html, which is where every other page gets it.
+    # HTMX does the swapping, so the page has to actually load it. The board
+    # does not extend base.html, which is where every other page gets it.
     assert "/static/htmx.min.js" in body
 
 
@@ -332,7 +332,7 @@ def test_the_fragment_is_the_region_alone(db, dispatch):
 def test_the_fragment_and_the_page_render_the_same_panels(db, dispatch):
     dispatch(db, 646, outcome="complete")
     append(db, "run.iteration", {"issue": 646, "iteration": 1})
-    page = client.get("/loop").text
+    page = client.get("/").text
     fragment = client.get("/loop/live").text
     for panel in ("The queue", "The host", "Runs", "Every event", "review capacity"):
         assert panel in page, panel
@@ -355,12 +355,12 @@ def test_a_prefixed_mount_asks_itself_for_the_fragment_and_the_stream(db):
     """Same property `_static_base` exists for: under a path prefix the
     browser must ask this instance, not the root's."""
     prefixed = TestClient(app, root_path="/loop-staging")
-    body = prefixed.get("/loop").text
+    body = prefixed.get("/").text
     assert 'hx-get="/loop-staging/loop/live"' in body
     assert "/loop-staging/loop/events" in body
 
 
-@pytest.mark.parametrize("path", ["/loop", "/loop/live"])
+@pytest.mark.parametrize("path", ["/", "/loop/live"])
 def test_the_journal_being_down_does_not_take_the_region_with_it(
     path, monkeypatch
 ):

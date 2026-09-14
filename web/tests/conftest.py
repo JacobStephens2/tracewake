@@ -61,7 +61,7 @@ def dispatch():
 # --- The tracker, scripted --------------------------------------------------
 #
 # The queue board reads the tracker at request time (#158), so from here on
-# every /loop request in this suite reaches a tracker command. Autouse and
+# every board request in this suite reaches a tracker command. Autouse and
 # empty by default, because the alternative is not "no board": it is the real
 # `tracker-sources/github.sh`, which means a live `gh` call against whatever
 # tracker this checkout's targets file names, from a unit test.
@@ -91,7 +91,7 @@ def tracker(tmp_path, monkeypatch):
     monkeypatch.setenv("SELECTOR_TRACKER_COMMAND", str(script))
     # The window reads its target from the targets file like the cycle does
     # (issue #3), so the suite writes one. Autouse for the same reason the
-    # tracker is scripted: without it every /loop request in this suite would
+    # tracker is scripted: without it every board request in this suite would
     # be reading whatever this checkout is really configured to work.
     monkeypatch.setenv(
         "TRACEWAKE_TARGETS_FILE",

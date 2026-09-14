@@ -1,4 +1,4 @@
-"""The queue board on /loop (#158), at HTTP level over a scripted tracker.
+"""The queue board on `/` (#158), at HTTP level over a scripted tracker.
 
 The board is the one part of this page that is not read from the Journal: it
 is the tracker's own state, fetched when the page is requested and columned by
@@ -34,7 +34,7 @@ def test_the_board_columns_the_queue_by_the_selectors_own_eligibility(db, tracke
     tracker.queue("awaiting-review", [tracker.issue(201)])
     tracker.queue("ready-for-human", [tracker.issue(301)])
 
-    body = client.get("/loop").text
+    body = client.get("/").text
 
     assert "#101" in column(body, "eligible")
     assert "#102" in column(body, "blocked")
@@ -59,7 +59,7 @@ def test_a_blocked_card_names_its_open_blockers(db, tracker):
             ]),
         ],
     )
-    blocked = column(client.get("/loop").text, "blocked")
+    blocked = column(client.get("/").text, "blocked")
     assert "#645" in blocked
     assert "Widen the sync window" in blocked
     assert "https://example.invalid/645" in blocked
@@ -75,7 +75,7 @@ def test_the_board_reads_the_same_reasons_the_journal_records(db, tracker):
             tracker.issue(106, body="## Problem\n\nNo criteria here.\n"),
         ],
     )
-    blocked = column(client.get("/loop").text, "blocked")
+    blocked = column(client.get("/").text, "blocked")
     assert "labeler-not-allowlisted" in blocked
     assert "missing-section" in blocked
 
@@ -89,7 +89,7 @@ def test_the_retry_budget_the_journal_holds_reaches_the_board(db, tracker, dispa
         dispatch(db, 107, outcome="agent-failed")
     tracker.queue("ready-for-agent", [tracker.issue(107, labeledAt=labeled)])
 
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "#107" in column(body, "blocked")
     assert "attempts-exhausted" in column(body, "blocked")
 
@@ -101,20 +101,19 @@ def test_a_dispatch_with_no_outcome_shows_as_in_flight(db, tracker, dispatch):
     dispatch(db, 108)
     tracker.queue("ready-for-agent", [tracker.issue(108)])
 
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "#108" in column(body, "in-flight")
     assert "#108" not in column(body, "eligible")
 
 
 def test_an_empty_column_says_so_rather_than_vanishing(db, tracker):
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "nothing" in column(body, "eligible").lower()
 
 
-@pytest.mark.parametrize("path", ["/", "/loop"])
-def test_a_tracker_that_cannot_be_read_does_not_take_the_page_down(path, db, tracker):
+def test_a_tracker_that_cannot_be_read_does_not_take_the_page_down(db, tracker):
     tracker.fail("gh: could not resolve host github.com")
-    resp = client.get(path)
+    resp = client.get("/")
     assert resp.status_code == 200
     board = column(resp.text, "eligible")
     assert "could not resolve host" in board
@@ -144,7 +143,7 @@ def test_the_label_columns_follow_the_labels_the_selector_is_configured_with(
     )
     tracker.queue("second-look", [tracker.issue(401)])
 
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "second-look" in column(body, "awaiting-review")
     assert "#401" in column(body, "awaiting-review")
 
@@ -162,7 +161,7 @@ def test_a_card_owns_up_to_blockers_the_tracker_did_not_name(db, tracker):
             ]),
         ],
     )
-    blocked = column(client.get("/loop").text, "blocked")
+    blocked = column(client.get("/").text, "blocked")
     assert "#90" in blocked
     assert "2" in blocked and "did not name" in blocked
 
@@ -174,7 +173,7 @@ def test_an_issue_carrying_two_labels_is_drawn_once(db, tracker):
     tracker.queue("ready-for-agent", [tracker.issue(110)])
     tracker.queue("awaiting-review", [tracker.issue(110)])
 
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "#110" in column(body, "eligible")
     assert "#110" not in column(body, "awaiting-review")
 
@@ -210,7 +209,7 @@ def test_conflicting_proposal_shows_as_conflicting_on_board(db, tracker):
             ),
         ],
     )
-    body = client.get("/loop").text
+    body = client.get("/").text
     awaiting = column(body, "awaiting-review")
     assert "#201" in awaiting
     assert "conflicting" in awaiting
