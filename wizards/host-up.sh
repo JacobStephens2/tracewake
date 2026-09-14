@@ -223,9 +223,13 @@ say "tofu, ansible-playbook, and ssh are all present."
 # ── 2. Droplet ────────────────────────────────────────────────────────────
 stage "Droplet: token and identifiers"
 say "OpenTofu needs a DigitalOcean token plus the five identifiers from #55."
-open_url "https://cloud.digitalocean.com/account/api/tokens"
-step "API → Tokens → Generate New Token (write scope), then copy it."
-ask_secret DIGITALOCEAN_TOKEN "Paste the DigitalOcean token:"
+if [[ -n "${DIGITALOCEAN_TOKEN:-}" ]]; then
+  say "Using DIGITALOCEAN_TOKEN from this session (e.g. va -m openai.env.refs bash)."
+else
+  open_url "https://cloud.digitalocean.com/account/api/tokens"
+  step "API → Tokens → Generate New Token (write scope), then copy it."
+  ask_secret DIGITALOCEAN_TOKEN "Paste the DigitalOcean token:"
+fi
 : "${DIGITALOCEAN_TOKEN:?DigitalOcean token is required}"
 write_env DIGITALOCEAN_TOKEN "$DIGITALOCEAN_TOKEN"
 export DIGITALOCEAN_TOKEN
