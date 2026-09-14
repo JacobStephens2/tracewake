@@ -37,7 +37,7 @@ def test_every_asset_a_page_asks_for_is_actually_served():
     """The other half: `url_for` with a name the mount does not have renders
     an error, and a test that only banned the literal would pass on a page
     that had stopped loading its CSS."""
-    for page in ["/", "/adr", "/loop"]:
+    for page in ["/", "/adr", "/history"]:
         body = client.get(page).text
         assets = re.findall(r'(?:href|src)="(/static/[^"]+)"', body)
         assert assets, f"{page} references no static asset at all"
@@ -50,7 +50,7 @@ def test_asset_urls_carry_no_scheme_or_host():
     the request's own base, and uvicorn here is started without
     `--proxy-headers`, so behind Caddy's TLS that base is `http://` and every
     stylesheet on an https page is blocked as mixed content."""
-    for page in ["/", "/adr", "/loop"]:
+    for page in ["/", "/adr", "/history"]:
         body = client.get(page).text
         assert "http://testserver/static" not in body, page
         assert re.search(r'(?:href|src)="https?://[^"]*/static/', body) is None, page
@@ -62,5 +62,5 @@ def test_a_prefixed_mount_asks_for_its_own_assets():
     from fastapi.testclient import TestClient as _TestClient
 
     prefixed = _TestClient(app, root_path="/loop-staging")
-    body = prefixed.get("/loop").text
+    body = prefixed.get("/").text
     assert '"/loop-staging/static/terminal.css"' in body

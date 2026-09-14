@@ -982,7 +982,7 @@ def _history_rows(conn) -> tuple[list[dict], int]:
 
 
 def _loop_rows(conn) -> tuple[list[dict], bool]:
-    """The Journal rows and pause flag rendered together on `/loop`."""
+    """The Journal rows and pause flag rendered together on the home board."""
     return journal.events(conn), control.is_paused(conn)
 
 
@@ -1124,8 +1124,8 @@ def _history_context(request: Request) -> dict:
     """The Run history: the Journal, and nothing else (#160).
 
     Deliberately not `_loop_context` minus a few keys. The point of this page
-    is what it does NOT read: /loop's board reaches the tracker at request
-    time, so /loop is only as available as GitHub, and the record of what the
+    is what it does NOT read: the home board reaches the tracker at request
+    time, so `/` is only as available as GitHub, and the record of what the
     Selector has already done should not be. Every Run below is rows the
     Selector wrote - which is also what makes a Run outlive the branch it
     worked on, since a merged-and-deleted branch takes the forge's copy of the
@@ -1135,7 +1135,7 @@ def _history_context(request: Request) -> dict:
     (events, older), _, error = _read_journal(_history_rows, empty)
     return {
         # History is what has ended. A Run still going has no bound, no
-        # duration and no Proposal; /loop shows it live on the panel built
+        # duration and no Proposal; the board shows it live on the panel built
         # for it, and a card here would be three empty cells.
         "runs": [run for run in _runs(events) if not run.get("in_flight")],
         # The Runs below the window, counted rather than dropped in silence.
@@ -1150,14 +1150,24 @@ def _history_context(request: Request) -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-@app.get("/loop", response_class=HTMLResponse)
 def loop_page(request: Request):
-    """The Loop's window: the Selector Journal, read at request time.
+    """The Dashboard's home: the Queue Board with the Selector Journal beside
+    it, read at request time.
 
     Sync def on purpose: psycopg blocks, so FastAPI runs this handler in its
     threadpool instead of on the event loop.
     """
     return _page(request, "loop.html", _loop_context(request))
+
+
+@app.get("/loop", response_class=HTMLResponse)
+def loop_redirect(request: Request):
+    """The Dashboard's old home: a leftover path, not a second home (#53).
+
+    The live fragments, the event stream, and pause/resume keep their
+    `/loop/...` routes; only this exact path moves.
+    """
+    return RedirectResponse(_path(request, "/"), status_code=307)
 
 
 @app.get("/loop/live", response_class=HTMLResponse)
@@ -1269,7 +1279,7 @@ async def _journal_stream(after: int | None):
 @app.get("/events")
 @app.get("/loop/events")
 async def loop_events(request: Request):
-    """Journal rows pushed to an open /loop, the moment they land.
+    """Journal rows pushed to an open board, the moment they land.
 
     Async on purpose, the opposite of every other handler here: this one is
     held open for as long as the page is, and a sync handler would hold one of

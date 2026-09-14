@@ -51,13 +51,10 @@ def in_flight_cell(body: str) -> str:
     return match.group(1)
 
 
-@pytest.mark.parametrize("path", ["/", "/loop"])
-def test_the_queue_board_shows_the_hosts_cpu_memory_and_disk(
-    path, db, monkeypatch
-):
+def test_the_queue_board_shows_the_hosts_cpu_memory_and_disk(db, monkeypatch):
     monkeypatch.setattr("host.sample", lambda: _sample())
 
-    widget = host_widget(client.get(path).text)
+    widget = host_widget(client.get("/").text)
 
     assert "41%" in widget
     assert "2.0 GiB" in widget
@@ -87,7 +84,7 @@ def test_a_sampler_failure_degrades_the_widget_not_the_board(
 
     monkeypatch.setattr("host.sample", boom)
 
-    resp = client.get("/loop")
+    resp = client.get("/")
     assert resp.status_code == 200
     assert 'data-host="degraded"' in resp.text
     widget = host_widget(resp.text)
@@ -101,10 +98,10 @@ def test_runs_in_flight_match_the_journal_under_a_run_and_after_its_outcome(
 ):
     monkeypatch.setattr("host.sample", lambda: _sample())
 
-    assert ">0<" in in_flight_cell(client.get("/loop").text).replace(" ", "")
+    assert ">0<" in in_flight_cell(client.get("/").text).replace(" ", "")
 
     dispatch(db, 108)
-    assert ">1<" in in_flight_cell(client.get("/loop").text).replace(" ", "")
+    assert ">1<" in in_flight_cell(client.get("/").text).replace(" ", "")
 
     import events
     import journal
@@ -115,14 +112,14 @@ def test_runs_in_flight_match_the_journal_under_a_run_and_after_its_outcome(
             iterations=None, faults=None, proposal=None, proposed=None,
             notified=None, seed=None, criteria=None,
         ))
-    assert ">0<" in in_flight_cell(client.get("/loop").text).replace(" ", "")
+    assert ">0<" in in_flight_cell(client.get("/").text).replace(" ", "")
 
 
 def test_two_in_flight_runs_count_as_two(db, dispatch, monkeypatch):
     monkeypatch.setattr("host.sample", lambda: _sample())
     dispatch(db, 108)
     dispatch(db, 109)
-    assert ">2<" in in_flight_cell(client.get("/loop").text).replace(" ", "")
+    assert ">2<" in in_flight_cell(client.get("/").text).replace(" ", "")
 
 
 def test_the_same_issue_on_two_targets_counts_as_two_runs(db, monkeypatch):
@@ -138,7 +135,7 @@ def test_the_same_issue_on_two_targets_counts_as_two_runs(db, monkeypatch):
                 task_ref=f"{repo}#108", attempt=None, branch=None,
                 area=None, check=None, kept_progress=None,
             ))
-    assert ">2<" in in_flight_cell(client.get("/loop").text).replace(" ", "")
+    assert ">2<" in in_flight_cell(client.get("/").text).replace(" ", "")
 
 
 def test_a_stale_dispatch_is_not_in_flight(db, dispatch, monkeypatch):
@@ -146,7 +143,7 @@ def test_a_stale_dispatch_is_not_in_flight(db, dispatch, monkeypatch):
     stale bound still has a card and no outcome, but it does not hold a slot."""
     monkeypatch.setattr("host.sample", lambda: _sample())
     dispatch(db, 108, hours_ago=5)
-    assert ">0<" in in_flight_cell(client.get("/loop").text).replace(" ", "")
+    assert ">0<" in in_flight_cell(client.get("/").text).replace(" ", "")
 
 
 def test_the_default_sampler_reads_this_machine():

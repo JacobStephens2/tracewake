@@ -32,7 +32,6 @@ READER_PASSWORD = ADMIN_PASSWORD
 
 PAGES = [
     "/",
-    "/loop",
     "/history",
     "/adr",
     "/loop/live",
@@ -69,7 +68,7 @@ def signed_in_admin(db) -> TestClient:
 
 
 def post_control(client: TestClient, path: str):
-    page = client.get("/loop")
+    page = client.get("/")
     assert page.status_code == 200, page.text
     return client.post(
         path,
@@ -123,32 +122,32 @@ def test_a_reader_reaches_the_live_event_stream(db, monkeypatch):
 
 def test_a_readers_direct_pause_is_refused_and_does_not_change_the_flag(db):
     client = signed_in_reader(db)
-    assert 'data-selector-pause="paused"' not in client.get("/loop").text
+    assert 'data-selector-pause="paused"' not in client.get("/").text
     refused = post_control(client, "/loop/pause")
     assert refused.status_code == 403
-    assert 'data-selector-pause="paused"' not in client.get("/loop").text
+    assert 'data-selector-pause="paused"' not in client.get("/").text
 
 
 def test_a_readers_direct_resume_is_refused_and_does_not_change_the_flag(db):
     with journal.connect() as conn:
         control.set_paused(conn, True)
     client = signed_in_reader(db)
-    assert 'data-selector-pause="paused"' in client.get("/loop").text
+    assert 'data-selector-pause="paused"' in client.get("/").text
     refused = post_control(client, "/loop/resume")
     assert refused.status_code == 403
-    assert 'data-selector-pause="paused"' in client.get("/loop").text
+    assert 'data-selector-pause="paused"' in client.get("/").text
 
 
 def test_the_readers_board_carries_no_control_affordances(db):
     client = signed_in_reader(db)
-    body = client.get("/loop").text
+    body = client.get("/").text
     assert "Pause dispatch" not in body
     assert "Resume dispatch" not in body
     assert "/loop/pause" not in body
     assert "/loop/resume" not in body
     with journal.connect() as conn:
         control.set_paused(conn, True)
-    paused = client.get("/loop").text
+    paused = client.get("/").text
     assert 'data-selector-pause="paused"' in paused
     assert "Resume dispatch" not in paused
     assert "/loop/resume" not in paused
@@ -164,7 +163,7 @@ def test_an_unauthenticated_control_request_is_refused_not_redirected_into_a_suc
     assert resumed.status_code == 403
     posted = sign_in(client)
     assert posted.status_code == 303
-    assert 'data-selector-pause="paused"' not in client.get("/loop").text
+    assert 'data-selector-pause="paused"' not in client.get("/").text
 
 
 def test_an_admin_can_pause_and_resume(db):
@@ -172,8 +171,8 @@ def test_an_admin_can_pause_and_resume(db):
     paused = post_control(client, "/loop/pause")
     assert paused.status_code == 200, paused.text
     assert 'data-selector-pause="paused"' in paused.text
-    assert 'data-selector-pause="paused"' in client.get("/loop").text
+    assert 'data-selector-pause="paused"' in client.get("/").text
     resumed = post_control(client, "/loop/resume")
     assert resumed.status_code == 200, resumed.text
     assert 'data-selector-pause="paused"' not in resumed.text
-    assert 'data-selector-pause="paused"' not in client.get("/loop").text
+    assert 'data-selector-pause="paused"' not in client.get("/").text
