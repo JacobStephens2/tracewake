@@ -203,6 +203,42 @@ touch "$ENV_FILE" && chmod 600 "$ENV_FILE"
 
 [[ -f "$PLAY" ]] || { warn "run this from the tracewake checkout (no $PLAY)"; exit 1; }
 
+# _do_get PATH prints a DigitalOcean API response body, or fails. python3 is
+# already required on this machine (ansible-playbook runs on it).
+_do_get() {
+  DIGITALOCEAN_TOKEN="$DIGITALOCEAN_TOKEN" python3 -c '
+import os, sys, urllib.request
+req = urllib.request.Request(
+    "https://api.digitalocean.com/v2" + sys.argv[1],
+    headers={"Authorization": "Bearer " + os.environ["DIGITALOCEAN_TOKEN"],
+             "Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        sys.stdout.write(r.read().decode())
+except Exception as e:
+    sys.stderr.write("DigitalOcean API unavailable: %s\n" % e)
+    sys.exit(1)
+' "$1"
+}
+
+# _do_post PATH JSON prints the response body of a POST, or fails.
+_do_post() {
+  DIGITALOCEAN_TOKEN="$DIGITALOCEAN_TOKEN" DO_BODY="$2" python3 -c '
+import os, sys, urllib.request
+req = urllib.request.Request(
+    "https://api.digitalocean.com/v2" + sys.argv[1],
+    data=os.environ["DO_BODY"].encode(),
+    headers={"Authorization": "Bearer " + os.environ["DIGITALOCEAN_TOKEN"],
+             "Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        sys.stdout.write(r.read().decode())
+except Exception as e:
+    sys.stderr.write("DigitalOcean API unavailable: %s\n" % e)
+    sys.exit(1)
+' "$1"
+}
+
 banner "Tracewake Host (#57)"
 
 # ── 1. Tools ──────────────────────────────────────────────────────────────
@@ -250,13 +286,108 @@ else
   : "${TF_REGION:=nyc1}"
   ask TF_SIZE "Size [s-4vcpu-8gb]:"
   : "${TF_SIZE:=s-4vcpu-8gb}"
-  open_url "https://cloud.digitalocean.com/networking/vpcs"
-  step "Networking → VPCs: open your VPC and copy its UUID."
-  ask TF_VPC_UUID "Paste the VPC UUID:"
+  VPC_OPTIONS=$(_do_get "/vpcs?per_page=200" | TF_REGION="$TF_REGION" python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except Exception as e:
+    sys.stderr.write("Could not read the VPC list: %s\n" % e)
+    sys.exit(1)
+for v in data.get("vpcs", []):
+    if v.get("region") == os.environ["TF_REGION"]:
+        print("%s|%s" % (v["name"], v["id"]))
+' 2>/dev/null) || VPC_OPTIONS=""
+  if [[ -n "$VPC_OPTIONS" ]]; then
+    say "VPCs in $TF_REGION (from the API):"
+    mapfile -t VPC_LINES <<< "$VPC_OPTIONS"
+    for i in "${!VPC_LINES[@]}"; do
+      note "  $((i+1))) ${VPC_LINES[$i]%%|*} - ${VPC_LINES[$i]##*|}"
+    done
+    ask VPC_PICK "Pick a VPC [1]:"
+    : "${VPC_PICK:=1}"
+    if [[ "$VPC_PICK" =~ ^[0-9]+$ ]] && (( VPC_PICK >= 1 && VPC_PICK <= ${#VPC_LINES[@]} )); then
+      TF_VPC_UUID="${VPC_LINES[$((VPC_PICK-1))]##*|}"
+      say "Using ${VPC_LINES[$((VPC_PICK-1))]%%|*}."
+    else
+      warn "Out of range; paste the UUID instead."
+      ask TF_VPC_UUID "Paste the VPC UUID:"
+    fi
+  else
+    warn "Could not list VPCs via the API."
+    ask TF_VPC_UUID "Paste the VPC UUID (control panel, Networking):"
+  fi
   : "${TF_VPC_UUID:?VPC UUID is required}"
-  open_url "https://cloud.digitalocean.com/account/security"
-  step "Account → Security → SSH keys: copy the fingerprint of this machine's key."
-  ask TF_SSH_KEY "Paste the SSH key fingerprint (or ID):"
+  say "Matching this machine's public keys against your account."
+  KEY_OPTIONS=$(_do_get "/account/keys?per_page=200" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception as e:
+    sys.stderr.write("Could not read the SSH key list: %s\n" % e)
+    sys.exit(1)
+for k in data.get("ssh_keys", []):
+    print("%s|%s" % (k["fingerprint"], k["name"]))
+' 2>/dev/null) || KEY_OPTIONS=""
+  MATCHES=()
+  for pub in ~/.ssh/*.pub; do
+    [[ -f "$pub" ]] || continue
+    line=$(ssh-keygen -E md5 -lf "$pub" 2>/dev/null || true)
+    fp=${line#*MD5:}; fp=${fp%% *}
+    [[ -n "$fp" && "$fp" != "$line" ]] || continue
+    while IFS='|' read -r acct_fp acct_name; do
+      [[ -n "$acct_fp" && "$fp" == "$acct_fp" ]] && MATCHES+=("${pub%.pub}|$fp|$acct_name")
+    done <<< "$KEY_OPTIONS"
+  done
+  if (( ${#MATCHES[@]} )); then
+    say "Registered keys on this machine:"
+    for i in "${!MATCHES[@]}"; do
+      priv="${MATCHES[$i]%%|*}"; acct="${MATCHES[$i]##*|}"
+      note "  $((i+1))) $acct ($priv)"
+    done
+    ask KEY_PICK "Pick a key [1]:"
+    : "${KEY_PICK:=1}"
+    if [[ "$KEY_PICK" =~ ^[0-9]+$ ]] && (( KEY_PICK >= 1 && KEY_PICK <= ${#MATCHES[@]} )); then
+      chosen="${MATCHES[$((KEY_PICK-1))]}"
+      SSH_KEY_FILE="${chosen%%|*}"
+      rest="${chosen#*|}"; TF_SSH_KEY="${rest%%|*}"
+      write_env SSH_KEY_FILE "$SSH_KEY_FILE"
+      say "Using $SSH_KEY_FILE."
+    else
+      warn "Out of range."
+      ask TF_SSH_KEY "Paste the SSH key fingerprint (or numeric ID):"
+    fi
+  else
+    warn "None of this machine's public keys is registered in DigitalOcean."
+    PUBS=()
+    for pub in ~/.ssh/*.pub; do [[ -f "$pub" ]] && PUBS+=("$pub"); done
+    if (( ${#PUBS[@]} )) && confirm "Upload ${PUBS[0]} to your account now"; then
+      ask KEY_NAME "Name for the key [tracewake-$(hostname)]:"
+      : "${KEY_NAME:=tracewake-$(hostname)}"
+      pubkey=$(cat "${PUBS[0]}")
+      NEW_FP=$(_do_post "/account/keys" "{\"name\":\"$KEY_NAME\",\"public_key\":\"$pubkey\"}" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin)["ssh_key"]["fingerprint"])
+except Exception as e:
+    sys.stderr.write("Upload failed: %s\n" % e)
+    sys.exit(1)
+' 2>/dev/null) || NEW_FP=""
+      if [[ -n "$NEW_FP" ]]; then
+        TF_SSH_KEY="$NEW_FP"
+        SSH_KEY_FILE="${PUBS[0]%.pub}"
+        write_env SSH_KEY_FILE "$SSH_KEY_FILE"
+        say "Uploaded and using $SSH_KEY_FILE."
+      else
+        warn "Upload failed."
+        ask TF_SSH_KEY "Paste the SSH key fingerprint (or numeric ID):"
+      fi
+    else
+      warn "Add this machine's public key to your account, then re-run."
+      for pub in "${PUBS[@]}"; do note "  $pub"; done
+      ((${#PUBS[@]})) || note "No public keys in ~/.ssh at all."
+      exit 1
+    fi
+  fi
   : "${TF_SSH_KEY:?SSH key is required}"
   umask 077
   cat > "$TFVARS" <<EOF
