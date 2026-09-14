@@ -3,7 +3,7 @@
 
 - name: The Loop's scripts, as the Run account holds them
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../loop/"
     dest: "{{ loop_scripts_dir }}/"
@@ -20,6 +20,11 @@
 # leaves its work as commits on a branch in this checkout, and a play applied
 # while one is in flight - or after one, before its branch is reviewed - would
 # be a way to lose it. Refreshing the checkout is the operator's, between Runs.
+- name: Check whether the Target checkout already exists
+  ansible.builtin.stat:
+    path: "{{ loop_scripts_workspace }}/.git"
+  register: loop_workspace_checkout
+
 - name: The checkout a Run works in
   become: true
   become_user: loop
@@ -33,6 +38,7 @@
   # that is the honest outcome: it is the same failure a Run's push would hit,
   # arriving at apply time instead of forty-five minutes in.
   register: loop_scripts_clone
+  when: not ansible_check_mode or loop_workspace_checkout.stat.exists
   failed_when:
     - loop_scripts_clone is failed
     - not (loop_scripts_clone.msg | default('') is search('Authentication|could not read Username|403'))

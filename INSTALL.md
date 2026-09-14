@@ -36,6 +36,55 @@ One machine, with both the controller's and the Box's needs:
 
 ## 2. Step-by-Step Installation
 
+### Automated Host installation
+
+`deploy/ansible/host.yml` installs the Single-Host components in one play:
+PostgreSQL and the Journal schema, the Controller account and checkout, Python
+environments, Dashboard and Selector units, the local Box and its Execution
+Boundary, and Caddy. The Dashboard listens on `127.0.0.1:8100`; Caddy terminates
+TLS for your hostname and forwards the live stream without buffering.
+
+Use an inventory outside this repository, with a `tracewake` group and these
+required variables:
+
+| Inventory variable | Supply |
+| --- | --- |
+| `tracewake_hostname` | The Dashboard's DNS name, without a scheme or path |
+| `tracewake_repository` | The product repository's clone URL |
+| `tracewake_revision` | The reviewed product revision to install |
+| `loop_commit_author_name`, `loop_commit_author_email` | Your commit identity |
+| `loop_signing_key_comment` | A label for this Host's signing key |
+| `loop_target_repository` | The initial Target's repository slug |
+| `loop_scripts_workspace` | Its Box checkout path |
+
+Set `loop_agent_name: grok` in inventory to install Grok and select its egress
+allowlist. Omit it to use the product's Claude default. Grok uses the vendor's
+shell guest image; `loop_guest_templates` can declare custom image recipes.
+
+```bash
+ansible-playbook -i <inventory-path> deploy/ansible/host.yml --check --diff
+ansible-playbook -i <inventory-path> deploy/ansible/host.yml
+```
+
+Use Ubuntu 24.04 or later with nested virtualization. A first check reports
+configuration changes but defers operations requiring a newly installed binary,
+account, checkout, or service. Check-mode regression instructions are in
+[`deploy/ansible/tests/README.md`](deploy/ansible/tests/README.md).
+
+Point DNS at the Host and allow inbound ports 80 and 443 for Caddy's automatic
+certificate issuance. Keep the Dashboard port private. Caddy forwards the
+original scheme; the existing sign-in gate protects the public Dashboard.
+
+The play leaves the dispatch timer disabled (`tracewake_dispatch_enabled: false`).
+Complete the credentials, Instance files, admin seeding, and first dry-run Cycle
+below before enabling it. The Controller account (`conductor`) and Run account
+(`loop`) are separate: keep mail secrets with the Controller, and select the
+Run account in your Instance's local Box command. Set `LOOP_AGENT_COMMAND` to
+the chosen adapter in that Run environment. Inventory installs the agent; it
+does not perform its subscription login or supply Instance secrets.
+
+The manual steps below describe those components and the remaining configuration.
+
 ### Step 1: Clone Tracewake
 
 ```bash

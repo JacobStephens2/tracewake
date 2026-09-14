@@ -1,0 +1,30 @@
+---
+- name: Caddy reverse proxy
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+
+- name: Caddy configuration directory
+  ansible.builtin.file:
+    path: /etc/caddy
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: HTTPS Dashboard with an unbuffered live stream
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: root
+    mode: '0644'
+    validate: caddy validate --adapter caddyfile --config %s
+  notify: reload caddy
+
+- name: Caddy enabled and started
+  ansible.builtin.systemd:
+    name: caddy
+    enabled: true
+    state: started
+  when: not ansible_check_mode or 'caddy.service' in ansible_facts.services

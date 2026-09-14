@@ -25,7 +25,7 @@
 
 - name: What version of Claude Code the box is holding
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command: "{{ loop_agent_claude_bin }} --version"
   register: loop_agent_installed
   changed_when: false
@@ -42,7 +42,7 @@
 # moving the pin a no-op.
 - name: Claude Code, at the pinned version
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail &&
@@ -56,7 +56,7 @@
 
 - name: The box is holding the pinned Claude Code and not another one
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command: "{{ loop_agent_claude_bin }} --version"
   register: loop_agent_version_check
   changed_when: false
@@ -79,11 +79,12 @@
   become: false
   register: loop_agent_grok_pin
   changed_when: false
+  check_mode: false
   when: loop_agent_name == 'grok'
 
 - name: What version of Grok Build the box is holding
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command: "{{ loop_agent_grok_bin }} --version"
   register: loop_agent_grok_installed
   changed_when: false
@@ -99,7 +100,7 @@
 # outage is an install that fails loudly, which is the right direction to fail.
 - name: Grok Build, at the adapter's pinned version
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail &&
@@ -113,7 +114,7 @@
 
 - name: The box is holding the pinned Grok Build and not another one
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command: "{{ loop_agent_grok_bin }} --version"
   register: loop_agent_grok_version_check
   changed_when: false

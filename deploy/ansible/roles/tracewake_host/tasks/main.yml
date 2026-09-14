@@ -1,0 +1,52 @@
+---
+- name: Host tools for forge access, Seeding, and unprivileged Ansible tasks
+  ansible.builtin.apt:
+    # Ubuntu's mawk crashes on the heading regex in seed-run.sh.
+    name: [gh, gawk, acl]
+    state: present
+
+- name: The Controller's group
+  ansible.builtin.group:
+    name: "{{ tracewake_group }}"
+
+- name: The Controller's account, separate from the Run account
+  ansible.builtin.user:
+    name: "{{ tracewake_user }}"
+    group: "{{ tracewake_group }}"
+    home: "{{ tracewake_user_home }}"
+    shell: /bin/bash
+    create_home: true
+
+- name: The product checkout directory
+  ansible.builtin.file:
+    path: "{{ tracewake_dir }}"
+    state: directory
+    owner: "{{ tracewake_user }}"
+    group: "{{ tracewake_group }}"
+    mode: '0755'
+
+- name: Check whether the product is already installed
+  ansible.builtin.stat:
+    path: "{{ tracewake_dir }}/.git"
+  register: tracewake_checkout
+
+- name: Install the declared product revision
+  ansible.builtin.git:
+    repo: "{{ tracewake_repository }}"
+    version: "{{ tracewake_revision }}"
+    dest: "{{ tracewake_dir }}"
+  become_user: "{{ tracewake_user }}"
+  when: not ansible_check_mode or tracewake_checkout.stat.exists
+
+- name: Report a first installation during check mode
+  ansible.builtin.debug:
+    msg: "Would clone the declared product revision into {{ tracewake_dir }}; checkout and virtualenv checks require an apply."
+  when: ansible_check_mode and not tracewake_checkout.stat.exists
+
+- name: Instance configuration is readable only by the Controller
+  ansible.builtin.file:
+    path: "{{ tracewake_env_file | dirname }}"
+    state: directory
+    owner: "{{ tracewake_user }}"
+    group: "{{ tracewake_group }}"
+    mode: '0700'

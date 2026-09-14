@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+{{ tracewake_hostname }} {
+    reverse_proxy 127.0.0.1:{{ tracewake_web_port }} {
+        header_up X-Forwarded-Proto {scheme}
+        flush_interval -1
+    }
+}

@@ -2,8 +2,10 @@
 - name: daemon reload
   ansible.builtin.systemd:
     daemon_reload: true
+  when: not ansible_check_mode
 
 - name: restart postgresql
   ansible.builtin.systemd:
     name: postgresql
     state: restarted
+  when: not ansible_check_mode

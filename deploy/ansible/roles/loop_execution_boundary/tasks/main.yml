@@ -14,6 +14,14 @@
 # fetched once and never refreshed, so a key rotation at Docker's end leaves a
 # stale key here. That fails loudly at the next `apt update` rather than
 # silently, and the fix is to delete the file and re-apply.
+- name: Inspect the existing boundary installation
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ loop_execution_boundary_apt_key_path }}"
+    - /usr/bin/sbx
+  register: loop_boundary_files
+
 - name: Docker's apt signing key
   ansible.builtin.command:
     cmd: >-
@@ -27,6 +35,7 @@
     mode: "0644"       # a+r, as the vendor's install script sets it: apt reads it unprivileged
     owner: root
     group: root
+  when: not ansible_check_mode or loop_boundary_files.results[0].stat.exists
 
 # The same one-line source `get.docker.com REPO_ONLY=1 sh` writes, and the same
 # keyring path - but as a declared task rather than a piped shell script, so a
@@ -78,6 +87,8 @@
     allow_change_held_packages: true
     update_cache: true
     cache_valid_time: 3600
+  # A first check cannot see packages from the repository it would add.
+  when: not ansible_check_mode or loop_boundary_files.results[0].stat.exists
 
 # The pin above only decides what gets installed; this is what keeps it. Without
 # a hold, `apt upgrade` - unattended-upgrades included - walks the box forward to
@@ -87,6 +98,7 @@
   ansible.builtin.dpkg_selections:
     name: docker-sbx
     selection: hold
+  when: not ansible_check_mode or loop_boundary_files.results[1].stat.exists
 
 # #77 deliberately left this out, because whether the boundary needs it was
 # #78's observation to make rather than this play's guess. It does: `sbx` boots a
@@ -109,7 +121,7 @@
 - name: The boundary runs as the Loop's account
   ansible.builtin.command: sbx version
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   changed_when: false
 
 # Everything above installs the boundary. Everything below is what supervises it
@@ -130,10 +142,12 @@
   ansible.builtin.getent:
     database: passwd
     key: loop
+    fail_key: false
 
 - name: Name the Loop account's user-manager runtime directory
   ansible.builtin.set_fact:
     loop_execution_boundary_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd['loop'][1] }}"
+  when: ansible_facts.getent_passwd['loop'] is not none
 
 # /etc/systemd/user, not ~loop/.config/systemd/user: the unit is ansible's to
 # own, and a file under the account a Run executes as is a file that Run can
@@ -192,6 +206,7 @@
     group: root
   # `force: false` is the default and is wanted: this should fail rather than
   # clobber, if something else ever owns that path.
+  when: not ansible_check_mode or loop_boundary_files.results[1].stat.exists
 
 - name: No second enablement under the Loop's own home
   ansible.builtin.file:
@@ -218,8 +233,9 @@
     state: started
     daemon_reload: true
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   environment: "{{ loop_execution_boundary_user_manager_env }}"
+  when: not ansible_check_mode
 
 # A daemon that is up but has no egress profile is up and unusable: `sbx` has no
 # implicit default and refuses to boot a sandbox until one is chosen. The choice
@@ -269,6 +285,7 @@
   # allowlist is reported as holding none of it and about to be reset. A dry run
   # that says that is worse than no dry run.
   check_mode: false
+  when: not ansible_check_mode or (loop_boundary_files.results[1].stat.exists and ansible_facts.getent_passwd['loop'] is not none)
   # The guard fails loudly rather than assuming: any exit that is neither
   # success nor the uninitialized message - a daemon that is not up, a reworded
   # message on the next pinned version - stops the play, instead of being read
@@ -338,8 +355,8 @@
     sbx policy reset --force
     </dev/null >{{ loop_execution_boundary_policy_reset_log }} 2>&1
   become: true
-  become_user: loop
-  when: loop_execution_boundary_policy_needs_reset | bool
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
+  when: not ansible_check_mode and loop_execution_boundary_policy_needs_reset | bool
   changed_when: true
 
 # The task above leaves an UNSUPERVISED daemon behind, and this is what takes it
@@ -364,7 +381,7 @@
 - name: Take the daemon back from the reset
   ansible.builtin.command: sbx daemon stop
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   when: loop_execution_boundary_policy_needs_reset | bool
   changed_when: true
   # Tolerant on purpose, and only here: if nothing is running there is nothing
@@ -379,16 +396,16 @@
     state: restarted
     daemon_reload: true
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   environment: "{{ loop_execution_boundary_user_manager_env }}"
-  when: loop_execution_boundary_policy_needs_reset | bool
+  when: not ansible_check_mode and loop_execution_boundary_policy_needs_reset | bool
 
 # Deny by default. On a rebuilt box this is the only one of these tasks that
 # fires, because nothing has been chosen and the reset has nothing to clear.
 - name: Choose the egress profile
   ansible.builtin.command: "sbx policy init {{ loop_execution_boundary_policy_profile }}"
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   when: loop_execution_boundary_policy_needs_init | bool
   changed_when: true
 
@@ -410,6 +427,6 @@
     sbx policy allow network
     {{ loop_execution_boundary_egress_to_allow | join(',') }}
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   when: loop_execution_boundary_egress_to_allow | length > 0
   changed_when: true

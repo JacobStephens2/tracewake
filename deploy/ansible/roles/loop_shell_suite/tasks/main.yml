@@ -16,5 +16,5 @@
   ansible.builtin.command: "{{ item }} --version"
   loop: [bats, shellcheck]
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   changed_when: false

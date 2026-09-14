@@ -1,0 +1,48 @@
+---
+# One dedicated Ubuntu Host: Controller, local Box, and HTTPS Dashboard.
+# Instance facts come from inventory; agent selection stays a role default so
+# inventory's loop_agent_name wins (including grok).
+# In check mode, roles inspect paths as root because the service accounts may
+# not exist yet. An apply runs account-specific operations as those accounts.
+# ansible-playbook -i <inventory> host.yml --check --diff
+- name: Configure a Tracewake Host
+  hosts: "{{ target_hosts | default('tracewake') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Require Ubuntu 24.04 for the local Execution Boundary
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_version is version('24.04', '>=')
+        fail_msg: host.yml requires Ubuntu 24.04 or later.
+
+    - name: Require the Instance's installation facts
+      ansible.builtin.assert:
+        that:
+          - lookup('vars', item, default='') | string | length > 0
+        fail_msg: "Set {{ item }} in the Instance inventory."
+      loop:
+        - tracewake_hostname
+        - tracewake_repository
+        - tracewake_revision
+        - loop_commit_author_name
+        - loop_commit_author_email
+        - loop_signing_key_comment
+        - loop_target_repository
+        - loop_scripts_workspace
+
+  roles:
+    - loop_base
+    - loop_account
+    - tracewake_host
+    - tracewake_controller
+    - loop_shell_suite
+    - loop_execution_boundary
+    - loop_credentials
+    - loop_agent
+    - loop_scripts
+    # Grok uses the vendor's shell image; custom recipes remain optional.
+    - role: loop_guest_template
+      when: loop_agent_name == 'claude' or loop_guest_templates | default([]) | length > 0
+    - tracewake_proxy

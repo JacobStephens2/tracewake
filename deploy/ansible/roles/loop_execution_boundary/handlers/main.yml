@@ -14,3 +14,4 @@
   become: true
   become_user: loop
   environment: "{{ loop_execution_boundary_user_manager_env }}"
+  when: not ansible_check_mode

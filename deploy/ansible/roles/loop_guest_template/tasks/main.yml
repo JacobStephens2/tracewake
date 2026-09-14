@@ -104,7 +104,7 @@
 # apply, and there is no dry run of building an image.
 - name: Each guest template is built from its declared recipe
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command:
     argv: >-
       {{ [loop_guest_template_dir ~ '/build-guest-template.sh',
@@ -125,7 +125,7 @@
 # the cheapest place to discover it instead.
 - name: A fresh guest from the template runs php, composer and the suite runner
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command:
     argv:
       - "{{ loop_guest_template_dir }}/smoke-guest-template.sh"
