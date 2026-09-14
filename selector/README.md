@@ -80,9 +80,10 @@ decision downstream, but it does not become a work source (ADR 0015).
 
 An instance is **an env file plus a targets file**, and nothing in the code
 knows the name of a company, a host, a person or a repository (issue #3).
-`examples/` at the repository root carries one real instance's values for both,
-with no secrets in them, and `tests/test_configuration.py` grades every default
-in the shipping tree against it.
+INSTALL.md shows the Single-Host shape of both files. The product ships no
+filled-in Instance. `tests/test_configuration.py` grades every default in the
+shipping tree by shape: an email, a hostname, or an `owner/name` slug is
+refused.
 
 **The targets file** (`TRACEWAKE_TARGETS_FILE`, TOML) declares one stanza per
 repository this instance works. A second target is a second stanza - not a
@@ -141,7 +142,7 @@ address or a command have no default at all:
 | `SELECTOR_SEED_COMMAND` | `../loop/seed-run.sh` | the Loop's own seed step |
 | `LOOP_PROGRESS_LOG_PATH` | `PROGRESS.md` | the Progress Log kept aside before Seeding |
 | `LOOP_RUN_HEADING` | `## Run started` | what marks a Progress Log as recording a Run |
-| `SELECTOR_BOX_COMMAND` | `box-sources/ssh.sh` | the box, and the Run on it |
+| `SELECTOR_BOX_COMMAND` | `box-sources/local.sh` | the box, and the Run on it. `box-sources/ssh.sh` is the remote-Box substitute |
 | `SELECTOR_ISSUE_COMMAND` | `issue-sources/github.sh` | comments and label swaps |
 | `SELECTOR_COMMAND_TIMEOUT_SECONDS` | `300` | git, Seeding, tracker writes |
 | `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
@@ -207,11 +208,12 @@ Five steps, in this order, all of them through substitutable commands:
    Seeding. Its refusal - a task whose acceptance criteria it cannot read -
    ends the dispatch rather than being worked around.
 3. **The push.** The Plan reaches the box as a commit, like everything else.
-4. **The Run.** `box-sources/ssh.sh` puts the box's checkout on the branch and
-   runs `run.sh --repo ... --propose --notify`. It blocks for the length of
-   the Run, which is the point: the box persists no record of one, so the only
-   moment the summary exists anywhere is while something is holding the
-   process.
+4. **The Run.** `box-sources/local.sh` (the product default) puts the box's
+   checkout on the branch and runs `run.sh --repo ... --propose --notify`. An
+   instance that splits the Box off this Host substitutes `box-sources/ssh.sh`.
+   Either command blocks for the length of the Run, which is the point: the
+   box persists no record of one, so the only moment the summary exists
+   anywhere is while something is holding the process.
 5. **The outcome.** The `LOOP_RUN_*` block is parsed and journaled - the bound
    that ended the Run, its exit code, its Iterations, its faults and its
    Proposal URL.
@@ -954,14 +956,15 @@ Detection precedes notification, or the mail is a guess.
 - `box-sources/progress.sh` - the default `SELECTOR_BOX_PROGRESS_COMMAND`: one
   SSH hop that `cat`s the box checkout's Progress Log. Read-only, holds no
   credential, touches no working tree.
-- `box-sources/ssh.sh` - the default `SELECTOR_BOX_COMMAND`: one SSH hop that
-  puts the box's checkout on the Run's branch and runs `run.sh --propose
+- `box-sources/local.sh` - the default `SELECTOR_BOX_COMMAND` (ADR 0029):
+  executes a Run on this Host without an SSH hop, gated by
+  `loop/assert-credentials.sh` (ADR 0019). Refuses dispatch naming the
+  violation if the machine holds any forbidden credentials.
+- `box-sources/ssh.sh` - the remote-Box `SELECTOR_BOX_COMMAND`: one SSH hop
+  that puts the box's checkout on the Run's branch and runs `run.sh --propose
   --notify`, printing what the Run reported. It holds no credential of its
-  own and starts nothing else.
-- `box-sources/local.sh` - the single-host `SELECTOR_BOX_COMMAND` (ADR 0019):
-  executes a Run directly on the controller without an SSH hop, gated by
-  `loop/assert-credentials.sh`. Refuses dispatch naming the violation if the
-  machine holds any forbidden credentials.
+  own and starts nothing else. An instance substitutes this; INSTALL does
+  not describe that topology.
 - `events.py` - the Journal Event vocabulary (CONTEXT.md): every kind, one
   constructor and one reader each, and the naming rules - `outcome_name`, the
   failure bounds, the retry budget, the route names, the checks states.

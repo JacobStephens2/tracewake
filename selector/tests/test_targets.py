@@ -209,20 +209,6 @@ def test_the_per_target_values_the_commands_read_are_the_targets_own(tmp_path):
     }
 
 
-# --- The examples are a configured instance ----------------------------------
-
-
-def test_the_example_targets_file_loads():
-    """`examples/targets.toml` is what an operator copies, and it is read by
-    the configuration guard to learn which values are an instance's. A file
-    that no longer parses would make both of those quietly untrue."""
-    (target,) = targets.load(
-        Path(__file__).resolve().parents[2] / "examples" / "targets.toml")
-    assert target.landing in targets.LANDING_MODES
-    assert target.review_cap >= 1
-    assert target.labeler_allowlist
-
-
 def test_an_allowlist_written_as_a_bare_string_is_refused(tmp_path):
     """The spelling somebody reaches for first, and the dangerous one: TOML
     accepts it, and iterating a string would put every character of the
@@ -266,19 +252,17 @@ def test_a_configured_instance_reads_back(monkeypatch):
         "root@box.invalid", "acme/tracewake", "main", "acme")
 
 
-def test_the_example_instance_file_declares_every_required_value():
-    """`examples/tracewake.env` is what an operator copies. One that was
-    short of a required value would send them straight into the refusal the
-    examples exist to save them from."""
-    text = (Path(__file__).resolve().parents[2]
-            / "examples" / "tracewake.env").read_text()
-    declared = {
-        line.split("=", 1)[0].strip()
-        for line in text.splitlines()
-        if "=" in line and not line.lstrip().startswith("#")
-    }
-    assert set(targets.REQUIRED_INSTANCE_VARS) <= declared
-    assert targets.TARGETS_FILE_VAR in declared
+def test_install_declares_every_required_instance_value():
+    """INSTALL.md is what an operator copies. One that was short of a
+    required value would send them straight into the refusal the guide
+    exists to save them from."""
+    text = (Path(__file__).resolve().parents[2] / "INSTALL.md").read_text()
+    for name in targets.REQUIRED_INSTANCE_VARS:
+        assert name in text, (
+            f"INSTALL.md does not name {name}, which preflight refuses "
+            "with no default"
+        )
+    assert targets.TARGETS_FILE_VAR in text
 
 
 # --- Multi-tree Guardrail configuration (#14) --------------------------------

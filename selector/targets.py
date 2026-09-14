@@ -42,9 +42,8 @@ configured must not do half a cycle. `Target.load` and `Instance.from_env`
 raise `NotConfigured`, and `cycle.py` turns that into a journaled
 `cycle.failed` and a non-zero exit.
 
-`examples/` carries ETA's own values for both files, with no secrets in
-them - a reader who wants to see what a filled-in instance looks like reads
-those rather than reading defaults out of the code.
+INSTALL.md shows the Single-Host shape of both files. The product ships no
+filled-in Instance; a reader who wants values writes them on the Host.
 """
 from __future__ import annotations
 

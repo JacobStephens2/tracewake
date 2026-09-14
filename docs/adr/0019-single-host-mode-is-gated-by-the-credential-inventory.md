@@ -1,5 +1,9 @@
 # Single-host mode is gated by the credential inventory
 
+ADR 0029 makes Single-Host the product default. This ADR remains the gate on
+local dispatch: the credential inventory, not the SSH hop, is what makes one
+machine enough.
+
 Tracewake v0 was built around a two-machine topology (ADR 0003, ADR 0006): a
 controller hosting the Selector, the Journal, and the Window, reaching across an
 SSH hop to a dedicated box where agent Iterations run inside microVM Execution

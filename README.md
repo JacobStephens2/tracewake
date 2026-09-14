@@ -18,9 +18,9 @@ decision went the way it did.
 
 `CONTEXT.md` is the vocabulary - every capitalised term above is defined there -
 `SPEC.md` is the specification, stating Tracewake's bets side by side in the
-same terms as OpenAI's Symphony, `INSTALL.md` is the installation guide for both
-single-machine and two-machine setups, and `docs/adr/` holds the decisions,
-numbered, with the reasoning that produced them.
+same terms as OpenAI's Symphony, `INSTALL.md` is the Single-Host installation
+guide, and `docs/adr/` holds the decisions, numbered, with the reasoning that
+produced them.
 
 ## Configuring an instance
 
@@ -29,20 +29,22 @@ company, a host, a person or a repository: a value like that has exactly one
 right answer per instance and no right answer in the product, so a missing one
 stops the cycle at preflight with the value named rather than being filled in
 with somebody else's. `selector/tests/test_configuration.py` enforces that
-mechanically against every default in the shipping tree.
+mechanically against every default in the shipping tree. The product ships no
+filled-in Instance: those two files are written on the Host.
 
-`examples/` shows both files filled in, for a real instance, with no secrets;
-`selector/README.md` says what each value does. A second repository worked by
-the same instance is a second `[[target]]` stanza - its own labels, allowlist,
-checkouts, token, guest image, review cap and landing mode - and not a second
-controller. The target repository itself stays unaware that Tracewake exists.
+`INSTALL.md` shows the Single-Host shape; `selector/README.md` says what each
+value does. A second repository worked by the same instance is a second
+`[[target]]` stanza - its own labels, allowlist, checkouts, token, guest image,
+review cap and landing mode - and not a second controller. The target
+repository itself stays unaware that Tracewake exists. A remote Box remains a
+substituted `SELECTOR_BOX_COMMAND`, not a second setup.
 
 ## Layout
 
 | Path | What lives there |
 | --- | --- |
 | `SPEC.md` | The specification: Tracewake's architecture, bounds, and guarantees stated in OpenAI Symphony's terms. |
-| `INSTALL.md` | The step-by-step walkthrough for both single-machine and two-machine setups, from nothing to a first dry-run cycle. |
+| `INSTALL.md` | The step-by-step Single-Host walkthrough, from nothing to a first dry-run cycle. |
 | `CONTEXT.md` | The single domain vocabulary for the project. |
 | `loop/` | The Run-side half: the Termination Contract, one Run, Seeding, the Proposal, the agent adapters, and the offline bats suite that drives all of it through scripted fakes. Start at `loop/README.md`. |
 | `selector/` | The controller: the Cycle, Eligibility, Dispatch, the Journal, the watcher, the notifier, the board, and its pytest suite. Start at `selector/README.md`. |
@@ -51,7 +53,6 @@ controller. The target repository itself stays unaware that Tracewake exists.
 | `deploy/ansible/` | The roles that build a box and a controller. |
 | `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. |
 | `docs/adr/` | The decisions, numbered 0001 upward. |
-| `examples/` | One real instance's configuration - the env file, the targets file, the box's ansible variables and its cloud resource. No secrets. |
 | `notes/` | Evidence: what was run, what it printed, and what that settled. |
 | `research/` | The source-cited investigations the notes and the ADRs rest on. |
 

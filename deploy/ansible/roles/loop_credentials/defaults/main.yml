@@ -6,8 +6,7 @@
 # Deliberately undefined (issue #3): a person's name and address are facts
 # about an instance, not about Tracewake, and an apply that ran with somebody
 # else's would land commits attributed to them. Set both in the instance's
-# inventory - `examples/inventory.yml` shows the shape - and ansible fails
-# naming the variable if they are absent.
+# inventory, and ansible fails naming the variable if they are absent.
 # loop_commit_author_name:
 # loop_commit_author_email:
 

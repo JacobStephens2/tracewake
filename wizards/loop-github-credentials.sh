@@ -257,7 +257,7 @@ wizard_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # are the product's (the credentials directory, the key path); the ones that
 # name a person, a host or a repository are the instance's and live in its own
 # inventory, which is what TRACEWAKE_INSTANCE_VARS points at (issue #3).
-# `examples/inventory.yml` is the shape of that file.
+# TRACEWAKE_INSTANCE_VARS is the shape of that file.
 role_defaults="${wizard_dir}/../deploy/ansible/roles/loop_credentials/defaults/main.yml"
 instance_vars="${TRACEWAKE_INSTANCE_VARS:-}"
 assert_script="${wizard_dir}/../loop/assert-credentials.sh"

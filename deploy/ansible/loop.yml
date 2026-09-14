@@ -1,5 +1,5 @@
-# Configure the Loop's box. Which host is the instance's inventory's business;
-# see examples/inventory.yml. Dry-run first:
+# Configure the Loop's box. Which host is the instance's inventory's business.
+# Dry-run first:
 #   ansible-playbook loop.yml --check --diff
 #   ansible-playbook loop.yml            # apply
 #

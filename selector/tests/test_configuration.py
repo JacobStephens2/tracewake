@@ -7,18 +7,10 @@ built inside one company's repository and every fact about that company was a
 default in code; the way that comes back is one convenient default at a time,
 each of them reasonable on its own.
 
-So this grades the tree mechanically, in two directions:
-
-**Shape.** A default that carries an email address, a hostname, or a bare
-`owner/name` repository slug is refused whatever it says. That catches the
-next company as readily as the last one.
-
-**The examples.** `examples/` carries one real instance's values - that is
-what makes it useful - so every host, address, account and repository in it is
-by definition an instance fact. No shipping default may contain any of them.
-The two files grade each other: filling `examples/` in more completely makes
-this test stricter, and a default that crept back in fails against the very
-file that shows where it belongs.
+Issue #54 keeps that shape test and drops the filled-in Instance that used to
+grade it from the other side. A default that looks like an email, a hostname,
+or a bare `owner/name` slug is still refused. The product ships no sample
+Instance for the test to read: instance facts belong on the Host.
 
 What counts as a *default* is deliberately broad: `${VAR:-value}` and bare
 assignments in shell, `env("VAR", "value")` and module constants in Python,
@@ -28,15 +20,9 @@ list is a second place to keep in step.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import targets  # noqa: E402
-
 ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES = ROOT / "examples"
 
 # What ships: the Run's scripts, the controller, the window, the plays that
 # install them, and the walkthroughs an operator runs. Tests are excluded -
@@ -136,36 +122,6 @@ def _looks_like_a_file(value: str) -> bool:
     return value.endswith(_FILE_SUFFIXES)
 
 
-def instance_facts() -> set[str]:
-    """Every host, address, account and repository `examples/` declares.
-
-    Read out of the example instance rather than listed here, so that the two
-    files grade each other: a value shown in `examples/` is by construction a
-    fact about an instance, and the test gets stricter as the examples get
-    fuller.
-    """
-    facts: set[str] = set()
-    for path in sorted(EXAMPLES.rglob("*")):
-        if not path.is_file():
-            continue
-        text = path.read_text()
-        facts |= set(_EMAIL.findall(text))
-        facts |= {h for h in _HOST.findall(text) if not _looks_like_a_file(h)}
-        # Bounded on both sides, so that `home/loop` inside `/home/loop/x` is
-        # not read as a repository. A slug stands on its own or it is a path.
-        for word in re.findall(
-            r"(?<![\w./-])[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w-]*(?![\w./-])", text
-        ):
-            if _REPO_SLUG.match(word) and not _looks_like_a_file(word):
-                facts.add(word)
-    # The accounts the example allowlist names. A person's account has no
-    # shape of its own - it is only ever a bare word - so the one place it can
-    # be learned from is the example that declares it.
-    for target in targets.load(EXAMPLES / "targets.toml"):
-        facts |= set(target.labeler_allowlist)
-    return facts
-
-
 def test_the_shipping_tree_has_defaults_to_grade():
     """A guard on the guard. Every regex above could stop matching - a rename,
     a reformat - and this test would then pass by reading nothing."""
@@ -186,42 +142,36 @@ def test_no_default_names_a_host_a_person_or_a_repository():
     assert not offenders, "\n".join(
         f"{where}: {name} defaults to {value!r}, which names {what}."
         " It is a fact about an instance: refuse it by name instead"
-        " (targets.missing / the `require` helper), and show the value in"
-        " examples/."
+        " (targets.missing / the `require` helper)."
         for where, name, value, what in offenders
     )
 
 
-def test_no_default_carries_a_value_the_examples_declare():
-    facts = instance_facts()
-    assert facts, "examples/ declares no instance facts; this test is inert"
-    offenders = [
-        (where, name, value, fact)
-        for where, name, value in defaults()
-        for fact in facts
-        if fact in value
-    ]
-    assert not offenders, "\n".join(
-        f"{where}: {name} defaults to {value!r}, which carries {fact!r} -"
-        " a value examples/ declares, and therefore an instance's fact."
-        for where, name, value, fact in offenders
+def test_the_tree_contains_no_filled_in_instance_sample():
+    """Issue #54: instance facts belong on the Host, not in the product as
+    'the example'. A directory of filled-in env, targets, inventory and
+    droplet files is that sample even when it carries no secrets."""
+    examples = ROOT / "examples"
+    assert not examples.exists(), (
+        "examples/ is a filled-in Instance sample. Remove it; INSTALL.md "
+        "shows the Single-Host shape without someone else's hostnames, mail "
+        "or repositories."
     )
 
 
-def test_the_examples_carry_no_secret():
-    """`examples/` is read by the two tests above, committed, and public. What
-    it is for is addresses and paths; a token in it would be a credential in
-    the repository AND a value every default is graded against."""
-    patterns = {
-        "a GitHub token": re.compile(r"gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}"),
-        "an Anthropic key or setup token": re.compile(r"sk-ant-[A-Za-z0-9-]{10,}"),
-        "a private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-        "an xAI key": re.compile(r"xai-[A-Za-z0-9]{16,}"),
-        "an AWS access key id": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    }
-    for path in sorted(EXAMPLES.rglob("*")):
-        if not path.is_file():
-            continue
-        text = path.read_text()
-        for what, pattern in patterns.items():
-            assert not pattern.search(text), f"{path.name} carries {what}"
+def test_install_and_readme_describe_only_single_host():
+    """The product teaches one setup. A remote Box stays a substituted
+    command in the tree; standing it up is not a second walkthrough."""
+    for name in ("INSTALL.md", "README.md"):
+        text = (ROOT / name).read_text()
+        lowered = text.lower()
+        assert "single-host" in lowered, (
+            f"{name} does not describe Single-Host, which is the product's "
+            "one taught setup (issue #54)."
+        )
+        for phrase in ("two-machine", "two machine"):
+            assert phrase not in lowered, (
+                f"{name} still teaches {phrase!r}. Single-Host is the setup; "
+                "a remote Box is a substituted command, not a documented "
+                "topology (issue #54)."
+            )

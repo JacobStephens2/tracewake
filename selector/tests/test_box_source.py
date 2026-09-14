@@ -19,10 +19,16 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import dispatch  # noqa: E402
+import targets  # noqa: E402
 
 SSH_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "ssh.sh"
 LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "local.sh"
@@ -237,6 +243,36 @@ def box_runner(tmp_path: Path) -> Runner:
 
 
 # --- Shared contract: both sources drive through the same interface ---------
+
+
+def test_the_ssh_box_command_remains_in_the_tree_and_tested() -> None:
+    """A remote Box is a substituted command, not a deleted one (issue #54)."""
+    assert SSH_SOURCE.is_file()
+    assert SSH_SOURCE in BOX_SOURCES
+
+
+def test_the_product_default_box_command_is_local(monkeypatch) -> None:
+    """Single-Host is the product default. ssh.sh is the substitute an
+    instance opts into, not the fallback an unset instance gets."""
+    monkeypatch.delenv("SELECTOR_BOX_COMMAND", raising=False)
+    target = targets.Target(
+        repo="acme/widgets",
+        labels=targets.Labels(
+            ready="ready-for-agent",
+            needs_info="needs-info",
+            review="awaiting-review",
+            human="ready-for-human",
+        ),
+        labeler_allowlist=("an-operator",),
+        work_repo=Path("/nonexistent/work"),
+        box_repo="/box/widgets",
+        token_file="/tokens/widgets",
+        guest_template="widgets:1",
+        landing="propose",
+        review_cap=20,
+    )
+    config = dispatch.DispatchConfig.for_target(target)
+    assert Path(config.box_command) == LOCAL_SOURCE
 
 
 @pytest.mark.parametrize("source", BOX_SOURCES)

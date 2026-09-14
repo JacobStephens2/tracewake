@@ -113,7 +113,7 @@ class DispatchConfig:
             progress_log_path=env("LOOP_PROGRESS_LOG_PATH", "PROGRESS.md"),
             run_heading=env("LOOP_RUN_HEADING", "## Run started"),
             box_command=env(
-                "SELECTOR_BOX_COMMAND", str(HERE / "box-sources" / "ssh.sh")
+                "SELECTOR_BOX_COMMAND", str(HERE / "box-sources" / "local.sh")
             ),
             issue_command=env(
                 "SELECTOR_ISSUE_COMMAND", str(HERE / "issue-sources" / "github.sh")
@@ -128,9 +128,9 @@ class DispatchConfig:
             ),
             # The Run's own is longer than the Termination Contract's run
             # clock (90 minutes) by enough to cover the checkout and the
-            # proposal. It is a backstop for an SSH that wedged, not a second
-            # bound on the Run: the Run bounds itself, and a number here that
-            # could fire first would be a bound nobody declared in
+            # proposal. It is a backstop for a box command that wedged, not a
+            # second bound on the Run: the Run bounds itself, and a number
+            # here that could fire first would be a bound nobody declared in
             # contract.sh.
             run_timeout_seconds=int(
                 env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "7200")
