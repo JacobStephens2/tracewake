@@ -223,6 +223,13 @@ say "tofu, ansible-playbook, and ssh are all present."
 # ── 2. Droplet ────────────────────────────────────────────────────────────
 stage "Droplet: token and identifiers"
 say "OpenTofu needs a DigitalOcean token plus the five identifiers from #55."
+# A vault ref (name:.., uuid:.., project:.., op://.., or a bare UUID) is not
+# a token: the launcher passes it through literally when its backend cannot
+# resolve it. Drop it so the prompt below fires instead of trusting it.
+if [[ "${DIGITALOCEAN_TOKEN:-}" =~ ^(name:|uuid:|project:|op://) || "${DIGITALOCEAN_TOKEN:-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}- ]]; then
+  say "Session value looks like an unresolved vault ref, not a token; asking instead."
+  unset DIGITALOCEAN_TOKEN
+fi
 if [[ -n "${DIGITALOCEAN_TOKEN:-}" ]]; then
   say "Using DIGITALOCEAN_TOKEN from this session (e.g. va -m openai.env.refs bash)."
 else
