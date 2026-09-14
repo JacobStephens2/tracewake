@@ -12,10 +12,15 @@ grade it from the other side. A default that looks like an email, a hostname,
 or a bare `owner/name` slug is still refused. The product ships no sample
 Instance for the test to read: instance facts belong on the Host.
 
+Issue #55 adds the provision module to the scan. Its five variables are
+required, so a `default` line in any `variable` block is the same offence as
+a default anywhere else: an instance fact checked into the product.
+
 What counts as a *default* is deliberately broad: `${VAR:-value}` and bare
 assignments in shell, `env("VAR", "value")` and module constants in Python,
-scalar role defaults in YAML. Reading the tree rather than a list, because a
-list is a second place to keep in step.
+scalar role defaults in YAML, `default = ...` in an OpenTofu `variable`
+block. Reading the tree rather than a list, because a list is a second place
+to keep in step.
 """
 from __future__ import annotations
 
@@ -63,6 +68,80 @@ _PY_CONST = re.compile(
 # egress allowlist - third-party services the product itself talks to, which
 # are not an instance's own machines and are reviewed as what they are.
 _YAML_SCALAR = re.compile(r"^([a-z][a-z0-9_]*):\s*([^\s#{>|\[-][^\n#]*?)\s*$", re.M)
+# An OpenTofu variable header. The block that follows is found by brace
+# counting rather than by regex, because a nested block - a `validation`
+# stanza, or a brace inside a description - closes a brace before any
+# `default` line.
+_TF_VARIABLE_HEADER = re.compile(r"variable\s+\"([^\"]+)\"\s*\{")
+_TF_DEFAULT_LINE = re.compile(r"^\s*default\s*=\s*(.+?)\s*$", re.M)
+# A quoted string, for seeing past brackets that are string contents rather
+# than structure when a default continues onto following lines.
+_TF_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _tf_block_end(text: str, opening: int) -> int:
+    """Index just past the `}` closing the brace at `opening`.
+
+    Braces inside quoted strings do not count: a description is the most
+    natural place for one to appear.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(opening, len(text)):
+        char = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    raise ValueError("unbalanced braces in variable block")
+
+
+def _brackets_open(text: str) -> bool:
+    """Whether brackets stay unclosed, ignoring string contents: a `[` in a
+    description is prose, not structure."""
+    depth = 0
+    for char in _TF_STRING.sub("", text):
+        if char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+    return depth > 0
+
+
+def tf_variable_defaults(text: str) -> list[tuple[str, str]]:
+    """Every `default` in an OpenTofu file, as (variable name, value).
+
+    A list or map default may continue onto following lines; those lines
+    belong to the value while brackets stay open.
+    """
+    found = []
+    for match in _TF_VARIABLE_HEADER.finditer(text):
+        body = text[match.end():_tf_block_end(text, match.end() - 1) - 1]
+        default = _TF_DEFAULT_LINE.search(body)
+        if not default:
+            continue
+        lines = [default.group(1)]
+        # The split's first line is the tail of the default line itself,
+        # already captured above; what follows are the continuation lines.
+        rest = body[default.end():].splitlines()[1:]
+        while _brackets_open("\n".join(lines)) and rest:
+            lines.append(rest.pop(0))
+        value = re.sub(r"\s+#.*$", "", "\n".join(lines)).strip().strip('"')
+        found.append((match.group(1), value))
+    return found
 
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 # A hostname is a dotted name ending in a real public suffix. The pseudo-TLDs
@@ -115,6 +194,9 @@ def defaults() -> list[tuple[str, str, str]]:
         for reader in readers:
             for match in reader.finditer(text):
                 found.append((where, match.group(1), match.group(2)))
+        if path.suffix == ".tf":
+            for name, value in tf_variable_defaults(text):
+                found.append((where, name, value))
     return found
 
 
@@ -156,6 +238,51 @@ def test_the_tree_contains_no_filled_in_instance_sample():
         "examples/ is a filled-in Instance sample. Remove it; INSTALL.md "
         "shows the Single-Host shape without someone else's hostnames, mail "
         "or repositories."
+    )
+
+
+def test_tofu_host_variables_are_required():
+    """Issue #55: region, size, VPC, SSH key and name are required variables
+    with no product defaults. A default would let an apply silently build
+    somebody else's host shape, and omitting a variable must fail before
+    apply - which is what having no default does."""
+    variables = ROOT / "deploy" / "tofu" / "variables.tf"
+    assert variables.is_file(), (
+        "deploy/tofu/variables.tf is missing. The provision module declares "
+        "the Host's region, size, VPC, SSH key and name (issue #55)."
+    )
+    text = variables.read_text()
+    names = _TF_VARIABLE_HEADER.findall(text)
+    for expected in ("name", "region", "size", "vpc_uuid", "ssh_key"):
+        assert expected in names, (
+            f"deploy/tofu/variables.tf declares no {expected!r} variable. "
+            "All five are required (issue #55)."
+        )
+    assert tf_variable_defaults(text) == [], (
+        "deploy/tofu/variables.tf sets a default. Required variables take "
+        "none, so omitting one fails before apply (issue #55)."
+    )
+
+
+def test_tofu_host_is_one_ubuntu_droplet():
+    """Issue #55: applying the module creates one Ubuntu 24.04 droplet that
+    can be a Tracewake Host - the image `sbx` supports, on a shape with
+    nested virtualization. The live apply itself is a human wizard step, so
+    this pins the resource the apply would build."""
+    main = ROOT / "deploy" / "tofu" / "main.tf"
+    assert main.is_file(), (
+        "deploy/tofu/main.tf is missing. The provision module builds the "
+        "Host droplet (issue #55)."
+    )
+    text = main.read_text()
+    droplets = re.findall(r'resource\s+"digitalocean_droplet"\s+"[^"]+"', text)
+    assert len(droplets) == 1, (
+        f"deploy/tofu/main.tf declares {len(droplets)} droplets, not one "
+        "(issue #55)."
+    )
+    assert re.search(r'image\s*=\s*"ubuntu-24-04-x64"', text), (
+        "deploy/tofu/main.tf does not build Ubuntu 24.04, the image the "
+        "Execution Boundary supports (issue #55)."
     )
 
 
