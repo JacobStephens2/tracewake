@@ -1,0 +1,6 @@
+---
+- name: reload caddy
+  ansible.builtin.systemd:
+    name: caddy
+    state: reloaded
+  when: not ansible_check_mode

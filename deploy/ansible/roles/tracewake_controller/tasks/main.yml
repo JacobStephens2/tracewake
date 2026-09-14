@@ -6,6 +6,15 @@
 
 # --- 1. PostgreSQL & Journal (ADR 0015) --------------------------------------
 
+- name: Discover services for a first-install check run
+  ansible.builtin.service_facts:
+
+- name: Discover existing Python environments
+  ansible.builtin.stat:
+    path: "{{ tracewake_dir }}/{{ item }}/.venv/bin/python"
+  loop: [selector, web]
+  register: tracewake_venvs
+
 - name: PostgreSQL server package (RedHat)
   ansible.builtin.dnf:
     name: "@postgresql:16/server"
@@ -34,6 +43,7 @@
     name: postgresql
     enabled: true
     state: started
+  when: not ansible_check_mode or 'postgresql.service' in ansible_facts.services
 
 - name: Determine PostgreSQL configuration file paths
   become: true
@@ -45,6 +55,7 @@
     - "SHOW hba_file"
   changed_when: false
   check_mode: false
+  when: not ansible_check_mode or (ansible_facts.services.get('postgresql.service', {}).get('state', '') == 'running')
 
 - name: Unix socket only — no TCP listener
   ansible.builtin.lineinfile:
@@ -64,7 +75,7 @@
 
 - name: Journal database role with CREATEDB
   become: true
-  become_user: postgres
+  become_user: "{{ 'root' if ansible_check_mode else 'postgres' }}"
   ansible.builtin.shell: >
     psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ tracewake_user }}'" | grep -q 1
     && echo exists || createuser --createdb {{ tracewake_user }}
@@ -73,7 +84,7 @@
 
 - name: Journal database owned by tracewake user
   become: true
-  become_user: postgres
+  become_user: "{{ 'root' if ansible_check_mode else 'postgres' }}"
   ansible.builtin.shell: >
     psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ tracewake_journal_db }}'" | grep -q 1
     && echo exists || createdb -O {{ tracewake_user }} {{ tracewake_journal_db }}
@@ -82,7 +93,7 @@
 
 - name: Journal schema applied (idempotent DDL)
   become: true
-  become_user: "{{ tracewake_user }}"
+  become_user: "{{ 'root' if ansible_check_mode else tracewake_user }}"
   ansible.builtin.command: >
     psql -d {{ tracewake_journal_db }} -v ON_ERROR_STOP=1
     -f {{ tracewake_dir }}/selector/schema.sql
@@ -96,7 +107,8 @@
     virtualenv: "{{ tracewake_dir }}/selector/.venv"
     virtualenv_command: /usr/bin/python3 -m venv
   become: true
-  become_user: "{{ tracewake_user }}"
+  become_user: "{{ 'root' if ansible_check_mode else tracewake_user }}"
+  when: not ansible_check_mode or tracewake_venvs.results[0].stat.exists
 
 - name: Window virtual environment and dependencies
   ansible.builtin.pip:
@@ -104,7 +116,8 @@
     virtualenv: "{{ tracewake_dir }}/web/.venv"
     virtualenv_command: /usr/bin/python3 -m venv
   become: true
-  become_user: "{{ tracewake_user }}"
+  become_user: "{{ 'root' if ansible_check_mode else tracewake_user }}"
+  when: not ansible_check_mode or tracewake_venvs.results[1].stat.exists
 
 # --- 3. Systemd units installation ------------------------------------------
 

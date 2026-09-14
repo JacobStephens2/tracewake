@@ -41,7 +41,7 @@
 # left exactly as it is.
 - name: The Loop's dedicated signing key, generated on the box
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command:
     argv:
       - ssh-keygen
@@ -107,7 +107,7 @@
 # different claims, and it is the second one every Iteration depends on.
 - name: The Run account signs with the Loop's key
   become: true
-  become_user: loop
+  become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   ansible.builtin.command: git config --global --get {{ item.key }}
   changed_when: false
   register: loop_git_setting

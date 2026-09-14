@@ -50,7 +50,7 @@ substituted `SELECTOR_BOX_COMMAND`, not a second setup.
 | `selector/` | The controller: the Cycle, Eligibility, Dispatch, the Journal, the watcher, the notifier, the board, and its pytest suite. Start at `selector/README.md`. |
 | `web/` | The window: a FastAPI app that renders the Journal - the queue board, a Run's history, the ADRs - and its suite. |
 | `deploy/systemd/` | The units: the Selector's cycle timer and notifier, the window and its Attended Preview. |
-| `deploy/ansible/` | The roles that build a box and a controller. |
+| `deploy/ansible/` | `host.yml` installs the Single-Host Controller, local Box, and HTTPS proxy. |
 | `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. |
 | `docs/adr/` | The decisions, numbered 0001 upward. |
 | `notes/` | Evidence: what was run, what it printed, and what that settled. |
