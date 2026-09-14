@@ -51,7 +51,7 @@ substituted `SELECTOR_BOX_COMMAND`, not a second setup.
 | `web/` | The window: a FastAPI app that renders the Journal - the queue board, a Run's history, the ADRs - and its suite. |
 | `deploy/systemd/` | The units: the Selector's cycle timer and notifier, the window and its Attended Preview. |
 | `deploy/ansible/` | `host.yml` installs the Single-Host Controller, local Box, and HTTPS proxy. |
-| `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. |
+| `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. `host-up.sh` stands the Host up (droplet, play, `/healthz`, credential inventory) for #57. |
 | `docs/adr/` | The decisions, numbered 0001 upward. |
 | `notes/` | Evidence: what was run, what it printed, and what that settled. |
 | `research/` | The source-cited investigations the notes and the ADRs rest on. |
