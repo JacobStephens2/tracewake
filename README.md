@@ -99,14 +99,14 @@ spend. The two Python suites need a Postgres role matching the OS user with
 `CREATEDB`; they create and drop a throwaway database per run.
 
 ```bash
-# The Loop - 289 tests, bats
+# The Loop - bats
 cd loop && bats tests/
 
-# The Selector - 340 tests, pytest
+# The Selector - pytest
 cd selector && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 
-# The window - 220 tests, pytest
+# The window - pytest
 cd web && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```
@@ -131,4 +131,4 @@ left is tracked in this repository's issues, under
 
 ## Licence
 
-MIT. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).
