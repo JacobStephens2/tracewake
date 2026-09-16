@@ -272,8 +272,13 @@
       Declare its hosts there, each with a `need:` saying what breaks without it,
       before pointing the role at it.
 
+# Ansible's sudo invocation can give sbx a terminal on stdin. On an
+# uninitialized store that starts an interactive spinner instead of returning
+# the error the guard below expects (observed hanging for over 3.5 hours).
+# Read stdin from /dev/null so the fresh-box path fails immediately, while
+# preserving stdout for posture parsing. The redirect requires `shell`.
 - name: Read the boundary's current egress posture
-  ansible.builtin.command: sbx policy ls --json
+  ansible.builtin.shell: sbx policy ls --json </dev/null
   become: true
   become_user: loop
   register: loop_execution_boundary_policy_state
@@ -345,11 +350,10 @@
 # ansible's pipe. The exit status is still `reset`'s own, so a real failure
 # still fails the task, and the log is on the box if one ever does.
 #
-# Only this task needs it. Every other `sbx` command in this role runs with a
-# daemon already up - the unit started it, or the restart below did - so none of
-# them spawns anything. The read task above is the one to be careful with if
-# these are ever reordered: it needs its stdout, so it must stay after the task
-# that guarantees a daemon is running.
+# Only this task redirects output. Every other `sbx` command in this role runs
+# with a daemon already up - the unit started it, or the restart below did - so
+# none of them spawns anything. If these tasks are reordered, the posture read
+# must stay after the task that guarantees a daemon is running: it needs stdout.
 - name: Clear the policy store so the profile can be re-chosen
   ansible.builtin.shell: >-
     sbx policy reset --force
