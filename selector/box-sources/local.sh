@@ -26,6 +26,8 @@
 # Configuration, all environment:
 #
 #   SELECTOR_BOX_REPO         required   the target's checkout on this machine
+#   SELECTOR_BOX_AGENT        optional   the Run's agent adapter, told to the
+#                                        credential gate as --agent (default claude)
 #   SELECTOR_BOX_LOOP         optional   the Loop directory (default ../../loop)
 #   LOOP_GITHUB_TOKEN_FILE    optional   the target's repository token
 #   LOOP_GUEST_TEMPLATE       optional   the target's guest image
@@ -64,6 +66,12 @@ assert_script="${SELECTOR_ASSERT_CREDENTIALS_COMMAND:-${box_loop}/assert-credent
 
 local_home="${SELECTOR_BOX_HOME:-${HOME:?HOME is required}}"
 assert_args=(--home "${local_home}")
+
+# Which subscription login counts as the box's model credential. The
+# instance's agent, not the gate's default: a Grok instance holds no Claude
+# login on purpose (story 30), and the gate would refuse every dispatch
+# without this.
+assert_args+=(--agent "${SELECTOR_BOX_AGENT:-claude}")
 
 if [[ -n "${LOOP_GITHUB_TOKEN_FILE:-}" ]]; then
     assert_args+=(--token-file "${LOOP_GITHUB_TOKEN_FILE}")

@@ -500,6 +500,29 @@ def test_local_box_does_not_skip_credential_inventory(box_runner: Runner) -> Non
     assert dispatched.assert_called, "credential inventory check was skipped"
 
 
+def test_local_box_tells_the_gate_which_agent_runs(box_runner: Runner) -> None:
+    """The gate's model row follows the instance's agent, not its default."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645",
+        **{**TARGET_ENV, "SELECTOR_BOX_AGENT": "grok"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    args = box_runner.dispatched(LOCAL_SOURCE).assert_args
+    assert "--agent" in args
+    assert args[args.index("--agent") + 1] == "grok"
+
+
+def test_local_box_gate_defaults_to_claude(box_runner: Runner) -> None:
+    """An instance naming no agent keeps the gate's historical default."""
+    result = box_runner.run(LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    args = box_runner.dispatched(LOCAL_SOURCE).assert_args
+    assert "--agent" in args
+    assert args[args.index("--agent") + 1] == "claude"
+
+
 def test_production_credentials_cause_local_dispatch_refusal(tmp_path):
     """An operator machine holding production credentials must fail refusal.
     Driven against the real loop/assert-credentials.sh script with a production env variable.

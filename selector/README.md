@@ -173,7 +173,9 @@ per-target values across the hop rather than reading them -
 `LOOP_GITHUB_TOKEN_FILE` and `LOOP_GUEST_TEMPLATE` - because what consumes
 them is the Run. `box-sources/local.sh` (ADR 0019) shares `SELECTOR_BOX_REPO`,
 `SELECTOR_BOX_LOOP`, `LOOP_GITHUB_TOKEN_FILE` and `LOOP_GUEST_TEMPLATE`, requires
-no `SELECTOR_BOX_HOST`, and gates dispatch on `loop/assert-credentials.sh`.
+no `SELECTOR_BOX_HOST`, and gates dispatch on `loop/assert-credentials.sh`,
+telling the gate which agent's subscription login counts (`SELECTOR_BOX_AGENT`,
+`claude`).
 `box-sources/facts.sh` shares the first, second and fourth of ssh.sh's,
 and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it asks for the guest
 template.
