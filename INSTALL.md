@@ -177,6 +177,13 @@ git clone git@github.com:my-org/my-app.git /srv/workspaces/box/my-app
 Tracewake enforces strict credential isolation (ADR 0009, ADR 0020). Single-Host
 dispatch will not start until `loop/assert-credentials.sh` exits 0.
 
+A Host stood up with `wizards/host-up.sh` can finish Google SMTP (readable
+only by the Selector account), the agent subscription login, one fine-grained
+forge token per Target, and signing-key registration with
+`wizards/host-credentials.sh`. The sections below are the generic manual
+path; that wizard is the Single-Host walkthrough that also places the mail
+secret off the Run account.
+
 #### 1. Host GitHub Authentication
 The Selector reads issues and checks rulesets using the `gh` CLI:
 ```bash
