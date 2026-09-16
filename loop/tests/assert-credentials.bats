@@ -658,6 +658,24 @@ write_grok_auth() {
     [[ "$output" == *"model-credential"* ]]
 }
 
+@test "a grok box whose config sets the env_key spelling is a violation" {
+    rm -rf "${BOX_HOME}/.claude"
+    write_grok_auth
+    printf 'env_key = "GROK_DEPLOYMENT_KEY"\n' >"${BOX_HOME}/.grok/config.toml"
+    run_assert --agent grok
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"model-credential"* ]]
+}
+
+@test "a commented-out key in the grok config is not a credential" {
+    rm -rf "${BOX_HOME}/.claude"
+    write_grok_auth
+    printf '# api_key = "not-a-live-setting"\n' >"${BOX_HOME}/.grok/config.toml"
+    run_assert --agent grok
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[held]    model-credential"* ]]
+}
+
 @test "a grok login is not a claude credential" {
     rm -rf "${BOX_HOME}/.claude"
     write_grok_auth
@@ -682,4 +700,10 @@ write_grok_auth() {
     run_assert --agent ../boundary-harness
     [ "$status" -eq 1 ]
     [[ "$output" == *"no agent adapter"* ]]
+}
+
+@test "an empty agent name is refused" {
+    run_assert --agent ""
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"needs a name"* ]]
 }

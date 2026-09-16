@@ -61,6 +61,10 @@ branch="${1:?usage: box-as-loop.sh <branch> <task-ref>}"
 task_ref="${2:?usage: box-as-loop.sh <branch> <task-ref>}"
 
 box_user="${SELECTOR_BOX_USER:-loop}"
+# Validated before reaching sudo: anything else fails closed at the
+# sudoers rule (conductor-loop pins loop:loop), but the script's own error
+# says what was wrong instead of sudo's.
+[[ "${box_user}" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "unknown Run account '${box_user}'"
 local_sh="/srv/tracewake/selector/box-sources/local.sh"
 
 [[ -x "${local_sh}" ]] || die "local.sh not executable or not found at ${local_sh}"
