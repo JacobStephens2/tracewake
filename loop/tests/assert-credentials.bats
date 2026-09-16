@@ -629,7 +629,7 @@ write_grok_auth() {
     run_assert --agent grok
     [ "$status" -eq 0 ]
     [ "$(field CREDENTIALS_RESULT)" = "clean" ]
-    [[ "$output" == *"[held]     model-credential"* ]]
+    [[ "$output" == *"[held]    model-credential"* ]]
     [[ "$output" == *"Grok"* ]]
 }
 
@@ -637,7 +637,7 @@ write_grok_auth() {
     run_assert --agent claude
     [ "$status" -eq 0 ]
     [ "$(field CREDENTIALS_RESULT)" = "clean" ]
-    [[ "$output" == *"[held]     model-credential"* ]]
+    [[ "$output" == *"[held]    model-credential"* ]]
 }
 
 @test "a grok box with no subscription login is a violation naming it" {
