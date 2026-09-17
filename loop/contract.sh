@@ -210,6 +210,32 @@ loop_base_branch() {
     printf '%s\n' "${base#"${remote}/"}"
 }
 
+# The kept-earlier log beside the live one: `{stem}-earlier{suffix}`, so
+# `PROGRESS-earlier.md` beside `PROGRESS.md`, whatever the latter is called.
+# The Selector derives the same path in Python (`kept_log_path` in
+# selector/dispatch.py) when it moves a previous attempt's log aside before
+# re-seeding; the Run derives it here when it removes the scaffolding at its
+# end. The two spellings agree or the cleanup leaves a file behind, so this
+# derivation lives here rather than inline in run.sh.
+loop_earlier_log_path() {
+    local live="$1" dir base stem suffix
+    if [[ ${live} == */* ]]; then
+        dir="${live%/*}/"
+        base="${live##*/}"
+    else
+        dir=""
+        base="${live}"
+    fi
+    if [[ ${base} == *.* ]]; then
+        stem="${base%.*}"
+        suffix=".${base##*.}"
+    else
+        stem="${base}"
+        suffix=""
+    fi
+    printf '%s%s-earlier%s\n' "${dir}" "${stem}" "${suffix}"
+}
+
 # Render the Contract for the Progress Log. Written at Run start so that reading
 # the log afterwards tells you which bound fired and what it was set to, without
 # needing the version of this file that was current at the time.

@@ -55,6 +55,11 @@
 # that is checked out - which is what the offline suite drives, and why the flag
 # is opt-in rather than a default with a way to turn it off.
 #
+# Before either, the Run removes its own scaffolding - the Plan, the Progress
+# Log, and any kept-earlier log - in a Run-authored commit, so the branch tip is
+# merge-clean and nothing mergeable carries them (spec issue #78). Reviewers
+# read them from the branch's history instead; the proposal is pushed after.
+#
 # What the first Iteration was told, emitted on stdout at the end (#80): the
 # rendered briefing between LOOP_BRIEFING_BEGIN and LOOP_BRIEFING_END. Later
 # Iterations differ only in number, so this one rendering is the stored fact
@@ -71,8 +76,8 @@
 # Nothing about it can change what the Run did. A notification that failed does
 # not move the exit code and is not written into the Progress Log - the Run is
 # the thing that happened, and telling somebody about it is not - which is also
-# why it is the last act of all, after the Progress Log has been committed and
-# pushed with the proposal.
+# why it is the last act of all, after the record has been committed, the
+# scaffolding removed, and the proposal pushed.
 
 set -euo pipefail
 
@@ -525,6 +530,31 @@ fi
 
 commit_bookkeeping "Loop: Run ended (${ended_by})"
 
+# --- Merge-clean -----------------------------------------------------------
+#
+# The enforcement point the whole of spec issue #78 keys off: after the last
+# Iteration, the Run removes the Plan, the Progress Log, and any kept-earlier
+# log in a Run-authored commit, BEFORE the proposal is pushed. The branch tip is
+# always merge-clean - nothing mergeable carries the scaffolding - while the
+# branch's history still carries it readably, which is where reviewers read it.
+#
+# Unconditional rather than only with --propose: the tip is merge-clean whatever
+# ends the Run, and a Run that never proposes still leaves no scaffolding behind
+# for a later Seeding to trip over.
+#
+# Removed by path, never swept: an agent that left unrelated changes dirty in
+# the working tree keeps them dirty, exactly as commit_bookkeeping above keeps
+# them out of the Loop's own commits. And committed only when something was
+# staged: a Run whose scaffolding is already gone has nothing to say here.
+
+earlier_log="$(loop_earlier_log_path "${LOOP_PROGRESS_LOG_PATH}")"
+git -C "${repo}" rm --quiet --ignore-unmatch -- \
+    "${LOOP_PLAN_PATH}" "${LOOP_PROGRESS_LOG_PATH}" "${earlier_log}"
+if ! git -C "${repo}" diff --cached --quiet; then
+    git -C "${repo}" commit --quiet --message \
+        "Loop: Remove the Run scaffolding so the branch tip is merge-clean"
+fi
+
 # --- The proposal ----------------------------------------------------------
 #
 # The Run's only external effect, and the last thing it does. It runs on EVERY
@@ -560,25 +590,26 @@ if ${propose}; then
         # is the more useful fact, and LOOP_RUN_PROPOSAL below says the rest.
         ((exit_code != 0)) || exit_code=6
 
-        # The block above was written and committed BEFORE the proposal ran,
+        # The Run-ended record was written and committed BEFORE the proposal ran,
         # because the proposal pushes it and a pull request has to contain the
-        # record of the Run that produced it. So on this path the log now holds
-        # an exit code that is out of date, and the log is the artifact the Run
-        # tells a reviewer to read first. Correct it here rather than leave the
-        # two disagreeing in exactly the case the log exists for.
+        # record of the Run that produced it. So on this path history holds an
+        # exit code that is out of date. Correct it here rather than leave the
+        # two disagreeing in exactly the case the record exists for.
+        #
+        # As an empty commit rather than appended to the Progress Log: the
+        # scaffolding is gone from the tip by now, and reviving the file for one
+        # paragraph would put a Progress Log back on the branch the cleanup just
+        # took it off. The tip stays merge-clean; the correction travels in
+        # history like everything else the Run did.
         #
         # Only on failure, and not pushed again: when a proposal fails there is
         # no pull request to keep in sync - either nothing was pushed at all, or
         # the branch is up with nothing open on it. Re-running propose.sh by
         # hand, which is what that second case is for, carries this commit up
         # with it.
-        {
-            printf '\n### Proposal failed %s\n\n' "$(stamp)"
-            printf -- '- The exit code recorded above was written before the proposal ran.\n'
-            printf -- '- Ending bound: %s\n' "${ended_by}"
-            printf -- '- Exit code: %d\n\n' "${exit_code}"
-        } >>"${progress_log}"
-        commit_bookkeeping "Loop: the proposal failed (${ended_by})"
+        git -C "${repo}" commit --quiet --allow-empty \
+            --message "Loop: the proposal failed (${ended_by})" \
+            --message "The exit code in the Run-ended record was written before the proposal ran. Ending bound: ${ended_by}. Exit code: ${exit_code}."
     fi
 fi
 
@@ -590,10 +621,10 @@ fi
 #
 # It cannot: the exit code is already decided above and is not touched here, and
 # nothing below writes to the Progress Log. That is deliberate rather than
-# incidental. The log has been committed and pushed with the proposal, so a
-# commit made now would leave the branch on GitHub disagreeing with the checkout
-# on the box - and a Run's record is the Run, while whether somebody was told
-# about it is not part of what happened.
+# incidental. The record has been committed, the scaffolding removed, and the
+# tip pushed with the proposal, so a commit made now would leave the branch on
+# GitHub disagreeing with the checkout on the box - and a Run's record is the
+# Run, while whether somebody was told about it is not part of what happened.
 #
 # The surface is one substitutable command (ADR 0004). The one shipped comments
 # on the proposal, which is why --notify needs --propose: the boundary's egress
@@ -626,7 +657,7 @@ if ${notify}; then
             iteration_counts_line
             printf -- '- Faults: %s\n' "${fault_summary}"
             printf -- '- Proposal: %s\n' "${proposal_url}"
-            printf '\nNothing is merged, deployed or applied. Read %s on this branch first.\n' \
+            printf '\nNothing is merged, deployed or applied. Read %s in this branch'"'"'s history first - the tip carries no Run scaffolding.\n' \
                 "${LOOP_PROGRESS_LOG_PATH}"
         } >"${notify_body}"
 

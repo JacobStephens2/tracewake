@@ -339,6 +339,97 @@ setup() {
     [[ "$(git -C "${REPO}" status --porcelain)" == *"work.txt"* ]]
 }
 
+# --- Merge-clean -----------------------------------------------------------
+#
+# Spec issue #78: a Run ends with its scaffolding gone from the branch tip. The
+# Plan, the Progress Log and any kept-earlier log are removed in a Run-authored
+# commit before the proposal is pushed; reviewers read them from history.
+
+@test "a finished Run's tip carries no Plan and no Progress Log, but the history does" {
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    [ ! -e "${REPO}/PLAN.md" ]
+    [ ! -e "${REPO}/PROGRESS.md" ]
+    [ -z "$(git -C "${REPO}" status --porcelain)" ]
+
+    [[ "$(git_log)" == *"Loop: Remove the Run scaffolding so the branch tip is merge-clean"* ]]
+
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    [ -n "${ended}" ]
+    [[ "$(git -C "${REPO}" show "${ended}:PROGRESS.md")" == *"Ended by: iteration-cap"* ]]
+    [[ "$(git -C "${REPO}" show "${ended}:PLAN.md")" == *"three small things"* ]]
+}
+
+@test "a kept-earlier log is removed from the tip and kept in history" {
+    printf '# Earlier Progress Logs\n' >"${REPO}/PROGRESS-earlier.md"
+    git -C "${REPO}" add -A
+    git -C "${REPO}" commit --quiet --message "Keep the previous attempt's Progress Log"
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    [ ! -e "${REPO}/PROGRESS-earlier.md" ]
+    [ ! -e "${REPO}/PLAN.md" ]
+    [ ! -e "${REPO}/PROGRESS.md" ]
+
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    [[ "$(git -C "${REPO}" show "${ended}:PROGRESS-earlier.md")" == *"Earlier Progress Logs"* ]]
+}
+
+@test "the cleanup removes the scaffolding under the Contract's own paths" {
+    export LOOP_PLAN_PATH="docs/plan.md"
+    export LOOP_PROGRESS_LOG_PATH="docs/progress.md"
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    mkdir -p "${REPO}/docs"
+    git -C "${REPO}" mv PLAN.md docs/plan.md
+    git -C "${REPO}" mv PROGRESS.md docs/progress.md
+    printf '# Earlier Progress Logs\n' >"${REPO}/docs/progress-earlier.md"
+    git -C "${REPO}" add -A
+    git -C "${REPO}" commit --quiet --message "Move the Run's state"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    [ ! -e "${REPO}/docs/plan.md" ]
+    [ ! -e "${REPO}/docs/progress.md" ]
+    [ ! -e "${REPO}/docs/progress-earlier.md" ]
+}
+
+@test "the proposal is pushed after the cleanup, not before it" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+
+    # The scripted proposal records the HEAD it was asked to push. If it saw
+    # the cleanup commit, the push carried the merge-clean tip.
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [ -n "${cleanup}" ]
+    [[ "$(proposed_with)" == *"FAKE_PROPOSE_HEAD=${cleanup}"* ]]
+}
+
+@test "a failed proposal corrects the record without reviving the scaffolding" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    export FAKE_PROPOSE_BEHAVIOUR=fail
+
+    run_the_loop --propose
+    [ "$status" -eq 6 ]
+    [[ "$output" == *"LOOP_RUN_PROPOSAL=failed"* ]]
+
+    [ ! -e "${REPO}/PLAN.md" ]
+    [ ! -e "${REPO}/PROGRESS.md" ]
+    [ -z "$(git -C "${REPO}" status --porcelain)" ]
+    [[ "$(git_log)" == *"Loop: the proposal failed (iteration-cap)"* ]]
+}
+
 # --- Preflight -------------------------------------------------------------
 
 @test "a Run with no Plan does not start" {
@@ -416,7 +507,12 @@ setup() {
 
     run_the_loop
     [ "$status" -eq 0 ]
-    [[ "$(cat "${REPO}/docs/progress.md")" == *"Ended by: iteration-cap"* ]]
+    # The Run ends merge-clean, so the record is read from history: the
+    # Run-ended commit's tree is the last one that carries the scaffolding.
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    [[ "$(git -C "${REPO}" show "${ended}:docs/progress.md")" == *"Ended by: iteration-cap"* ]]
+    [ ! -e "${REPO}/docs/progress.md" ]
+    [ ! -e "${REPO}/docs/plan.md" ]
     [ ! -e "${REPO}/PROGRESS.md" ]
 }
 

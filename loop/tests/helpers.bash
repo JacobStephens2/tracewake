@@ -109,7 +109,15 @@ agent_invocations() {
 }
 
 progress_log() {
-    cat -- "${REPO}/PROGRESS.md"
+    if [[ -f "${REPO}/PROGRESS.md" ]]; then
+        cat -- "${REPO}/PROGRESS.md"
+    else
+        # The Run ends merge-clean: the scaffolding is removed from the branch
+        # tip in a cleanup commit, so the record lives in the branch's history.
+        # The Run-ended commit's tree is the last one that carries it.
+        git -C "${REPO}" show \
+            "$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1):PROGRESS.md"
+    fi
 }
 
 git_log() {
