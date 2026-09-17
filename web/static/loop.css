@@ -273,6 +273,72 @@ details.fold > summary::before {
 }
 details.fold:not([open]) > summary::before { content: "[+]"; }
 
+/* Accounts, decisions, and auth pages (#84). The window's second shell is
+   gone, so these pages wear the terminal identity too. terminal.css already
+   owns the forms, tables, and prompt blocks; what is left here is what those
+   pages add: the account and ADR lists, and the status words on them.
+
+   Those words stay neutral grey on purpose. The route badges on the Run
+   cards carry the meaning the operator acts on - green is the only one that
+   means "nothing to do but review" - so nothing else on any page borrows
+   those colours. An account's role and an ADR's status are read as words,
+   not glanced as colours. */
+.account-list,
+.adr-list {
+  padding-left: 0;
+}
+
+.account-list .account {
+  padding: 0.5rem 0;
+  border-bottom: 1px dashed var(--secondary-color);
+}
+
+.account-list .account:last-child {
+  border-bottom: none;
+}
+
+.account-list .account-email {
+  font-weight: 700;
+}
+
+.account-list .account-role,
+.account-list .account-deactivate {
+  display: inline;
+  margin-left: 0.75rem;
+}
+
+.account .badge,
+.adr-list .badge,
+.adr .badge {
+  font-size: 0.8em;
+  border: 1px solid var(--secondary-color);
+  color: var(--secondary-color);
+  padding: 0 0.4em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.adr-num {
+  color: var(--secondary-color);
+}
+
+.adr-list .adr-num {
+  margin-right: 0.6rem;
+}
+
+/* terminal.css styles text inputs and textareas but not selects; the
+   accounts page has one (the role picker), and an unstyled control beside
+   styled ones reads as broken rather than as native. */
+.account select {
+  border: 1px solid var(--font-color);
+  border-radius: 0;
+  background-color: var(--background-color);
+  color: var(--font-color);
+  font-family: var(--font-stack);
+  font-size: 1em;
+  padding: 0.5em;
+}
+
 /* The theme control: one button, clicked through system / light / dark.
    The dark palette below only lands when it, or the OS, asks for it. */
 .theme-toggle {
