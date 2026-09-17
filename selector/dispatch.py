@@ -171,6 +171,34 @@ def report_fields(text: str) -> dict[str, str]:
     return fields
 
 
+# The first Iteration's rendered briefing, as run.sh emits it on stdout (#80):
+# the lines between these two markers. A block rather than a KEY=VALUE line
+# because it is prose, not a field - and `report_fields` already ignores both
+# markers, so the two wire formats share the stream without sharing a parser.
+BRIEFING_BEGIN = "LOOP_BRIEFING_BEGIN"
+BRIEFING_END = "LOOP_BRIEFING_END"
+
+
+def extract_briefing(text: str) -> str | None:
+    """The briefing block run.sh rendered at Run start, or None.
+
+    None is an old box, not a broken one: a Run from before the briefing was
+    emitted has no stored fact to journal, and refusing the dispatch for that
+    would turn every box that has not been ansible-applied yet into an outage.
+    """
+    lines = []
+    inside = False
+    for line in text.splitlines():
+        if line.strip() == BRIEFING_BEGIN:
+            lines, inside = [], True
+            continue
+        if line.strip() == BRIEFING_END and inside:
+            return "\n".join(lines).strip() or None
+        if inside:
+            lines.append(line)
+    return None
+
+
 def _run(argv: list[str], *, timeout: int | None = None,
          stdin: str | None = None,
          overlay: dict | None = None) -> subprocess.CompletedProcess:
@@ -430,6 +458,10 @@ def start_run(config: DispatchConfig, branch: str, task_ref: str) -> dict:
         "proposal": fields.get("LOOP_PROPOSE_URL") or None,
         "proposed": fields.get("LOOP_RUN_PROPOSAL") or None,
         "notified": fields.get("LOOP_RUN_NOTIFIED") or None,
+        # The stored fact of what the agent read (#80): rendered on the box
+        # at Run start, journaled by the cycle below. None from a box that
+        # predates the emission, which journals nothing rather than failing.
+        "briefing": extract_briefing(completed.stdout),
     }
 
 

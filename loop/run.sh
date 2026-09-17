@@ -60,6 +60,13 @@
 # merge-clean and nothing mergeable carries them (spec issue #78). Reviewers
 # read them from the branch's history instead; the proposal is pushed after.
 #
+# What the first Iteration was told, emitted on stdout at the end (#80): the
+# rendered briefing between LOOP_BRIEFING_BEGIN and LOOP_BRIEFING_END. Later
+# Iterations differ only in number, so this one rendering is the stored fact
+# the Selector journals. It carries no credentials - file paths, the checklist
+# naming the discipline skills, and the completion promise - which is what lets
+# the window show it to both roles with no redaction.
+#
 # With --notify, the Run then tells the operator it has finished (#110), because
 # the premise of the whole Contract is that he walked away and a Run he has to
 # find is a Run he had to poll for. It reports separately from the Run:
@@ -317,6 +324,13 @@ That line is recorded as evidence. It does not end the Run, so do not emit it to
 finish early.
 PROMPT
 }
+
+# The briefing Iteration 1 will receive, rendered once at Run start. Rendered
+# here rather than at the end so that what is emitted is what the Run started
+# with, even if the scripts changed under it; emitted at the end so that the
+# LOOP_RUN_* block stays the first thing on stdout. Later Iterations differ
+# only in number, so one rendering is the whole fact.
+run_briefing="$(prompt_for_iteration 1)"
 
 for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
     elapsed=$(($(now) - run_started))
@@ -678,5 +692,11 @@ printf 'LOOP_RUN_FAULTS=%s\n' "${fault_summary}"
 printf 'LOOP_RUN_PROPOSAL=%s\n' "${proposal}"
 printf 'LOOP_RUN_NOTIFIED=%s\n' "${notified}"
 [[ -n ${propose_output} ]] && printf '%s\n' "${propose_output}"
+
+# Last, so the LOOP_RUN_* block above stays the first thing on stdout: the
+# briefing rendered at Run start, which the Selector journals (#80).
+printf 'LOOP_BRIEFING_BEGIN\n'
+printf '%s\n' "${run_briefing}"
+printf 'LOOP_BRIEFING_END\n'
 
 exit "${exit_code}"

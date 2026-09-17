@@ -185,6 +185,25 @@ def run_contract(*, cycle, issue, attempt, branch, task_ref, run_started,
     return RUN_CONTRACT, payload
 
 
+RUN_BRIEFING = "run.briefing"
+
+
+def run_briefing(*, cycle, issue, attempt, branch, task_ref, iteration,
+                 briefing):
+    """The first Iteration's rendered briefing, as the box emitted it.
+
+    Persisted once per Run (#80): later Iterations differ only in number, so
+    this one rendering is the stored fact of what the agent read, provable
+    after the scripts change instead of vanishing with the scratch files. It
+    carries no credentials - the task reference in the context, and file
+    paths, the checklist and the completion promise in the text - which is
+    what lets the window show it to both roles with no redaction.
+    """
+    payload = _run_context(cycle, issue, attempt, branch, task_ref)
+    payload.update({"iteration": iteration, "briefing": briefing})
+    return RUN_BRIEFING, payload
+
+
 def run_watch_failed(*, cycle, issue, attempt, branch, task_ref, error):
     """A box that would not hand over its log - journaled once, not once a
     minute, and never a failure of the dispatch it was watching."""
@@ -793,6 +812,33 @@ def run_contract_record(row) -> ContractRow:
         task_ref=payload.get("task_ref"),
         run_started=payload.get("run_started"),
         contract=payload.get("contract"),
+    )
+
+
+@dataclass(frozen=True)
+class BriefingRow:
+    """The Run's first Iteration briefing, one row per Run."""
+
+    id: int | None
+    at: object
+    cycle: int | None
+    issue: int | None
+    attempt: int | None
+    branch: str | None
+    task_ref: str | None
+    iteration: int | None
+    briefing: str | None
+
+
+def run_briefing_record(row) -> BriefingRow:
+    payload = _payload_of(row, RUN_BRIEFING)
+    return BriefingRow(
+        id=row.get("id"), at=row.get("at"),
+        cycle=payload.get("cycle"), issue=payload.get("issue"),
+        attempt=payload.get("attempt"), branch=payload.get("branch"),
+        task_ref=payload.get("task_ref"),
+        iteration=payload.get("iteration"),
+        briefing=payload.get("briefing"),
     )
 
 
