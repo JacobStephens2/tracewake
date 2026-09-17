@@ -68,6 +68,22 @@
         {% else %}
         <span class="cell-value">unknown - the timer could not be read</span>
         {% endif %}
+        {% if timer_error %}
+        <span class="detail alarm">{{ timer_error }}</span>
+        {% endif %}
+        {% if can_control %}
+        {% if timer.state == "active" %}
+        <button type="button" class="btn btn-error btn-ghost"
+                hx-post="{{ timer_stop_url }}"
+                hx-target="#live-region"
+                hx-swap="outerHTML">Stop timer</button>
+        {% elif timer.state %}
+        <button type="button" class="btn btn-primary"
+                hx-post="{{ timer_start_url }}"
+                hx-target="#live-region"
+                hx-swap="outerHTML">Start timer</button>
+        {% endif %}
+        {% endif %}
       </div>
 {% include "_budget.html" %}
       {#- The guardrail chip (#165). The cell beside it says what the box is

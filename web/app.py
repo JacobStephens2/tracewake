@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -750,6 +751,21 @@ TIMER_PROPERTIES = ("ActiveState", "NextElapseUSecRealtime")
 # the cell say so rather than hold the page open.
 TIMER_TIMEOUT_SECONDS = 5
 
+# Longer: enabling a timer starts it, which is a state change rather than a
+# read, but still one this request waits on. Thirty seconds is the same bound
+# the watcher gives a Progress Log read: long enough for a loaded systemd,
+# short enough that a wedged control does not hold the page open.
+TIMER_CONTROL_TIMEOUT_SECONDS = 30
+
+# What runs the toggle below. `sudo -n systemctl` because the window runs as
+# the instance's unprivileged user while the timer is a system unit: without
+# the ansible role's sudoers drop-in this refuses cleanly (`sudo: a password
+# is required`), which the cell then says. `SELECTOR_TIMER_CONTROL_COMMAND`
+# names a different one whole - tests drive the toggle without a systemd
+# through it, and a window running as root would set it to `systemctl`.
+TIMER_CONTROL_COMMAND = "sudo -n systemctl"
+TIMER_CONTROL_COMMAND_ENV = "SELECTOR_TIMER_CONTROL_COMMAND"
+
 
 def _timer() -> dict:
     """When the next cycle fires, and whether anything will fire it.
@@ -788,6 +804,40 @@ def _timer() -> dict:
         # from one this page failed to fill in.
         "next": _local_timer_next(read.get("NextElapseUSecRealtime") or "n/a"),
     }
+
+
+# `enable --now` starts a stopped timer and keeps it started across reboots;
+# `disable --now` stops a running one and keeps it stopped. The toggle is the
+# pair, because a start that did not survive a reboot would leave the next
+# outage reading exactly like this one.
+TIMER_VERBS = {"start": "enable", "stop": "disable"}
+
+
+def _timer_control(action: str) -> str | None:
+    """Start or stop the cycle timer. Returns the error, or None.
+
+    Total, like the timer read: a control that cannot run - a bad action, no
+    sudoers rule, no systemd, a wedged daemon - is a sentence in the cell,
+    never an exception and never a 500.
+    """
+    verb = TIMER_VERBS.get(action)
+    if verb is None:
+        return f"unknown timer action {action!r}"
+    command = shlex.split(
+        os.environ.get(TIMER_CONTROL_COMMAND_ENV, TIMER_CONTROL_COMMAND)
+    )
+    try:
+        done = subprocess.run(
+            [*command, verb, "--now", TIMER_UNIT],
+            capture_output=True, text=True,
+            timeout=TIMER_CONTROL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip().splitlines()
+        return detail[-1] if detail else f"exit {done.returncode}"
+    return None
 
 
 def _newest(rows: list[dict], kinds: tuple, reader):
@@ -1125,6 +1175,11 @@ def _loop_context(request: Request) -> dict:
         "history_url": _path(request, "/history"),
         "pause_url": _path(request, "/loop/pause"),
         "resume_url": _path(request, "/loop/resume"),
+        "timer_start_url": _path(request, "/loop/timer/start"),
+        "timer_stop_url": _path(request, "/loop/timer/stop"),
+        # Set by the toggle below when the control fails; the cell says it.
+        # None on every other render, so the template needs no default.
+        "timer_error": None,
     }
 
 
@@ -1216,6 +1271,30 @@ def pause_selector(request: Request):
 @controls.post("/loop/resume", response_class=HTMLResponse)
 def resume_selector(request: Request):
     return _set_selector_paused(request, False)
+
+
+def _set_timer(request: Request, action: str):
+    """Start or stop the cycle timer and return the live region it changes.
+
+    The region is re-read after the control runs, so a start that worked
+    shows the timer active and a stop shows it down - the cell reports what
+    systemd now holds, not what was asked of it. A control that failed keeps
+    the old reading and says why, in the cell.
+    """
+    error = _timer_control(action)
+    context = _loop_context(request)
+    context["timer_error"] = error
+    return _page(request, "_loop_live.html", context)
+
+
+@controls.post("/loop/timer/start", response_class=HTMLResponse)
+def start_timer(request: Request):
+    return _set_timer(request, "start")
+
+
+@controls.post("/loop/timer/stop", response_class=HTMLResponse)
+def stop_timer(request: Request):
+    return _set_timer(request, "stop")
 
 
 app.include_router(controls)
