@@ -314,8 +314,8 @@ def test_the_page_opens_the_stream(db):
     body = client.get("/").text
     assert "/loop/events" in body
     assert "EventSource" in body
-    # HTMX does the swapping, so the page has to actually load it. The board
-    # does not extend base.html, which is where every other page gets it.
+    # HTMX does the swapping, so the page has to actually load it. Every
+    # page gets it from terminal_base.html, the window's single shell (#84).
     assert "/static/htmx.min.js" in body
 
 

@@ -1,28 +1,24 @@
-{% extends "base.html" %}
-{% block title %}set password — Tracewake{% endblock %}
-{% block content %}
-<header>
-  <p class="eyebrow">the window</p>
-  <h1>Set a password</h1>
-  <p class="lede">This invite works once. After that you sign in with the email you were invited at.</p>
-</header>
-<section class="card">
-  {% if error %}
-  <p class="form-error">{{ error }}</p>
-  {% endif %}
-  {% if live %}
-  <form method="post" action="" class="sign-in">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>
-      Password
-      <input type="password" name="password" autocomplete="new-password" required autofocus>
-    </label>
-    <button type="submit" class="demo-btn">Set password</button>
-  </form>
-  {% else %}
-  <form method="post" action="">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  </form>
-  {% endif %}
-</section>
+{% extends "terminal_base.html" %}
+{% block title %}Set a password{% endblock %}
+{% block logo %}TRACEWAKE // INVITE{% endblock %}
+{% block main %}
+    <h1>Set a password</h1>
+    <p>This invite works once. After that you sign in with the email you were invited at.</p>
+    {% if error %}
+    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
+    {% endif %}
+    {% if live %}
+    <form method="post" action="">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <p>
+        <label for="password">Password</label><br>
+        <input type="password" id="password" name="password" autocomplete="new-password" required autofocus>
+      </p>
+      <p><button type="submit" class="btn btn-primary">Set password</button></p>
+    </form>
+    {% else %}
+    <form method="post" action="">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    </form>
+    {% endif %}
 {% endblock %}

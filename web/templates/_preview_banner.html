@@ -1,9 +1,7 @@
-{# The Attended Preview banner (ADR 0016). Styles are inline on purpose: this
-   renders on both the lab chrome (app.css) and the factory terminal
-   (terminal.css), whose palettes share nothing, and a banner that inherits
-   one of them would be invisible on the other. It has to look the same
-   everywhere, because "am I on a preview?" is the one question every page
-   must answer identically. #}
+{# The Attended Preview banner (ADR 0016). Styles are inline on purpose: the
+   banner has to look the same everywhere, because "am I on a preview?" is
+   the one question every page must answer identically, and a banner that
+   inherited the page's palette would answer it differently per page. #}
 {% if preview %}
 <div role="status" style="background:#7c2d12;color:#fff5ed;padding:.6rem 1rem;
      font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
