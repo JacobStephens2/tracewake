@@ -148,7 +148,7 @@ address or a command have no default at all:
 | `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
 | `SELECTOR_CHECKS_TIMEOUT_SECONDS` | `900` | how long a Proposal's checks may stay pending |
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
-| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
+| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card. `box-sources/facts-local.sh` is the Single-Host substitute |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
 | `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
 | `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
@@ -256,7 +256,7 @@ Configuration:
 
 | variable | default | what it is |
 | --- | --- | --- |
-| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress.sh` | the box's Progress Log, read |
+| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress.sh` | the box's Progress Log, read. `box-sources/progress-local.sh` is the Single-Host substitute |
 | `SELECTOR_WATCH_INTERVAL_SECONDS` | `60` | how often |
 | `SELECTOR_WATCH_TIMEOUT_SECONDS` | `30` | how long one read may take |
 | `SELECTOR_WATCH_CLOCK_SKEW_SECONDS` | `300` | how far the box's clock may sit behind this one |
@@ -943,6 +943,11 @@ Detection precedes notification, or the mail is a guess.
   template its adapter would build, the installed agent version - and prints
   them as `LOOP_BOX_*=value` lines. Read-only, holds no credential, starts
   nothing.
+- `box-sources/facts-local.sh` - the Single-Host `SELECTOR_BOX_FACTS_COMMAND`:
+  the same four facts read directly on this Host, no SSH hop, no
+  `SELECTOR_BOX_HOST`. INSTALL.md selects it alongside `local.sh`; leaving
+  the SSH default in a Single-Host instance degrades the status card on
+  every cycle.
 - `guardrail-sources/protection.sh` - the default
   `SELECTOR_GUARDRAIL_COMMAND`: one `gh api` read of the rules on the ref the
   executed paths are deployed from, and one `git` comparison of the deployed
@@ -958,6 +963,10 @@ Detection precedes notification, or the mail is a guess.
 - `box-sources/progress.sh` - the default `SELECTOR_BOX_PROGRESS_COMMAND`: one
   SSH hop that `cat`s the box checkout's Progress Log. Read-only, holds no
   credential, touches no working tree.
+- `box-sources/progress-local.sh` - the Single-Host `SELECTOR_BOX_PROGRESS_COMMAND`:
+  the same `cat` directly on this Host, no SSH hop, no `SELECTOR_BOX_HOST`.
+  INSTALL.md selects it alongside `local.sh`; leaving the SSH default in a
+  Single-Host instance journals `run.watch-failed` on every poll of every Run.
 - `box-sources/local.sh` - the default `SELECTOR_BOX_COMMAND` (ADR 0029):
   executes a Run on this Host without an SSH hop, gated by
   `loop/assert-credentials.sh` (ADR 0019). Refuses dispatch naming the

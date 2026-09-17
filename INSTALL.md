@@ -292,11 +292,15 @@ Single-Host Mode (ADR 0019). `SELECTOR_BOX_COMMAND` defaults to
 export TRACEWAKE_TARGETS_FILE="/etc/tracewake/targets.toml"
 export SELECTOR_JOURNAL_DSN="dbname=selector"
 
-# Single-Host Mode (ADR 0019)
+# Single-Host Mode (ADR 0019). Dispatch and both reads run without an SSH
+# hop: the `-local` siblings of the SSH box commands. Leaving the SSH
+# defaults in place would journal `run.watch-failed` with `Could not resolve
+# hostname local` on every poll of every Run while the dispatch beside it
+# worked perfectly.
 export SELECTOR_BOX_HOST="local"
 export SELECTOR_BOX_COMMAND="box-sources/local.sh"
-export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts.sh"
-export SELECTOR_BOX_PROGRESS_COMMAND="box-sources/progress.sh"
+export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts-local.sh"
+export SELECTOR_BOX_PROGRESS_COMMAND="box-sources/progress-local.sh"
 export SELECTOR_BOX_LOOP="/srv/tracewake/loop"
 
 # Web Window URL & Mail Surface

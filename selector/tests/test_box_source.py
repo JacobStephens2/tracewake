@@ -33,6 +33,9 @@ import targets  # noqa: E402
 SSH_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "ssh.sh"
 LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "local.sh"
 FACTS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "facts.sh"
+PROGRESS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "progress.sh"
+PROGRESS_LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "progress-local.sh"
+FACTS_LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "facts-local.sh"
 
 BOX_SOURCES = [SSH_SOURCE, LOCAL_SOURCE]
 
@@ -628,3 +631,201 @@ def test_local_box_drives_a_real_run_against_tmpdir(tmp_path):
         capture_output=True, text=True, check=True,
     ).stdout
     assert "WORK.txt" in pushed_tree
+
+
+# --- Local read surface: the Progress Log and the box facts without SSH -----
+#
+# Single-Host Mode dispatches through local.sh (no SSH hop), so the watcher
+# and the status card need read commands that do not SSH either. progress.sh
+# and facts.sh both open an SSH session to SELECTOR_BOX_HOST, which a
+# Single-Host instance sets to the unresolvable name `local` (INSTALL.md) -
+# every poll then journals `run.watch-failed` with `Could not resolve
+# hostname local` while the Run beside it works perfectly.
+
+
+def test_local_progress_read_prints_the_log_without_ssh(
+    tmp_path: Path, box_runner: Runner
+) -> None:
+    """The watcher reads the box checkout's Progress Log with no SSH hop."""
+    box_repo = tmp_path / "box_repo"
+    box_repo.mkdir()
+    (box_repo / "PROGRESS.md").write_text("## Run started 2026-09-17T04:00:00Z\n")
+
+    result = box_runner.run(
+        PROGRESS_LOCAL_SOURCE, "loop/645-a-thing",
+        SELECTOR_BOX_REPO=str(box_repo),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "## Run started 2026-09-17T04:00:00Z" in result.stdout
+    assert not box_runner.sent(), "it opened an SSH session anyway"
+
+
+def test_local_progress_read_fails_naming_the_missing_log(
+    tmp_path: Path, box_runner: Runner
+) -> None:
+    """A missing log is a failure naming the path, not empty output: before
+    the first Iteration the file exists, so its absence means the box is not
+    where this thinks it is."""
+    box_repo = tmp_path / "box_repo"
+    box_repo.mkdir()
+
+    result = box_runner.run(
+        PROGRESS_LOCAL_SOURCE, "loop/645-a-thing",
+        SELECTOR_BOX_REPO=str(box_repo),
+    )
+
+    assert result.returncode != 0
+    assert "PROGRESS.md" in result.stderr
+    assert not box_runner.sent(), "it opened an SSH session anyway"
+
+
+def test_local_progress_read_refuses_without_a_repo(box_runner: Runner) -> None:
+    result = box_runner.run(
+        PROGRESS_LOCAL_SOURCE, "loop/645-a-thing", SELECTOR_BOX_REPO=""
+    )
+
+    assert result.returncode != 0
+    assert "SELECTOR_BOX_REPO" in result.stderr
+    assert not box_runner.sent(), "it opened an SSH session anyway"
+
+
+def test_local_progress_read_honours_a_custom_log_path(
+    tmp_path: Path, box_runner: Runner
+) -> None:
+    box_repo = tmp_path / "box_repo"
+    box_repo.mkdir()
+    (box_repo / "JOURNAL.md").write_text("## Run started 2026-09-17T04:00:00Z\n")
+
+    result = box_runner.run(
+        PROGRESS_LOCAL_SOURCE, "loop/645-a-thing",
+        SELECTOR_BOX_REPO=str(box_repo),
+        SELECTOR_BOX_PROGRESS_PATH="JOURNAL.md",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "## Run started 2026-09-17T04:00:00Z" in result.stdout
+
+
+def _write_local_adapter(loop_dir: Path, agent: str = "claude") -> None:
+    """A fake agent adapter answering --guest-template and --credential-expiry."""
+    agents_dir = loop_dir / "agents"
+    agents_dir.mkdir(exist_ok=True)
+    adapter = agents_dir / f"{agent}.sh"
+    adapter.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "${1:-}" == "--guest-template" ]]; then\n'
+        '    printf "%s\\n" "${LOOP_GUEST_TEMPLATE:-stock-guest:1}"\n'
+        "elif [[ \"${1:-}\" == \"--credential-expiry\" ]]; then\n"
+        '    printf "2030-01-01T00:00:00Z\\n"\n'
+        "fi\n"
+        "exit 0\n"
+    )
+    adapter.chmod(0o755)
+
+
+def _write_local_agent(bin_dir: Path, agent: str = "claude") -> None:
+    """A fake agent binary answering --version."""
+    binary = bin_dir / agent
+    binary.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s 9.9.9 (Test)\\n" "${0##*/}"\n'
+    )
+    binary.chmod(0o755)
+
+
+def _write_local_sha256sum(bin_dir: Path) -> None:
+    """A fake `sha256sum` (absent on macOS) printing a fixed digest, so the
+    scripts-hash pipeline runs identically everywhere."""
+    shim = bin_dir / "sha256sum"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if (($# == 0)); then\n'
+        "  while IFS= read -r _; do :; done\n"
+        "fi\n"
+        'printf "abc123def456  fixture\\n"\n'
+    )
+    shim.chmod(0o755)
+
+
+def _write_local_date(bin_dir: Path) -> None:
+    """A fake GNU `date` answering the two shapes facts-local.sh uses, so the
+    expiry assertions hold on machines without `date -d` (macOS)."""
+    shim = bin_dir / "date"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'spec=""; fmt=""\n'
+        'while (($# > 0)); do\n'
+        '  case "$1" in\n'
+        '    -d) spec="$2"; shift 2;;\n'
+        '    +*) fmt="$1"; shift;;\n'
+        '    *) shift;;\n'
+        "  esac\n"
+        "done\n"
+        'if [[ "${spec}" == "2030-01-01T00:00:00Z" && "${fmt}" == "+%s" ]]; then\n'
+        '  printf "1893456000\\n"\n'
+        'elif [[ "${spec}" == "@1893456000" ]]; then\n'
+        '  printf "2030-01-01T00:00:00Z\\n"\n'
+        "else\n"
+        "  exit 1\n"
+        "fi\n"
+    )
+    shim.chmod(0o755)
+
+
+def test_local_facts_read_reports_without_ssh(box_runner: Runner) -> None:
+    """The status card reads what the box is holding with no SSH hop."""
+    _write_local_adapter(box_runner.loop_dir)
+    _write_local_agent(box_runner.bin_dir)
+    _write_local_sha256sum(box_runner.bin_dir)
+    _write_local_date(box_runner.bin_dir)
+
+    result = box_runner.run(
+        FACTS_LOCAL_SOURCE,
+        SELECTOR_BOX_LOOP=str(box_runner.loop_dir),
+        HOME=str(box_runner.home_dir),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LOOP_BOX_SCRIPTS_HASH=" in result.stdout
+    assert "LOOP_BOX_AGENT=claude" in result.stdout
+    assert "LOOP_BOX_GUEST_TEMPLATE=stock-guest:1" in result.stdout
+    assert "LOOP_BOX_AGENT_VERSION=claude 9.9.9 (Test)" in result.stdout
+    assert "LOOP_BOX_CREDENTIAL_EXPIRES_AT=2030-01-01T00:00:00Z" in result.stdout
+    assert not box_runner.sent(), "it opened an SSH session anyway"
+
+
+def test_local_facts_read_carries_the_targets_image(box_runner: Runner) -> None:
+    """The card says which boundary THIS target's Iterations would be built
+    from, not the box's default."""
+    _write_local_adapter(box_runner.loop_dir)
+    _write_local_agent(box_runner.bin_dir)
+    _write_local_sha256sum(box_runner.bin_dir)
+    _write_local_date(box_runner.bin_dir)
+
+    result = box_runner.run(
+        FACTS_LOCAL_SOURCE,
+        SELECTOR_BOX_LOOP=str(box_runner.loop_dir),
+        LOOP_GUEST_TEMPLATE="gadgets-python:1",
+        HOME=str(box_runner.home_dir),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LOOP_BOX_GUEST_TEMPLATE=gadgets-python:1" in result.stdout
+
+
+def test_local_facts_read_omits_what_it_cannot_answer(box_runner: Runner) -> None:
+    """A fact the box cannot answer is omitted, not guessed: the loop copy
+    under test has no adapter, and the named agent is on no PATH."""
+    _write_local_sha256sum(box_runner.bin_dir)
+    result = box_runner.run(
+        FACTS_LOCAL_SOURCE,
+        SELECTOR_BOX_LOOP=str(box_runner.loop_dir),
+        SELECTOR_BOX_AGENT="no-such-agent",
+        HOME=str(box_runner.home_dir),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LOOP_BOX_SCRIPTS_HASH=" in result.stdout
+    assert "LOOP_BOX_GUEST_TEMPLATE=" not in result.stdout
+    assert "LOOP_BOX_AGENT_VERSION=" not in result.stdout
