@@ -374,16 +374,13 @@ JSON
     ! plan | grep -qF "alerts and background jobs"
 }
 
-@test "a real Run's record stops a re-seed, without the marker being spelled twice" {
+@test "a finished Run's record survives a re-seed, in history rather than in the way" {
     write_classification_task
     run_the_seed --task 648 --task-repo Educational-Travel-Adventures/tourbot \
         --area "dashboards and reports"
     [ "$status" -eq 0 ]
 
     # Driven through the real run.sh rather than by appending a heading by hand.
-    # The seed recognises a Run by what run.sh actually wrote, so a heading that
-    # changed in one script and not the other would show up here as a re-seed
-    # that quietly succeeded rather than as a suite nobody updated.
     export FAKE_AGENT_STATE="${BATS_TEST_TMPDIR}/fake-agent-state"
     run env LOOP_AGENT_COMMAND="${LOOP_SRC}/tests/fake-agent.sh" \
         LOOP_MAX_ITERATIONS=1 LOOP_ITERATION_TIMEOUT_SECONDS=30 \
@@ -391,10 +388,22 @@ JSON
         timeout 120 "${LOOP_SRC}/run.sh" --repo "${REPO}"
     [ "$status" -eq 0 ]
 
+    # The Run ended merge-clean, so there is no live log left to discard:
+    # re-seeding writes a fresh one rather than refusing, and the finished
+    # Run's record stays readable in history. The refusal next door keeps its
+    # force for a live log that still records a Run - a Run killed mid-flight,
+    # not one that ended.
     run_the_seed --task 648 --task-repo Educational-Travel-Adventures/tourbot \
         --area "alerts and background jobs"
-    [ "$status" -eq 2 ]
-    [[ ${output} == *"1 Run(s) and 1 Iteration(s)"* ]]
+    [ "$status" -eq 0 ]
+    [[ ${output} == *"LOOP_SEED_RESULT=seeded"* ]]
+    plan | grep -qF "alerts and background jobs"
+    progress_log | grep -qF "No Iteration has run yet"
+    ! progress_log | grep -q '^## Run started'
+
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    [ -n "${ended}" ]
+    [[ "$(git -C "${REPO}" show "${ended}:PROGRESS.md")" == *"Ended by: iteration-cap"* ]]
 }
 
 @test "--reseed discards the Run's history and says how much it discarded" {
@@ -488,8 +497,12 @@ JSON
         timeout 60 "${LOOP_SRC}/run.sh" --repo "${REPO}" --task-ref "tourbot#648"
     [ "$status" -eq 0 ]
     [[ ${output} == *"LOOP_RUN_ENDED_BY=iteration-cap"* ]]
-    progress_log | grep -qiF "no Iteration has run"
-    progress_log | grep -q '^### Iteration 1'
+    # The Run ends merge-clean, so its record is read from history: the
+    # Run-ended commit's tree is the last one that carries the scaffolding.
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    history_log="$(git -C "${REPO}" show "${ended}:PROGRESS.md")"
+    printf '%s\n' "${history_log}" | grep -qiF "no Iteration has run"
+    printf '%s\n' "${history_log}" | grep -q '^### Iteration 1'
 }
 
 @test "the prompt an Iteration gets points at the Plan the seed wrote" {
