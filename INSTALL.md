@@ -419,3 +419,36 @@ provided in `deploy/systemd/`:
    ```
 
 Tracewake is now fully operational and draining your task queue unattended.
+
+---
+
+## 6. Continuous Deployment
+
+Every push to the default branch (which is how a merged pull request lands)
+deploys itself: `.github/workflows/deploy.yml` SSHs to the Host as root and
+runs `deploy/cd-update.sh`, which moves `/srv/tracewake` to the branch tip,
+refreshes both virtualenvs, re-applies the (idempotent) Journal schema, and
+restarts the window and the notifier. The cycle unit is a oneshot behind its
+timer, so the next trigger picks the new tree up on its own. Full
+provisioning stays in `deploy/ansible/host.yml`; the workflow only rolls the
+deployed revision forward. A checkout with local modifications to tracked
+files stops the deploy loudly rather than resetting an operator hotfix away.
+
+The workflow needs two repository secrets (Settings > Secrets and variables
+> Actions):
+
+| Secret | Contents |
+| --- | --- |
+| `TRACEWAKE_SSH_KEY` | Private ed25519 key whose public half is in the Host's `/root/.ssh/authorized_keys` |
+| `TRACEWAKE_SSH_KNOWN_HOSTS` | Output of `ssh-keyscan tracewake.stephens.page`, verified against the Host's `/etc/ssh/ssh_host_ed25519_key.pub` |
+
+Rotate the deploy key with:
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-tracewake-deploy" -N "" -f /tmp/tw-deploy-key
+ssh root@tracewake.stephens.page 'cat >> /root/.ssh/authorized_keys' < /tmp/tw-deploy-key.pub
+ssh-keyscan -t ed25519 tracewake.stephens.page > /tmp/tw-known-hosts
+gh secret set TRACEWAKE_SSH_KEY < /tmp/tw-deploy-key
+gh secret set TRACEWAKE_SSH_KNOWN_HOSTS < /tmp/tw-known-hosts
+shred -u /tmp/tw-deploy-key /tmp/tw-deploy-key.pub
+```

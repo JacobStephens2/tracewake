@@ -1,0 +1,39 @@
+# Continuous deployment for the Tracewake Host.
+#
+# On every push to the default branch (which is how a merged pull request
+# lands), SSH to the Host as root and run deploy/cd-update.sh, which moves
+# the checkout forward, refreshes dependencies and schema, and restarts the
+# long-lived units. Full provisioning stays in deploy/ansible/host.yml.
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   TRACEWAKE_SSH_KEY          Private ed25519 key whose public half is in
+#                              the Host's /root/.authorized_keys.
+#   TRACEWAKE_SSH_KNOWN_HOSTS  Output of `ssh-keyscan tracewake.stephens.page`,
+#                              verified against the Host's key fingerprint.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tracewake-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install the deploy SSH key
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.TRACEWAKE_SSH_KEY }}" > ~/.ssh/tracewake_deploy
+          chmod 600 ~/.ssh/tracewake_deploy
+          printf '%s\n' "${{ secrets.TRACEWAKE_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy to the Host
+        run: |
+          ssh -i ~/.ssh/tracewake_deploy -o BatchMode=yes \
+            root@tracewake.stephens.page \
+            'bash /srv/tracewake/deploy/cd-update.sh'
