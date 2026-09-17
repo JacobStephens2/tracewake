@@ -236,6 +236,24 @@ loop_earlier_log_path() {
     printf '%s%s-earlier%s\n' "${dir}" "${stem}" "${suffix}"
 }
 
+# One field out of the Plan: the first non-blank line under a `## ` heading,
+# or nothing when the Plan cannot be read. propose.sh reads the task and the
+# owning area out of it when it assembles the proposal body, and run.sh reads
+# the same fields before the merge-clean cleanup removes the Plan - which runs
+# before the proposal, so by proposal time there is no Plan left to read. One
+# derivation rather than two copies: the heading spellings are seed-run.sh's,
+# and two readers that disagreed about them would name different tasks for the
+# same Run.
+loop_plan_field() {
+    local plan="$1" heading="$2"
+    [[ -f ${plan} ]] || return 0
+    awk -v heading="${heading}" '
+        $0 == heading { capture = 1; next }
+        capture && /^## / { exit }
+        capture && $0 ~ /[^ \t]/ { print; exit }
+    ' "${plan}"
+}
+
 # Render the Contract for the Progress Log. Written at Run start so that reading
 # the log afterwards tells you which bound fired and what it was set to, without
 # needing the version of this file that was current at the time.

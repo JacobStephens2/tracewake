@@ -530,6 +530,22 @@ fi
 
 commit_bookkeeping "Loop: Run ended (${ended_by})"
 
+# --- What the proposal will say --------------------------------------------
+#
+# Captured here, while the scaffolding is still on the tip. The proposal runs
+# AFTER the cleanup below removes the Plan, so propose.sh cannot read the task
+# and the owning area out of it anymore - these values travel to it as
+# arguments instead. A Run started without --task-ref still names its task:
+# the Plan seed-run.sh wrote carries it.
+plan_task_line="$(loop_plan_field "${repo}/${LOOP_PLAN_PATH}" '## Task')"
+plan_task_line="${plan_task_line#\*\*}"
+plan_task_line="${plan_task_line%\*\*}"
+[[ -n ${task_ref} ]] || task_ref="${plan_task_line%% - *}"
+plan_task_title="${plan_task_line#* - }"
+plan_area="$(loop_plan_field "${repo}/${LOOP_PLAN_PATH}" '## The owning area this Run is scoped to')"
+plan_area="${plan_area#\*\*}"
+plan_area="${plan_area%\*\*}"
+
 # --- Merge-clean -----------------------------------------------------------
 #
 # The enforcement point the whole of spec issue #78 keys off: after the last
@@ -550,9 +566,14 @@ commit_bookkeeping "Loop: Run ended (${ended_by})"
 earlier_log="$(loop_earlier_log_path "${LOOP_PROGRESS_LOG_PATH}")"
 git -C "${repo}" rm --quiet --ignore-unmatch -- \
     "${LOOP_PLAN_PATH}" "${LOOP_PROGRESS_LOG_PATH}" "${earlier_log}"
+removal_commit=""
 if ! git -C "${repo}" diff --cached --quiet; then
     git -C "${repo}" commit --quiet --message \
         "Loop: Remove the Run scaffolding so the branch tip is merge-clean"
+    # The commit the proposal names: the one that took the scaffolding off the
+    # tip. Set only when the cleanup committed - a Run whose scaffolding is
+    # already gone has no removal to point at.
+    removal_commit="$(git -C "${repo}" rev-parse HEAD)"
 fi
 
 # --- The proposal ----------------------------------------------------------
@@ -566,13 +587,19 @@ fi
 # Its output is echoed rather than parsed. propose.sh already prints
 # LOOP_PROPOSE_* lines in the same machine-readable shape as this block, so
 # forwarding them puts the branch, the base and the pull request's URL on the
-# same stdout the ending bound is on.
+# same stdout the ending bound is on. The task, the area, the title and the
+# removal commit captured above travel as arguments, because the cleanup
+# removed the Plan propose.sh used to read them from.
 
 proposal="skipped"
 propose_output=""
 if ${propose}; then
     propose_args=(--repo "${repo}" --ended-by "${ended_by}" --exit "${exit_code}")
     [[ -n ${task_ref} ]] && propose_args+=(--task-ref "${task_ref}")
+    [[ -n ${plan_area} ]] && propose_args+=(--area "${plan_area}")
+    [[ -n ${plan_task_title} ]] && propose_args+=(--task-title "${plan_task_title}")
+    [[ -n ${removal_commit} ]] && propose_args+=(--removal-commit "${removal_commit}")
+    ${notify} && propose_args+=(--comment-follows)
 
     # Captured rather than left to stream, so that the LOOP_RUN_* block stays
     # the first thing on stdout. Stderr is not captured: a proposal that failed
@@ -650,15 +677,21 @@ if ${notify}; then
         printf 'run.sh: the proposal produced no URL, so there is nothing to comment on.\n' >&2
     else
         notify_body="$(mktemp)"
+        # The Run's comment on its own proposal carries the same record the
+        # proposal body carries: the task, the owning area, the bound that
+        # ended the Run, and the removal commit - and it points at history,
+        # never at a file the cleanup removed from the tip.
         {
             [[ -n ${task_ref} ]] && printf -- '- Task: %s\n' "${task_ref}"
+            [[ -n ${plan_area} ]] && printf -- '- Owning area this Run was scoped to: %s\n' "${plan_area}"
             printf -- '- Ended by: %s\n' "${ended_by}"
             printf -- '- Exit code: %d\n' "${exit_code}"
             iteration_counts_line
             printf -- '- Faults: %s\n' "${fault_summary}"
+            [[ -n ${removal_commit} ]] && printf -- '- Run scaffolding removed in: %s\n' "${removal_commit}"
             printf -- '- Proposal: %s\n' "${proposal_url}"
-            printf '\nNothing is merged, deployed or applied. Read %s in this branch'"'"'s history first - the tip carries no Run scaffolding.\n' \
-                "${LOOP_PROGRESS_LOG_PATH}"
+            printf "\nNothing is merged, deployed or applied. The Plan and the Progress Log as the Run left them are in the \`Loop: Run ended (%s)\` commit in this branch's history - the tip carries no Run scaffolding.\n" \
+                "${ended_by}"
         } >"${notify_body}"
 
         # Bounded, like every other thing this script waits on. The Run has

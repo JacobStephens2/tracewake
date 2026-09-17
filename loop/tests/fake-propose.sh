@@ -2,7 +2,9 @@
 #
 # The scripted fake proposal command.
 #
-#   fake-propose.sh --repo <path> [--task-ref ...] [--ended-by ...] [--exit ...]
+#   fake-propose.sh --repo <path> [--task-ref ...] [--area ...] [--task-title ...]
+#                     [--ended-by ...] [--exit ...] [--removal-commit ...]
+#                     [--comment-follows]
 #
 # Satisfies exactly the contract propose.sh satisfies. Pointing
 # LOOP_PROPOSE_COMMAND here lets the suite drive a real Run through --propose
