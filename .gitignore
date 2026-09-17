@@ -5,3 +5,11 @@
 /web/.venv/
 **/__pycache__/
 .pytest_cache/
+# The Selector's runtime state (gh's device-id and anything else the tracker
+# commands write under $HOME/.local/state when invoked with a HOME inside the
+# tree). Never tracked: an untracked-but-not-ignored file here blocks the
+# serving-tree pin, which refuses on any porcelain entry and pages. On
+# 2026-09-08 a `gh` run under `env -i` without HOME wrote
+# selector/.local/state/gh/device-id and held every deploy until it was
+# removed by hand.
+/selector/.local/
