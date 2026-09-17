@@ -1,0 +1,8 @@
+# Let the window's admin toggle drive the Selector's timer without a shell.
+#
+# The window runs as the instance's unprivileged user while the timer is a
+# system unit, so the Start/Stop buttons on the status strip reach it through
+# exactly these two commands on the one unit - and nothing else. `enable
+# --now` starts a stopped timer and keeps it started across reboots;
+# `disable --now` stops a running one and keeps it stopped.
+{{ tracewake_user }} ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now tracewake-selector-cycle.timer, /usr/bin/systemctl disable --now tracewake-selector-cycle.timer

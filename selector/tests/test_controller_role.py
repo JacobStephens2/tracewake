@@ -23,6 +23,7 @@ ROLE_DIR = ROOT / "deploy" / "ansible" / "roles" / "tracewake_controller"
 TASKS_FILE = ROLE_DIR / "tasks" / "main.yml"
 DEFAULTS_FILE = ROLE_DIR / "defaults" / "main.yml"
 DROPIN_TEMPLATE = ROLE_DIR / "templates" / "selector-cycle-selinux.conf.j2"
+SUDOERS_TEMPLATE = ROLE_DIR / "templates" / "tracewake-timer-sudoers.j2"
 
 
 def test_controller_playbook_syntax():
@@ -132,6 +133,34 @@ def test_timer_gating_logic_and_notifier_unconditional():
     assert "Say which way unattended dispatch was left" in tasks_content
     assert "ENABLED - the Selector will dispatch Runs on its own" in tasks_content
     assert "installed and disabled; set tracewake_dispatch_enabled=true" in tasks_content
+
+
+def test_window_timer_toggle_has_a_scoped_sudoers_rule():
+    """The window runs as the instance's unprivileged user while the timer is
+    a system unit, so the Start/Stop buttons need a privilege path - and one
+    that names exactly the two commands on the one unit, and nothing else.
+    """
+    tasks_content = TASKS_FILE.read_text()
+    assert "/etc/sudoers.d/tracewake-timer" in tasks_content
+    assert "validate: visudo -cf %s" in tasks_content
+    assert "0440" in tasks_content
+
+    assert SUDOERS_TEMPLATE.is_file(), f"Missing sudoers template {SUDOERS_TEMPLATE}"
+    content = SUDOERS_TEMPLATE.read_text()
+    # The user is the role's, not a literal: nothing here names an instance.
+    assert "{{ tracewake_user }}" in content
+    assert "NOPASSWD:" in content
+    assert "/usr/bin/systemctl enable --now tracewake-selector-cycle.timer" in content
+    assert "/usr/bin/systemctl disable --now tracewake-selector-cycle.timer" in content
+    # Scoped: the granted rule - the one non-comment line - names no shell,
+    # no restart, no status, no start of anything else, and no ALL commands.
+    rules = [line for line in content.splitlines() if line.strip() and not line.startswith("#")]
+    assert len(rules) == 1, rules
+    rule = rules[0]
+    assert "ALL" not in rule.replace("ALL=(root)", "")
+    assert "restart" not in rule
+    assert "status" not in rule
+    assert rule.count("systemctl") == 2
 
 
 def test_distro_neutral_postgres_and_venvs_in_role():

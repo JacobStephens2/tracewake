@@ -292,11 +292,18 @@ Single-Host Mode (ADR 0019). `SELECTOR_BOX_COMMAND` defaults to
 export TRACEWAKE_TARGETS_FILE="/etc/tracewake/targets.toml"
 export SELECTOR_JOURNAL_DSN="dbname=selector"
 
-# Single-Host Mode (ADR 0019). Dispatch and both reads run without an SSH
-# hop: the `-local` siblings of the SSH box commands. Leaving the SSH
-# defaults in place would journal `run.watch-failed` with `Could not resolve
-# hostname local` on every poll of every Run while the dispatch beside it
-# worked perfectly.
+# Single-Host Mode (ADR 0019). The reads are the `-local` siblings, not the
+# ssh-based ones: keeping `facts.sh`/`progress.sh` while the host is `local`
+# is the `ssh: Could not resolve hostname local` on the box card.
+# `SELECTOR_BOX_HOST` is read only by the ssh-based commands and is kept here
+# so substituting them back needs no new variable.
+#
+# The local reads become the Run account through sudo before reading (the
+# credential's expiry files live under its home) - beside the conductor-loop
+# rule dispatch already needs, each adds one sudoers line (visudo-checked):
+#
+#   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/facts-local.sh
+#   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/progress-local.sh *
 export SELECTOR_BOX_HOST="local"
 export SELECTOR_BOX_COMMAND="box-sources/local.sh"
 export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts-local.sh"
