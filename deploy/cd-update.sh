@@ -4,7 +4,10 @@
 # Runs ON the Host as root, invoked over SSH by .github/workflows/deploy.yml
 # on every push to the default branch:
 #
-#   ssh root@tracewake.stephens.page 'bash /srv/tracewake/deploy/cd-update.sh'
+#   ssh "root@${TRACEWAKE_SSH_HOST}" 'bash /srv/tracewake/deploy/cd-update.sh'
+#
+# TRACEWAKE_SSH_HOST is the repository variable the workflow reads; this
+# script itself takes no address, it runs on the Host.
 #
 # What it does, in order:
 #   1. Moves the product checkout to the tip of the deployed branch.

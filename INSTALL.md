@@ -434,21 +434,30 @@ provisioning stays in `deploy/ansible/host.yml`; the workflow only rolls the
 deployed revision forward. A checkout with local modifications to tracked
 files stops the deploy loudly rather than resetting an operator hotfix away.
 
-The workflow needs two repository secrets (Settings > Secrets and variables
-> Actions):
+The workflow needs one repository variable and two repository secrets
+(Settings > Secrets and variables > Actions). The Host's address is
+configuration, not code: nothing in the workflow or in `cd-update.sh` names
+any particular host.
 
-| Secret | Contents |
-| --- | --- |
-| `TRACEWAKE_SSH_KEY` | Private ed25519 key whose public half is in the Host's `/root/.ssh/authorized_keys` |
-| `TRACEWAKE_SSH_KNOWN_HOSTS` | Output of `ssh-keyscan tracewake.stephens.page`, verified against the Host's `/etc/ssh/ssh_host_ed25519_key.pub` |
+| Name | Kind | Contents |
+| --- | --- | --- |
+| `TRACEWAKE_SSH_HOST` | Variable | The Host to deploy: its DNS name or IP |
+| `TRACEWAKE_SSH_KEY` | Secret | Private ed25519 key whose public half is in the Host's `/root/.ssh/authorized_keys` |
+| `TRACEWAKE_SSH_KNOWN_HOSTS` | Secret | Output of `ssh-keyscan <host>`, verified against the Host's `/etc/ssh/ssh_host_ed25519_key.pub` |
 
-Rotate the deploy key with:
+Point the workflow at a Host with (here `<host>` is the Host's DNS name or IP):
 
 ```bash
+gh variable set TRACEWAKE_SSH_HOST --body "<host>"
 ssh-keygen -t ed25519 -C "github-actions-tracewake-deploy" -N "" -f /tmp/tw-deploy-key
-ssh root@tracewake.stephens.page 'cat >> /root/.ssh/authorized_keys' < /tmp/tw-deploy-key.pub
-ssh-keyscan -t ed25519 tracewake.stephens.page > /tmp/tw-known-hosts
+ssh root@<host> 'cat >> /root/.ssh/authorized_keys' < /tmp/tw-deploy-key.pub
+ssh-keyscan -t ed25519 <host> > /tmp/tw-known-hosts
 gh secret set TRACEWAKE_SSH_KEY < /tmp/tw-deploy-key
 gh secret set TRACEWAKE_SSH_KNOWN_HOSTS < /tmp/tw-known-hosts
 shred -u /tmp/tw-deploy-key /tmp/tw-deploy-key.pub
 ```
+
+A checkout that is never deployed straight from GitHub (an instance that
+advances its serving tree some other way) leaves `TRACEWAKE_SSH_HOST` unset:
+the workflow then fails closed naming the variable rather than SSHing
+anywhere.

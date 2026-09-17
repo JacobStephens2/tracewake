@@ -5,11 +5,15 @@
 # the checkout forward, refreshes dependencies and schema, and restarts the
 # long-lived units. Full provisioning stays in deploy/ansible/host.yml.
 #
-# Required repository secrets (Settings > Secrets and variables > Actions):
-#   TRACEWAKE_SSH_KEY          Private ed25519 key whose public half is in
-#                              the Host's /root/.authorized_keys.
-#   TRACEWAKE_SSH_KNOWN_HOSTS  Output of `ssh-keyscan tracewake.stephens.page`,
-#                              verified against the Host's key fingerprint.
+# Required configuration (Settings > Secrets and variables > Actions).
+# Nothing here names any particular host: the address is a fact about the
+# instance being deployed, not about Tracewake, so it arrives as
+# configuration like everything else.
+#   TRACEWAKE_SSH_HOST (variable)  The Host to deploy: its DNS name or IP.
+#   TRACEWAKE_SSH_KEY (secret)     Private ed25519 key whose public half is in
+#                                  the Host's /root/.authorized_keys.
+#   TRACEWAKE_SSH_KNOWN_HOSTS (secret)  Output of `ssh-keyscan $TRACEWAKE_SSH_HOST`,
+#                                  verified against the Host's key fingerprint.
 name: Deploy
 
 on:
@@ -34,6 +38,14 @@ jobs:
 
       - name: Deploy to the Host
         run: |
+          HOST="${{ vars.TRACEWAKE_SSH_HOST }}"
+          if [ -z "$HOST" ]; then
+            echo "TRACEWAKE_SSH_HOST is not set. Set the repository variable to" >&2
+            echo "the CD target host (Settings > Secrets and variables > Actions" >&2
+            echo "> Variables), or delete .github/workflows/deploy.yml if this" >&2
+            echo "checkout is never deployed straight from GitHub." >&2
+            exit 1
+          fi
           ssh -i ~/.ssh/tracewake_deploy -o BatchMode=yes \
-            root@tracewake.stephens.page \
+            "root@${HOST}" \
             'bash /srv/tracewake/deploy/cd-update.sh'
