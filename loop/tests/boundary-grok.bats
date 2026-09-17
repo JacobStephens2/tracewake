@@ -84,6 +84,12 @@ calls() {
     [[ "$(calls)" != *" claude ${WORKSPACE}"* ]]
 }
 
+@test "a configured image rides -t with the shell agent, not as the agent" {
+    LOOP_GUEST_TEMPLATE="custom-target:1" run_an_iteration
+    [ "$status" -eq 0 ]
+    [[ "$(calls)" == *"-t custom-target:1 shell ${WORKSPACE}"* ]]
+}
+
 @test "the boundary is destroyed when the Iteration ends" {
     run_an_iteration
     [[ "$(calls)" == *"rm --force loop-"* ]]

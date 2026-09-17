@@ -31,9 +31,18 @@ metered_env_names=(
     GROK_AUTH_PROVIDER_COMMAND
 )
 
-# `shell`, not an agent template - there is no Grok template to ask for.
+# `shell`, not an agent template - there is no Grok template to ask for. The
+# default names the stock `shell` agent outright; a configured template names
+# an image and rides `-t`, the way the Claude adapter's always does. Passing
+# an image where `sbx` expects an agent is "unknown agent" and no boundary -
+# found by the live proving Run for #85, which configures
+# `docker.io/docker/sandbox-templates:shell-docker`.
 guest_template="${LOOP_GUEST_TEMPLATE:-shell}"
-adapter_create_args=("${guest_template}")
+if [[ ${guest_template} == shell ]]; then
+    adapter_create_args=(shell)
+else
+    adapter_create_args=(-t "${guest_template}" shell)
+fi
 adapter_privileged_put=true
 
 grok_home="${LOOP_GROK_HOME:-${HOME}/.grok}"
