@@ -47,6 +47,7 @@ from conftest import (
     CLEAN_RUN,
     CYCLE,
     FAILED_RUN,
+    RUN_BRIEFING_TEXT,
     SELECTOR,
     _script,
     events,
@@ -150,6 +151,55 @@ def test_the_runs_stdout_summary_is_captured_into_the_journal(db, box):
     assert outcome["issue"] == 645
     assert outcome["branch"] == "loop/645-the-nightly-sync-script"
     assert outcome["attempt"] == 1
+
+
+def test_the_runs_first_briefing_is_journaled(db, box):
+    """Issue #80. The box emits the first Iteration's rendered briefing and
+    the Selector journals it as a vocabulary-owned payload - the stored fact
+    of what the agent read, provable after the scripts change."""
+    box.run(db, [issue(645)])
+    briefing = one(db, "run.briefing")
+    assert briefing["issue"] == 645
+    assert briefing["attempt"] == 1
+    assert briefing["branch"] == "loop/645-the-nightly-sync-script"
+    assert briefing["task_ref"] == "acme/widgets#645"
+    assert briefing["iteration"] == 1
+    assert briefing["briefing"] == RUN_BRIEFING_TEXT
+
+
+def test_the_briefing_row_precedes_the_outcome_and_carries_no_credentials(
+        db, box):
+    """Journaled before the outcome, so the rows read in the order the Run
+    happened them - and safe for the window to show both roles."""
+    box.run(db, [issue(645)])
+    kinds = [row["kind"] for row in events(db)]
+    assert kinds.index("run.briefing") < kinds.index("run.outcome")
+    payload = one(db, "run.briefing")
+    assert set(payload) == {"cycle", "issue", "attempt", "branch",
+                            "task_ref", "iteration", "briefing"}
+    text = payload["briefing"]
+    assert "PLAN.md" in text
+    assert "LOOP: WORK COMPLETE" in text
+    for secret in ("ghp_", "github_pat_", "TOKEN", "PRIVATE KEY"):
+        assert secret not in text
+
+
+def test_a_box_that_predates_the_briefing_journals_no_briefing_row(db, box):
+    """An old box emits no block: the dispatch still succeeds, journaling
+    nothing for it rather than failing."""
+    box.run_summary(CLEAN_RUN.split("LOOP_BRIEFING_BEGIN")[0])
+    result = box.run(db, [issue(645)])
+    assert result.returncode == 0, result.stderr
+    assert events(db, "run.briefing") == []
+    assert one(db, "run.outcome")["ended_by"] == "iteration-cap"
+
+
+def test_a_dispatch_that_started_no_run_journals_no_briefing(db, box):
+    """No Run, no briefing: a box that never connected leaves no stored
+    fact behind."""
+    box.run_summary("ssh: no route\n")
+    box.run(db, [issue(645)], BOX_EXIT=255)
+    assert events(db, "run.briefing") == []
 
 
 def test_the_dispatch_row_carries_what_the_run_was_seeded_from(db, box):

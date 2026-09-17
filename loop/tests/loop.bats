@@ -285,6 +285,35 @@ setup() {
     [[ "$(progress_log)" == *"Discipline skills: /only-this-one when it matters"* ]]
 }
 
+@test "the Run emits its first Iteration's briefing for the Journal" {
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+    [ "$(agent_invocations)" -eq 3 ]
+
+    # The machine-readable block still leads: the briefing rides last.
+    [[ "${lines[0]}" == "LOOP_RUN_ENDED_BY=iteration-cap" ]]
+
+    briefing="$(sed -n '/^LOOP_BRIEFING_BEGIN$/,/^LOOP_BRIEFING_END$/p' <<<"$output" | sed '1d;$d')"
+    [ -n "$briefing" ]
+    [[ "$briefing" == *"You are Iteration 1 of at most 3"* ]]
+
+    # Later Iterations differ only in number: the last prompt handed out,
+    # with its number set back to 1, is this same text.
+    last_prompt="$(cat "${FAKE_AGENT_STATE}.prompt")"
+    [[ "$last_prompt" == *"You are Iteration 3 of at most 3"* ]]
+    [[ "$briefing" == "${last_prompt//You are Iteration 3 /You are Iteration 1 }" ]]
+
+    # The safe content the window may show both roles: file paths, the
+    # checklist, and the completion promise - and no host path that could
+    # carry a credential with it.
+    [[ "$briefing" == *"PLAN.md"* ]]
+    [[ "$briefing" == *"PROGRESS.md"* ]]
+    [[ "$briefing" == *"LOOP: WORK COMPLETE"* ]]
+    [[ "$briefing" != *"${BATS_TEST_TMPDIR}"* ]]
+}
+
 @test "the Plan and the Progress Log are committed" {
     export FAKE_AGENT_BEHAVIOURS="commit"
 

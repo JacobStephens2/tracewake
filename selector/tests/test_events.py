@@ -332,6 +332,38 @@ def test_the_contract_row_carries_the_boxs_own_terms():
     assert record.contract == ["Iterations: 10", "Run clock: 90m"]
 
 
+def test_the_briefing_row_carries_the_first_iterations_rendering():
+    kind, payload = events.run_briefing(
+        **RUN_CONTEXT, iteration=1, briefing="You are Iteration 1 of at most 5.")
+    assert kind == "run.briefing"
+    assert set(payload) == set(RUN_CONTEXT) | {"iteration", "briefing"}
+    record = events.run_briefing_record(row(kind, payload))
+    assert record.iteration == 1
+    assert record.briefing == "You are Iteration 1 of at most 5."
+    assert record.task_ref == "acme/widgets#312"
+
+
+def test_the_briefing_payload_names_only_credential_free_facts():
+    # What the window may show both roles with no redaction: the run's
+    # context and the rendered text - and nothing else.
+    _, payload = events.run_briefing(
+        **RUN_CONTEXT, iteration=1, briefing="Read PLAN.md.")
+    assert set(payload) == {"cycle", "issue", "attempt", "branch",
+                            "task_ref", "iteration", "briefing"}
+
+
+def test_a_briefing_reader_refuses_a_row_of_the_wrong_kind():
+    import pytest
+    with pytest.raises(ValueError):
+        events.run_briefing_record(row("run.outcome", {"issue": 1}))
+
+
+def test_a_sparse_briefing_row_reads_as_a_record_with_gaps():
+    record = events.run_briefing_record(row("run.briefing", {"issue": 9001}))
+    assert record.issue == 9001
+    assert record.briefing is None
+
+
 def test_a_watch_failure_is_one_row_naming_the_error():
     kind, payload = events.run_watch_failed(
         **RUN_CONTEXT, error="ssh: connect refused")

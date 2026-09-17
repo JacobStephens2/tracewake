@@ -187,6 +187,26 @@ def fakes(tmp_path):
 # what a dispatch reaches breaks every suite that drives one rather than the
 # one that happens to own the fixture.
 
+# The first Iteration's rendered briefing, as run.sh emits it on stdout
+# (#80): prose between two markers, last on the stream so the LOOP_RUN_*
+# block stays first. Every scripted box answers with it, so the dispatch
+# suite journals the row the way a real Run does. Short like the summaries,
+# but shaped like the real thing: file paths, the checklist naming the
+# discipline skills, and the completion promise - and no credentials.
+RUN_BRIEFING_TEXT = """You are Iteration 1 of at most 5 in an unattended Run.
+You have no memory of earlier Iterations. Everything you know is on disk.
+
+1. Read PLAN.md for the task and what remains of it.
+2. Read PROGRESS.md for what earlier Iterations already did.
+
+Work it in the discipline the repository's own skills define, invoking them
+by name for yourself: /tdd for code work, /diagnosing-bugs for something broken or slow, /code-review before every commit.
+
+LOOP: WORK COMPLETE"""
+RUN_BRIEFING_BLOCK = (
+    "LOOP_BRIEFING_BEGIN\n" + RUN_BRIEFING_TEXT + "\nLOOP_BRIEFING_END\n"
+)
+
 CLEAN_RUN = """LOOP_RUN_ENDED_BY=iteration-cap
 LOOP_RUN_EXIT=0
 LOOP_RUN_ITERATIONS=5
@@ -196,7 +216,7 @@ LOOP_RUN_NOTIFIED=sent
 LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/12
 
 The Run ended at its iteration cap.
-"""
+""" + RUN_BRIEFING_BLOCK
 
 FAILED_RUN = """LOOP_RUN_ENDED_BY=agent-failed
 LOOP_RUN_EXIT=4
@@ -205,7 +225,7 @@ LOOP_RUN_FAULTS=agent-failed
 LOOP_RUN_PROPOSAL=proposed
 LOOP_RUN_NOTIFIED=sent
 LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/13
-"""
+""" + RUN_BRIEFING_BLOCK
 
 # What the box-facts command answers with: the four things the box card on
 # /loop is built from (#156, #260). key=value lines, because that is the shape
@@ -267,7 +287,7 @@ LOOP_RUN_NOTIFIED=sent
 LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/12
 
 The Run ended at its iteration cap.
-"""
+""" + RUN_BRIEFING_BLOCK
 
 FAILED_RUN = """LOOP_RUN_ENDED_BY=agent-failed
 LOOP_RUN_EXIT=4
@@ -276,7 +296,7 @@ LOOP_RUN_FAULTS=agent-failed
 LOOP_RUN_PROPOSAL=proposed
 LOOP_RUN_NOTIFIED=sent
 LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/13
-"""
+""" + RUN_BRIEFING_BLOCK
 
 
 def _script(path, body):

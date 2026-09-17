@@ -1073,6 +1073,24 @@ def _dispatch_pick(
         )
         raise CycleFailed(str(exc)) from exc
 
+    # What the agent read, journaled before the outcome so the rows read in
+    # the order the Run happened them: the briefing rendered at Run start,
+    # then how the Run ended (#80). A box that predates the emission reports
+    # no briefing, which journals nothing rather than failing the dispatch.
+    briefing = summary.pop("briefing", None)
+    if briefing:
+        journal.append(
+            conn,
+            *events.run_briefing(
+                cycle=cycle_id,
+                issue=number,
+                attempt=attempt,
+                branch=branch,
+                task_ref=task_ref,
+                iteration=1,
+                briefing=briefing,
+            ),
+        )
     # `**summary` is a checked unpacking: the box report's fields and the
     # constructor's parameters are the same seven names, and a field one side
     # grows that the other does not know is a TypeError here rather than a
