@@ -446,9 +446,18 @@ pull request that references the task it came from. That is its only external
 effect, and it is the last thing it does.
 
 ```
-propose.sh --repo <path> [--task-ref <text>] [--ended-by <bound>] [--exit <code>]
+propose.sh --repo <path> [--task-ref <text>] [--area <text>]
+           [--task-title <text>] [--ended-by <bound>] [--exit <code>]
+           [--removal-commit <sha>] [--comment-follows]
            [--remote <name>] [--base <branch>]
 ```
+
+A Run fills `--task-ref`, `--area`, `--task-title` and `--removal-commit`
+itself, captured before its merge-clean cleanup removes the Plan they come
+from, so the proposal names the task, the owning area, the ending bound and
+the removal commit with no scaffolding left on the branch tip. The body points
+at the branch's history and the Run's comment for the narrative, never at a
+file the cleanup removed.
 
 It proposes on **every** ending bound, not only a clean one. A Run that was
 killed, that stalled on No-op Iterations, or whose agent exited non-zero has

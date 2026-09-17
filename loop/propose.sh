@@ -2,8 +2,10 @@
 #
 # Proposal-Only Output: the Run's one external effect.
 #
-#   propose.sh --repo <path> [--task-ref <text>] [--ended-by <bound>]
-#              [--exit <code>] [--remote <name>] [--base <branch>]
+#   propose.sh --repo <path> [--task-ref <text>] [--area <text>]
+#              [--task-title <text>] [--ended-by <bound>] [--exit <code>]
+#              [--removal-commit <sha>] [--comment-follows]
+#              [--remote <name>] [--base <branch>]
 #
 # Pushes the Run's branch and opens a draft pull request against the base
 # branch, referencing the task the Run was seeded from. Called by run.sh at the
@@ -57,7 +59,9 @@ die() {
 
 usage() {
     cat <<'USAGE'
-propose.sh --repo <path> [--task-ref <text>] [--ended-by <bound>] [--exit <code>]
+propose.sh --repo <path> [--task-ref <text>] [--area <text>]
+           [--task-title <text>] [--ended-by <bound>] [--exit <code>]
+           [--removal-commit <sha>] [--comment-follows]
            [--remote <name>] [--base <branch>]
 
 Pushes the Run's branch and opens a draft pull request referencing the task.
@@ -65,8 +69,23 @@ Pushes the Run's branch and opens a draft pull request referencing the task.
   --repo      the repository the Run worked in.
   --task-ref  the task the Run was seeded from, as owner/name#number. Read from
               the Plan when not given.
+  --area      the owning area the Run was scoped to. Read from the Plan when
+              not given, which covers a proposal opened by hand before any
+              cleanup; a Run passes it, because its cleanup removed the Plan
+              before this script runs.
+  --task-title
+              the task's title, for the proposal's title. Read from the Plan
+              when not given, for the same reason as --area.
   --ended-by  the bound that ended the Run, for the pull request's body.
   --exit      the Run's exit code, for the same.
+  --removal-commit
+              the cleanup commit that removed the Plan, the Progress Log and
+              any kept-earlier log from the branch tip before this proposal
+              was pushed. Named in the body, so a reviewer can read in history
+              what is no longer on the tip.
+  --comment-follows
+              the Run's own comment follows on the proposal, so the body can
+              point at it. Passed by run.sh when the Run will notify.
   --remote    the git remote to push to (default origin).
   --base      the branch to propose against (default the remote's HEAD).
 USAGE
@@ -74,8 +93,12 @@ USAGE
 
 repo=""
 task_ref=""
+area=""
+task_title=""
 ended_by=""
 run_exit=""
+removal_commit=""
+comment_follows=false
 remote="origin"
 base=""
 
@@ -83,8 +106,12 @@ while (($# > 0)); do
     case "$1" in
         --repo) repo="${2:?--repo needs a path}"; shift 2 ;;
         --task-ref) task_ref="${2:?--task-ref needs a value}"; shift 2 ;;
+        --area) area="${2:?--area needs a value}"; shift 2 ;;
+        --task-title) task_title="${2:?--task-title needs a value}"; shift 2 ;;
         --ended-by) ended_by="${2:?--ended-by needs a value}"; shift 2 ;;
         --exit) run_exit="${2:?--exit needs a code}"; shift 2 ;;
+        --removal-commit) removal_commit="${2:?--removal-commit needs a commit}"; shift 2 ;;
+        --comment-follows) comment_follows=true; shift ;;
         --remote) remote="${2:?--remote needs a name}"; shift 2 ;;
         --base) base="${2:?--base needs a branch}"; shift 2 ;;
         -h | --help) usage; exit 0 ;;
@@ -154,28 +181,23 @@ plan="${repo}/${LOOP_PLAN_PATH}"
 
 # --- What the proposal says -------------------------------------------------
 #
-# Read out of the Plan rather than passed in. The Plan is what the operator
-# handed over and what the Run worked against, so it is the honest source for
-# what this proposal is about - and it means run.sh does not have to carry the
-# task's title through a Run in order to put it in a pull request at the end.
-
-plan_field() {
-    [[ -f ${plan} ]] || return 0
-    awk -v heading="$1" '
-        $0 == heading { capture = 1; next }
-        capture && /^## / { exit }
-        capture && $0 ~ /[^ \t]/ { print; exit }
-    ' "${plan}"
-}
+# The task, its title and the owning area come from the flags first and the
+# Plan second. The flags exist because a Run removes the Plan in its
+# merge-clean cleanup BEFORE this script runs, so by proposal time there is no
+# Plan left to read - run.sh captures these values while the scaffolding is
+# still on the tip and hands them over. The Plan fallback covers a proposal
+# opened by hand before any cleanup, where the scaffolding is still on the
+# branch. The Plan is what the operator handed over and what the Run worked
+# against, so it stays the honest source wherever the flags did not say.
 
 # "**owner/name#648 - Audit every tblEmailMessage read and classify it**"
-task_line="$(plan_field '## Task')"
+task_line="$(loop_plan_field "${plan}" '## Task')"
 task_line="${task_line#\*\*}"
 task_line="${task_line%\*\*}"
 [[ -n ${task_ref} ]] || task_ref="${task_line%% - *}"
-task_title="${task_line#* - }"
+[[ -n ${task_title} ]] || task_title="${task_line#* - }"
 
-area="$(plan_field '## The owning area this Run is scoped to')"
+[[ -n ${area} ]] || area="$(loop_plan_field "${plan}" '## The owning area this Run is scoped to')"
 area="${area#\*\*}"
 area="${area%\*\*}"
 
@@ -184,6 +206,27 @@ title="Loop: ${task_title:-a proposal from an unattended Run}"
 
 body_file="$(mktemp)"
 trap 'rm -f -- "${body_file}"' EXIT INT TERM
+
+# What the tip no longer carries, said once and plainly. With the scaffolding
+# gone from the branch tip the body is what tells a reviewer what this Run
+# was, how it ended, and where the narrative went - history and the Run's own
+# comment, never a file the cleanup removed from the tip.
+if [[ -n ${removal_commit} ]]; then
+    scaffolding_note="The Plan, the Progress Log, and any kept-earlier log were removed from the branch tip in ${removal_commit} before this proposal was pushed, so the tip is merge-clean and the diff is the work and nothing else."
+else
+    scaffolding_note="The branch tip carries no Run scaffolding - the Plan, the Progress Log, and any kept-earlier log live in this branch's history rather than on it - so the diff is the work and nothing else."
+fi
+
+if [[ -n ${ended_by} ]]; then
+    history_note="The \`Loop: Run ended (${ended_by})\` commit in this branch's history holds the Plan and the Progress Log as they stood when the Run ended."
+else
+    history_note="The \`Loop: Run ended\` commit in this branch's history holds the Plan and the Progress Log as they stood when the Run ended."
+fi
+
+comment_note=""
+if ${comment_follows}; then
+    comment_note=" The Run's comment on this proposal carries the same record."
+fi
 
 # Assembled in an unquoted heredoc so the values above land in it, with the
 # markdown's backticks escaped. printf with backticks in the format string is
@@ -199,15 +242,15 @@ HEAD
     [[ -n ${area} ]] && printf -- '- Owning area this Run was scoped to: %s\n' "${area}"
     [[ -n ${ended_by} ]] && printf -- '- Ended by: %s\n' "${ended_by}"
     [[ -n ${run_exit} ]] && printf -- '- Run exit code: %s\n' "${run_exit}"
+    [[ -n ${removal_commit} ]] && printf -- '- Run scaffolding removed in: %s\n' "${removal_commit}"
     cat <<BODY
 - Branch: \`${branch}\`, proposed against \`${base}\`
 
 ## How to review this
 
-Read \`${LOOP_PROGRESS_LOG_PATH}\` first. It is the narrative of the Run - what each
-Iteration did, what it decided and why, and what it found blocked - and the diff
-is easier to judge knowing how it was arrived at. \`${LOOP_PLAN_PATH}\` carries the
-task, its acceptance criteria, and the mechanical check that grades the work.
+${scaffolding_note}
+
+${history_note}${comment_note} The diff is easier to judge knowing how it was arrived at.
 
 The commits are attributed to the operator and signed with a key dedicated to
 the Loop, which is what tells a Loop commit from a hand-authored one. A Verified

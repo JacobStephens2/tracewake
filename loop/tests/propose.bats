@@ -76,9 +76,60 @@ setup() { setup_propose_fixture; }
     grep -q 'Run exit code: 3' "${FAKE_PR_STATE}.body"
 }
 
-@test "the proposal points a reviewer at the Progress Log" {
+@test "the proposal points a reviewer at history rather than branch-tip files" {
+    # The cleanup commit removed the Plan and the Progress Log from the tip,
+    # so the body must never send a reviewer to open them there. The narrative
+    # lives in history and in the Run's comment.
+    run_propose --ended-by consecutive-noops --removal-commit abc1234 --comment-follows
+    grep -q 'Loop: Run ended (consecutive-noops)' "${FAKE_PR_STATE}.body"
+    grep -q 'abc1234' "${FAKE_PR_STATE}.body"
+    grep -q 'history' "${FAKE_PR_STATE}.body"
+    grep -q "The Run's comment on this proposal carries the same record" "${FAKE_PR_STATE}.body"
+    ! grep -qF 'Read `PROGRESS.md` first' "${FAKE_PR_STATE}.body"
+    ! grep -qE 'Read `[^`]*\.md`' "${FAKE_PR_STATE}.body"
+}
+
+@test "the proposal names the removal commit that took the scaffolding off the tip" {
+    run_propose --removal-commit deadbee1234
+    grep -q 'Run scaffolding removed in: deadbee1234' "${FAKE_PR_STATE}.body"
+}
+
+@test "a proposal without a removal commit still says the tip carries no scaffolding" {
     run_propose
-    grep -q 'PROGRESS.md' "${FAKE_PR_STATE}.body"
+    grep -q 'carries no Run scaffolding' "${FAKE_PR_STATE}.body"
+    ! grep -q 'removed in:' "${FAKE_PR_STATE}.body"
+}
+
+@test "the Run's comment is pointed at only when one follows" {
+    run_propose
+    ! grep -q "The Run's comment on this proposal" "${FAKE_PR_STATE}.body"
+}
+
+@test "an owning area given on the command line wins over the Plan's" {
+    run_propose --area "tour planning"
+    grep -q 'Owning area this Run was scoped to: tour planning' "${FAKE_PR_STATE}.body"
+    [[ "$(pr_field PR_TITLE)" == *"tour planning"* ]]
+    [[ "$(pr_field PR_TITLE)" != *"dashboards and reports"* ]]
+}
+
+@test "a Run whose Plan is gone still names the task, the area and the bound" {
+    # The merge-clean cleanup removes the Plan before propose.sh runs, so a
+    # Run hands over what the body must name. This drives that exact shape: no
+    # Plan on disk, everything as flags.
+    rm -f "${REPO}/PLAN.md"
+    run_propose --task-ref "Educational-Travel-Adventures/tourbot#648" \
+        --task-title "Audit every tblEmailMessage read and classify it" \
+        --area "dashboards and reports" \
+        --ended-by iteration-cap --exit 0 --removal-commit deadbee1234 \
+        --comment-follows
+    [ "$status" -eq 0 ]
+    grep -q 'Educational-Travel-Adventures/tourbot#648' "${FAKE_PR_STATE}.body"
+    grep -q 'Owning area this Run was scoped to: dashboards and reports' "${FAKE_PR_STATE}.body"
+    grep -q 'Ended by: iteration-cap' "${FAKE_PR_STATE}.body"
+    grep -q 'Run exit code: 0' "${FAKE_PR_STATE}.body"
+    grep -q 'Run scaffolding removed in: deadbee1234' "${FAKE_PR_STATE}.body"
+    grep -q 'Loop: Run ended (iteration-cap)' "${FAKE_PR_STATE}.body"
+    [ "$(pr_field PR_TITLE)" = "Loop: Audit every tblEmailMessage read and classify it (dashboards and reports)" ]
 }
 
 @test "the proposal closes the task when it is merged" {
