@@ -43,6 +43,18 @@
         </ul>
       </details>
       {% endif %}
+      {#- What the agent read (#83): the first Iteration's briefing, journaled
+          at Run start (#80). Rendered verbatim from the stored row - never
+          re-rendered from current scripts, so this is what the Run started
+          with even after they changed - and shown to both roles unredacted,
+          because it carries no credentials. Absent when the Run predates the
+          journaling: no card beats an invented one. -#}
+      {% if r.briefing %}
+      <details class="briefing" {% if r.in_flight %}open{% endif %}>
+        <summary>Iteration briefing</summary>
+        <pre>{{ r.briefing }}</pre>
+      </details>
+      {% endif %}
       {#- What the Run is doing, while it does it (#157). The watcher reads
           the box's Progress Log about once a minute, so these appear during
           the Run rather than all at once when it ends. Shown on an ended card

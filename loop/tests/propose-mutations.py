@@ -57,6 +57,24 @@ MUTATIONS = {
         "    [[ -n ${task_ref} ]] && printf -- '- Task: %s\\n' \"${task_ref}\"",
         "    :",
     ),
+    # The proposal stops naming the owning area, so a reviewer cannot tell
+    # what the Run was scoped to.
+    "area-dropped": (
+        "    [[ -n ${area} ]] && printf -- '- Owning area this Run was scoped to: %s\\n' \"${area}\"",
+        "    :",
+    ),
+    # The proposal stops naming the removal commit, so what is no longer on
+    # the tip cannot be found in history.
+    "removal-commit-dropped": (
+        "    [[ -n ${removal_commit} ]] && printf -- '- Run scaffolding removed in: %s\\n' \"${removal_commit}\"",
+        "    :",
+    ),
+    # The proposal sends the reviewer back to a file the cleanup removed from
+    # the tip, instead of pointing at history and the Run's comment.
+    "review-points-at-tip-files": (
+        "${history_note}${comment_note} The diff is easier to judge knowing how it was arrived at.",
+        "Read `${LOOP_PROGRESS_LOG_PATH}` first.",
+    ),
     # The Closes line is dropped, so merging the proposal leaves the task open
     # and the queue keeps offering work that is already done (spec #151,
     # story 18).

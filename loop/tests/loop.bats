@@ -571,6 +571,96 @@ setup() {
     [[ "$(proposed_with)" == *"owner/name#648"* ]]
 }
 
+seed_a_tasked_plan() {
+    # A Plan in seed-run.sh's shape, so the Run has a task reference, a title
+    # and an owning area to hand the proposal after the cleanup removes it.
+    cat >"${REPO}/PLAN.md" <<'PLAN'
+# Plan
+
+## Task
+
+**owner/name#648 - Three small things**
+
+## The owning area this Run is scoped to
+
+**dashboards and reports**
+
+## Acceptance criteria
+
+- [ ] task 1
+PLAN
+    git -C "${REPO}" add -A
+    git -C "${REPO}" commit --quiet --message "Seed the Run"
+}
+
+@test "the proposal is told the task, the area and the removal commit" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+    # No --task-ref on the command line: the Run reads the Plan before the
+    # cleanup removes it, so the proposal still names the task.
+    [[ "$(proposed_with)" == *"--task-ref"* ]]
+    [[ "$(proposed_with)" == *"owner/name#648"* ]]
+    [[ "$(proposed_with)" == *"--area"* ]]
+    [[ "$(proposed_with)" == *"dashboards and reports"* ]]
+    [[ "$(proposed_with)" == *"Three small things"* ]]
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [ -n "${cleanup}" ]
+    [[ "$(proposed_with)" == *"--removal-commit"* ]]
+    [[ "$(proposed_with)" == *"${cleanup}"* ]]
+}
+
+@test "the Run tells the proposal a comment follows when it will notify" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose --notify
+    [ "$status" -eq 0 ]
+    [[ "$(proposed_with)" == *"--comment-follows"* ]]
+}
+
+@test "a Run that will not notify promises no comment" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+    [[ "$(proposed_with)" != *"--comment-follows"* ]]
+}
+
+@test "the Run's comment on its own proposal carries the same record" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose --notify
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=sent"* ]]
+    [[ "$(notified_with)" == *"owner/name#648"* ]]
+    [[ "$(notified_with)" == *"dashboards and reports"* ]]
+    [[ "$(notified_with)" == *"iteration-cap"* ]]
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [[ "$(notified_with)" == *"${cleanup}"* ]]
+    [[ "$(notified_with)" == *"Loop: Run ended (iteration-cap)"* ]]
+    [[ "$(notified_with)" == *"carries no Run scaffolding"* ]]
+    [[ "$(notified_with)" != *"\`PROGRESS.md\`"* ]]
+}
+
+@test "the comment on a bound-ended Run carries the same record" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=4
+    export FAKE_AGENT_BEHAVIOURS="commit noop noop"
+    run_the_loop --propose --notify
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=sent"* ]]
+    [[ "$(notified_with)" == *"consecutive-noops"* ]]
+    [[ "$(notified_with)" == *"owner/name#648"* ]]
+    [[ "$(notified_with)" == *"dashboards and reports"* ]]
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [[ "$(notified_with)" == *"${cleanup}"* ]]
+}
+
 @test "a Run that went wrong still proposes - a failed Run is a result" {
     export LOOP_MAX_ITERATIONS=1
     export FAKE_AGENT_BEHAVIOURS="fail"

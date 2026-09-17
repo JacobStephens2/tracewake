@@ -590,7 +590,7 @@ ROUTE_KINDS = set(ROUTE_NAMES)
 # rather than a set union rebuilt per event.
 RUN_KINDS = ROUTE_KINDS | {
     events.RUN_DISPATCHED, events.RUN_OUTCOME, events.RUN_ITERATION,
-    events.RUN_WATCH_FAILED, events.RUN_CONTRACT,
+    events.RUN_WATCH_FAILED, events.RUN_CONTRACT, events.RUN_BRIEFING,
 }
 
 
@@ -665,6 +665,14 @@ def _runs(rows: list[dict]) -> list[dict]:
             # can differ, and a panel showing the wrong one would reassure
             # about bounds nothing is enforcing.
             card["contract"] = events.run_contract_record(row).contract
+        elif kind == events.RUN_BRIEFING:
+            # What the agent read (#80/#83): the first Iteration's rendered
+            # briefing, journaled at Run start. Read verbatim from the stored
+            # row and never re-rendered from current scripts, so what the card
+            # shows is what the Run started with even after the scripts
+            # changed. Shown to both roles unredacted: it carries no
+            # credentials, only paths, the checklist and the promise.
+            card["briefing"] = events.run_briefing_record(row).briefing
         elif kind == events.RUN_WATCH_FAILED:
             # Said once per Run by the watcher, and shown, because a Run with
             # no Iterations on its card and a Run whose Progress Log could not

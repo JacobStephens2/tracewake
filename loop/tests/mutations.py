@@ -86,6 +86,20 @@ MUTATIONS = {
         "        ((exit_code != 0)) || exit_code=6",
         "        :",
     ),
+    # The proposal is no longer told what the cleanup removed, so its body
+    # cannot name the owning area or the removal commit.
+    "proposal-record-dropped": (
+        "    [[ -n ${plan_area} ]] && propose_args+=(--area \"${plan_area}\")\n"
+        "    [[ -n ${plan_task_title} ]] && propose_args+=(--task-title \"${plan_task_title}\")\n"
+        "    [[ -n ${removal_commit} ]] && propose_args+=(--removal-commit \"${removal_commit}\")",
+        "    :",
+    ),
+    # The task reference is no longer backfilled from the Plan, so a Run
+    # started without --task-ref proposes without naming its task.
+    "proposal-task-backfill-dropped": (
+        '[[ -n ${task_ref} ]] || task_ref="${plan_task_line%% - *}"',
+        "[[ -n ${task_ref} ]] || true",
+    ),
     # The turn bound is read as a broken invocation again, so one of the
     # Contract's five bounds ends the whole Run at whichever Iteration hits it.
     # This is the defect the first Run found, kept as a mutation.
