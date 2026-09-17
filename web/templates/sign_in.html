@@ -1,28 +1,27 @@
-{% extends "base.html" %}
-{% block title %}sign in — Tracewake{% endblock %}
-{% block content %}
-<header>
-  <p class="eyebrow">the window</p>
-  <h1>Sign in</h1>
-  <p class="lede">The Journal is behind an account. There is no registration.</p>
-</header>
-<section class="card">
-  {% if error %}
-  <p class="form-error">{{ error }}</p>
-  {% endif %}
-  <form method="post" action="" class="sign-in">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="next" value="{{ next_url }}">
-    <label>
-      Email
-      <input type="email" name="email" autocomplete="username" required autofocus>
-    </label>
-    <label>
-      Password
-      <input type="password" name="password" autocomplete="current-password" required>
-    </label>
-    <button type="submit" class="demo-btn">Sign in</button>
-  </form>
-  <p class="hint"><a href="/forgot">Forgot your password?</a></p>
-</section>
+{# Sign-in: the window's front door for anonymous visitors (#84 wears the
+   terminal shell here like everywhere else). Keeps the synchronizer-token
+   field and the `next` hop the POST handler reads. #}
+{% extends "terminal_base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block logo %}TRACEWAKE // SIGN IN{% endblock %}
+{% block main %}
+    <h1>Sign in</h1>
+    <p>The Journal is behind an account. There is no registration.</p>
+    {% if error %}
+    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
+    {% endif %}
+    <form method="post" action="">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <p>
+        <label for="email">Email</label><br>
+        <input type="email" id="email" name="email" autocomplete="username" required autofocus>
+      </p>
+      <p>
+        <label for="password">Password</label><br>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </p>
+      <p><button type="submit" class="btn btn-primary">Sign in</button></p>
+    </form>
+    <p><a href="/forgot">Forgot your password?</a></p>
 {% endblock %}
