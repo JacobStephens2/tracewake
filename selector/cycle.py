@@ -1117,8 +1117,36 @@ def _dispatch_pick(
 # through the dispatch.
 
 
+def _evidence_lines(branch: str | None) -> list[str]:
+    """Where the Run's record lives, shared by every route comment.
+
+    One copy, for the reason SIGNATURE is one copy: four comments that each
+    spelled this differently would drift, and a pointer is only useful while
+    it agrees with what the Run actually left behind.
+
+    The branch's history, not its tip: since #79 the Run removes the Plan,
+    the Progress Log and any kept-earlier log in a cleanup commit before
+    proposing, so the tip is merge-clean and the record reads from the
+    commits underneath it. The `run.outcome` row in the Selector Journal is
+    the same ending in the Selector's own terms.
+    """
+    if not branch:
+        return [
+            "The Run's record is the `run.outcome` row the Selector",
+            "journaled for this attempt.",
+        ]
+    return [
+        f"The Run's record - the Plan, the Progress Log and any kept-earlier",
+        f"log - is on branch `{branch}`. The tip carries none of that",
+        "scaffolding: the Run removes it in a cleanup commit before proposing",
+        "(#79), so read the record from the branch's history rather than from",
+        "the tip. The `run.outcome` row in the Selector Journal is the same",
+        "ending in the Selector's own terms.",
+    ]
+
+
 def _failure_comment(config: Config, outcome: str, attempt: int,
-                     proposal: str | None) -> str:
+                     proposal: str | None, branch: str | None) -> str:
     """What the operator reads when the Selector has stopped trying.
 
     The bound that ended this attempt, then what that means, then where the
@@ -1137,15 +1165,18 @@ def _failure_comment(config: Config, outcome: str, attempt: int,
         if proposal else
         "\n\nThis attempt left no Proposal."
     )
+    evidence = "\n".join(_evidence_lines(branch))
     return f"""The Selector has now dispatched this issue {attempt} times. The last Run {ran}.
 
 The retry budget is {MAX_ATTEMPTS} attempts per Handover, and it is now spent, so the label has been swapped to `{config.human_label}`. No further Run will be started for this issue: a third dispatch is refused whatever the label says.{where}
+
+{evidence}
 
 If the failure was transient, or you have changed something that fixes it, re-apply `{config.label}`: that is a fresh Handover with a fresh retry budget."""
 
 
 def _red_checks_comment(config: Config, proposal: str,
-                        failing: list[str]) -> str:
+                        failing: list[str], branch: str | None) -> str:
     """The failing check names, and why no repair Run is coming.
 
     Deliberately not a repair loop (spec #151, out of scope): CI output
@@ -1153,6 +1184,7 @@ def _red_checks_comment(config: Config, proposal: str,
     what stops the silence being read as "the Selector will handle it".
     """
     named = "\n".join(f"- `{name}`" for name in failing)
+    evidence = "\n".join(_evidence_lines(branch))
     return f"""The Run ended cleanly and left a Proposal, but its checks are red.
 
 {proposal}
@@ -1161,11 +1193,13 @@ Failing:
 
 {named}
 
+{evidence}
+
 No repair Run will be started - committing CI output back into the branch for a fix-up Run is deliberately out of the Selector's scope. The label has been swapped to `{config.human_label}`."""
 
 
 def _unsettled_checks_comment(config: Config, proposal: str,
-                              waited: int) -> str:
+                              waited: int, branch: str | None) -> str:
     """CI had not decided by the time the Selector stopped waiting.
 
     The surprising half of this path, so it says the wait out loud: pending is
@@ -1174,14 +1208,18 @@ def _unsettled_checks_comment(config: Config, proposal: str,
     they usually will have - the operator is being asked to look, not told the
     work is broken.
     """
+    evidence = "\n".join(_evidence_lines(branch))
     return f"""The Run ended cleanly and left a Proposal, but its checks did not finish within the {waited}s the Selector waits.
 
 {proposal}
 
+{evidence}
+
 Unverified work is not put in the review queue, so the label has been swapped to `{config.human_label}` rather than `{config.review_label}`. The checks may well have gone green since; read them on the Proposal."""
 
 
-def _no_checks_comment(config: Config, proposal: str) -> str:
+def _no_checks_comment(config: Config, proposal: str,
+                       branch: str | None) -> str:
     """A Proposal that no check ran against at all.
 
     Deliberately not green. "Every check passed" and "no check ran" are
@@ -1192,9 +1230,12 @@ def _no_checks_comment(config: Config, proposal: str) -> str:
     to review as though it had passed would be the same false pass as a
     permission error read as an all-clear, reached by a different road.
     """
+    evidence = "\n".join(_evidence_lines(branch))
     return f"""The Run ended cleanly and left a Proposal, but no check ran against it at all.
 
 {proposal}
+
+{evidence}
 
 That is not the same as passing. On a repository with CI it usually means a workflow did not trigger - a file that will not parse, Actions disabled, or a run that never started - so the Proposal is unverified rather than clean. The label has been swapped to `{config.human_label}` rather than `{config.review_label}`."""
 
@@ -1285,6 +1326,7 @@ def _route(
     """
     number = pick["number"]
     proposal = outcome.get("proposal")
+    branch = outcome.get("branch")
     ended_by = outcome["ended_by"]
     failure = is_failure(ended_by, proposal)
     journaled_as = outcome_name(ended_by, proposal)
@@ -1311,7 +1353,7 @@ def _route(
         route = GIVEN_UP(config)
         return _hand_over(
             conn, config, dispatch_config, number,
-            _failure_comment(config, journaled_as, attempt, proposal),
+            _failure_comment(config, journaled_as, attempt, proposal, branch),
             route,
             events.issue_given_up(**base, label=route.label),
             lambda error: events.issue_route_failed(
@@ -1354,17 +1396,17 @@ def _route(
     # from the person reading the issue.
     if state == "pending":
         body = _unsettled_checks_comment(
-            config, proposal, dispatch_config.checks_timeout_seconds
+            config, proposal, dispatch_config.checks_timeout_seconds, branch
         )
         failing = []
     elif state == "none":
-        body = _no_checks_comment(config, proposal)
+        body = _no_checks_comment(config, proposal, branch)
         failing = []
     else:
         # Red, and anything a future check state adds: not green is not
         # reviewable, and an unrecognised state must never reach the review
         # queue as though it had passed.
-        body = _red_checks_comment(config, proposal, answer["failing"])
+        body = _red_checks_comment(config, proposal, answer["failing"], branch)
         failing = answer["failing"]
 
     route = HANDED_TO_HUMAN(config)

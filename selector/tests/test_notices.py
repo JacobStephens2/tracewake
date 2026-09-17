@@ -114,6 +114,29 @@ def test_a_run_that_ended_on_a_failure_bound_is_not_green():
     assert said.subject != notice("run.outcome", outcome()).subject
 
 
+def test_every_failure_bound_with_a_proposal_is_still_not_green():
+    """Router/notifier parity for the whole bound set: a Run the Contract cut
+    short is a failure even holding a draft Proposal, on every bound - so no
+    failed Run is ever mailed as green."""
+    green_subject = notice("run.outcome", outcome()).subject
+    for bound in ("run-clock", "consecutive-noops", "agent-failed"):
+        said = notice("run.outcome", outcome(
+            ended_by=bound, exit=4, proposal=PROPOSAL, proposed="proposed",
+        ))
+        assert said is not None
+        assert said.subject != green_subject, bound
+        assert bound in (said.subject + said.body), bound
+
+
+def test_a_failed_run_notice_names_the_branch_holding_the_record():
+    """Where the evidence lives, in mail as on the issue: the branch whose
+    history carries the Run's record."""
+    said = notice("run.outcome", outcome(
+        ended_by="agent-failed", exit=4,
+    ))
+    assert "loop/312-php-guest" in said.body
+
+
 def test_a_run_that_proposed_nothing_says_so():
     """The row carries `iteration-cap`, not `no-proposal`: cycle.py writes the
     raw bound into `run.outcome` and only renames it later, on the issue's own
