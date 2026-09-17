@@ -223,3 +223,19 @@
          if tracewake_dispatch_enabled | bool
          else 'installed and disabled; set tracewake_dispatch_enabled=true to turn
                unattended dispatch on' }}
+
+# The window's Start/Stop toggle for the timer above. The window runs as the
+# instance's unprivileged user while the timer is a system unit, so without
+# this the buttons refuse with `sudo: a password is required` and say so in
+# the cell. Two commands on the one unit and nothing else - an unattended
+# agent with a broader sudo grant is an unattended agent with no boundary
+# worth the name, and the window is unattended code by definition.
+- name: Let the window toggle the cycle timer without a shell
+  ansible.builtin.template:
+    src: tracewake-timer-sudoers.j2
+    dest: /etc/sudoers.d/tracewake-timer
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  when: not ansible_check_mode or 'tracewake-selector-cycle.timer' in tracewake_units_on_box

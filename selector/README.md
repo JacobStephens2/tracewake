@@ -148,7 +148,7 @@ address or a command have no default at all:
 | `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
 | `SELECTOR_CHECKS_TIMEOUT_SECONDS` | `900` | how long a Proposal's checks may stay pending |
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
-| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
+| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card. Single-Host instances use `box-sources/facts-local.sh` |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
 | `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
 | `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
@@ -178,7 +178,11 @@ telling the gate which agent's subscription login counts (`SELECTOR_BOX_AGENT`,
 `claude`).
 `box-sources/facts.sh` shares the first, second and fourth of ssh.sh's,
 and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it asks for the guest
-template.
+template. Single-Host instances read through `box-sources/facts-local.sh`
+instead (ADR 0019): the same `LOOP_BOX_*` lines with no hop and no
+`SELECTOR_BOX_HOST`, becoming the Run account through sudo before reading -
+keeping `facts.sh` while the host is `local` is the `ssh: Could not resolve
+hostname local` on the box card.
 
 `guardrail-sources/protection.sh` shares none of those - it reaches GitHub and
 this checkout rather than the box - and reads five of its own:
@@ -256,7 +260,7 @@ Configuration:
 
 | variable | default | what it is |
 | --- | --- | --- |
-| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress.sh` | the box's Progress Log, read |
+| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress.sh` | the box's Progress Log, read. Single-Host instances use `box-sources/progress-local.sh` |
 | `SELECTOR_WATCH_INTERVAL_SECONDS` | `60` | how often |
 | `SELECTOR_WATCH_TIMEOUT_SECONDS` | `30` | how long one read may take |
 | `SELECTOR_WATCH_CLOCK_SKEW_SECONDS` | `300` | how far the box's clock may sit behind this one |
@@ -266,7 +270,10 @@ Configuration:
 (`PROGRESS.md`, relative to the checkout). It is handed the Run's branch and
 deliberately does not check it out or fetch it: the box is running a Run in
 that checkout, and a watcher that touched its working tree would be a window
-reaching through the glass.
+reaching through the glass. Single-Host instances watch through
+`box-sources/progress-local.sh` instead (ADR 0019): the same Progress Log
+semantics with no hop and no `SELECTOR_BOX_HOST`, under the same Run-account
+transition as the local facts read.
 
 Three properties, each of them a way this could have gone wrong unattended:
 
@@ -456,6 +463,9 @@ Flipping it is a one-line reviewable change - the shape ADR 0014 already asks
 for when widening the labeler allowlist - and the play prints which way it left
 the timer. Out of band it is `sudo systemctl enable --now tracewake-selector-cycle.timer`.
 Setting it back to `false` stops a running timer, not merely a future one.
+The window offers the same toggle to admin accounts on the status strip -
+Start and Stop beside the next-cycle cell - through a sudoers rule the role
+installs that names exactly those two commands on the one unit.
 
 **The gate is flipped and the timer is running** (#261, 2026-08-30): it fired
 unattended at 23:30:52 the same evening, journalled the cycle and declined to
@@ -958,6 +968,12 @@ Detection precedes notification, or the mail is a guess.
 - `box-sources/progress.sh` - the default `SELECTOR_BOX_PROGRESS_COMMAND`: one
   SSH hop that `cat`s the box checkout's Progress Log. Read-only, holds no
   credential, touches no working tree.
+- `box-sources/facts-local.sh` - the Single-Host `SELECTOR_BOX_FACTS_COMMAND`
+  (ADR 0019): the same `LOOP_BOX_*` lines as `facts.sh` with no hop, becoming
+  the Run account through sudo before reading.
+- `box-sources/progress-local.sh` - the Single-Host
+  `SELECTOR_BOX_PROGRESS_COMMAND` (ADR 0019): the same Progress Log read with
+  no hop, under the same transition.
 - `box-sources/local.sh` - the default `SELECTOR_BOX_COMMAND` (ADR 0029):
   executes a Run on this Host without an SSH hop, gated by
   `loop/assert-credentials.sh` (ADR 0019). Refuses dispatch naming the
