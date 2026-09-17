@@ -150,6 +150,27 @@ def test_the_red_comment_links_the_proposal_it_is_about(db, box):
     assert "https://github.invalid/acme/widgets/pull/12" in comment_bodies(box)[0]
 
 
+def test_the_red_comment_points_at_the_branch_history(db, box):
+    """The failing names say what happened; the branch history says where the
+    record is - the tip is merge-clean since #79."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(RED_CHECKS)
+    box.run(db, [issue(645)])
+    body = comment_bodies(box)[0]
+    assert one(db, "run.outcome")["branch"] in body
+    assert "history" in body
+
+
+def test_a_red_proposal_never_reaches_the_review_queue(db, box):
+    """Unverified work is not reviewable, with or without a comment saying
+    so: the route and the comment travel together."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(RED_CHECKS)
+    box.run(db, [issue(645)])
+    assert events(db, "issue.awaiting-review") == []
+    assert len(comment_bodies(box)) == 1
+
+
 def test_the_red_route_is_journaled_with_the_failing_checks(db, box):
     box.run_summary(CLEAN_RUN)
     box.checks(RED_CHECKS)
@@ -223,6 +244,74 @@ def test_the_give_up_comment_says_what_happened(db, box, dispatch):
     assert "agent-failed" in body
     assert "2" in body
     assert "ready-for-human" in body
+
+
+def test_the_give_up_comment_names_the_draft_proposal(db, box, dispatch):
+    """A failed Run is learnable from the issue alone: the draft Proposal the
+    failed attempt left behind is named on the issue, so the operator never
+    opens a Proposal just to learn a Run failed."""
+    dispatch(db, 645, outcome="agent-failed")
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)], BOX_EXIT=4)
+    body = comment_bodies(box)[0]
+    assert "https://github.invalid/acme/widgets/pull/13" in body
+
+
+def test_the_give_up_comment_points_at_the_branch_history(db, box, dispatch):
+    """Since #79 the tip is merge-clean, so the comment points at the branch's
+    history rather than at files the tip no longer carries."""
+    dispatch(db, 645, outcome="agent-failed")
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)], BOX_EXIT=4)
+    body = comment_bodies(box)[0]
+    branch = last(db, "run.outcome")["branch"]
+    assert branch in body
+    assert "history" in body
+
+
+def test_a_give_up_with_no_proposal_still_names_the_branch(db, box, dispatch):
+    """Nothing to link, but still somewhere to look: the branch history holds
+    the Run's record even when no Proposal exists."""
+    dispatch(db, 645, outcome="iteration-cap")
+    box.run_summary(NO_PROPOSAL_RUN)
+    box.run(db, [issue(645)])
+    bodies = comment_bodies(box)
+    assert len(bodies) == 1
+    assert "left no Proposal" in bodies[0]
+    assert last(db, "run.outcome")["branch"] in bodies[0]
+    assert "history" in bodies[0]
+
+
+def test_a_failed_run_with_a_proposal_is_never_routed_to_review(
+    db, box, dispatch
+):
+    """Routing judgment, pinned: a Run the Contract cut short goes to the
+    human even when it left a draft Proposal and CI would call it green. The
+    checks are not even read - there is nothing to review whatever they say."""
+    dispatch(db, 645, outcome="agent-failed")
+    box.run_summary(FAILED_RUN)
+    box.checks(GREEN_CHECKS)
+    result = box.run(db, [issue(645)], BOX_EXIT=4)
+    assert result.returncode == 0, result.stderr
+    assert checks_calls(box) == 0
+    assert relabels(box) == [("645", "ready-for-human", "ready-for-agent")]
+    assert events(db, "issue.awaiting-review") == []
+    assert one(db, "issue.given-up")["outcome"] == "agent-failed"
+
+
+def test_a_first_failure_with_a_proposal_is_retried_without_review(
+    db, box
+):
+    """The same judgment on the first attempt: retry, no comment, no review
+    queue - even holding a draft Proposal with green checks scripted."""
+    box.run_summary(FAILED_RUN)
+    box.checks(GREEN_CHECKS)
+    result = box.run(db, [issue(645)], BOX_EXIT=4)
+    assert result.returncode == 0, result.stderr
+    assert relabels(box) == []
+    assert comment_bodies(box) == []
+    assert events(db, "issue.awaiting-review") == []
+    assert one(db, "issue.retrying")["outcome"] == "agent-failed"
 
 
 def test_the_give_up_is_journaled(db, box, dispatch):
@@ -326,6 +415,24 @@ def test_the_unsettled_comment_says_the_checks_did_not_finish(db, box):
     box.checks(PENDING_CHECKS)
     box.run(db, [issue(645)], SELECTOR_CHECKS_TIMEOUT_SECONDS=0)
     assert "did not finish" in comment_bodies(box)[0]
+
+
+def test_the_unsettled_comment_points_at_the_branch_history(db, box):
+    box.run_summary(CLEAN_RUN)
+    box.checks(PENDING_CHECKS)
+    box.run(db, [issue(645)], SELECTOR_CHECKS_TIMEOUT_SECONDS=0)
+    body = comment_bodies(box)[0]
+    assert "https://github.invalid/acme/widgets/pull/12" in body
+    assert one(db, "run.outcome")["branch"] in body
+    assert "history" in body
+
+
+def test_a_pending_proposal_never_reaches_the_review_queue(db, box):
+    box.run_summary(CLEAN_RUN)
+    box.checks(PENDING_CHECKS)
+    box.run(db, [issue(645)], SELECTOR_CHECKS_TIMEOUT_SECONDS=0)
+    assert events(db, "issue.awaiting-review") == []
+    assert len(comment_bodies(box)) == 1
 
 
 # --- Bookkeeping the tracker refused -----------------------------------------
@@ -441,6 +548,26 @@ def test_the_no_checks_comment_says_it_is_not_the_same_as_passing(db, box):
     body = comment_bodies(box)[0]
     assert "no check ran against it" in body
     assert "not the same as passing" in body
+
+
+def test_the_no_checks_comment_points_at_the_branch_history(db, box):
+    box.run_summary(CLEAN_RUN)
+    box.checks(NO_CHECKS)
+    box.run(db, [issue(645)])
+    body = comment_bodies(box)[0]
+    assert "https://github.invalid/acme/widgets/pull/12" in body
+    assert one(db, "run.outcome")["branch"] in body
+    assert "history" in body
+
+
+def test_a_proposal_with_no_checks_is_commented_not_just_relabeled(db, box):
+    """Every terminal route off an unverified Run leaves a comment: the swap
+    alone would take the issue out of the queue with nothing saying why."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(NO_CHECKS)
+    box.run(db, [issue(645)])
+    assert events(db, "issue.awaiting-review") == []
+    assert len(comment_bodies(box)) == 1
 
 
 def test_every_comment_the_selector_posts_is_signed(db, box):
