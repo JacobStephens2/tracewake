@@ -568,3 +568,52 @@ def update_branch(config: DispatchConfig, task_repo: str, proposal: str | int) -
             f"could not update branch for proposal {proposal}: {_said(completed)}"
         )
 
+
+def reconcile(config: DispatchConfig, task_repo: str, proposal: str | int,
+              check: str | None = None) -> dict:
+    """Reconcile one conflicting Proposal on the box and hand back the report.
+
+    A reconcile Run is a different kind of Run from `start_run`, and it goes
+    through the same box surface under its own verb rather than through a
+    second command: the box is what holds the microVM boundary and the
+    per-target checkout, so reaching it any other way would be a second box.
+
+    `proposal` is the Proposal's URL or number, like `checks` and
+    `update-branch` take: the box resolves the working branch from the forge
+    itself, so the Selector never has to parse one out of a URL. `check` is
+    the owning issue's Check section when it has one - the suite the merged
+    branch must pass before the box pushes it.
+
+    The box pushes only after a clean verification; a non-zero exit means the
+    conflicts could not be resolved or the suite went red, and nothing was
+    pushed. Like `start_run`, this blocks for the length of the Run, which is
+    why it carries the Run's backstop rather than the seconds-scale command
+    timeout.
+    """
+    argv = [config.box_command, "reconcile", str(proposal)]
+    if check:
+        argv += ["--check", check]
+    completed = _run(
+        argv,
+        timeout=config.run_timeout_seconds,
+        overlay=config.command_env,
+    )
+    fields = report_fields(completed.stdout)
+    # Read before the exit code is judged: the box reports the branch before
+    # it pushes, so a reconcile that merged and verified but could not push
+    # still names where the work got to - and the escalation below says that
+    # instead of that none exists.
+    branch = fields.get("LOOP_RECONCILE_BRANCH") or None
+    if completed.returncode != 0:
+        failed = DispatchFailed(
+            f"could not reconcile proposal {proposal}: {_said(completed)}"
+        )
+        failed.branch = branch
+        raise failed
+    return {
+        "proposal": str(proposal),
+        # None from a box that reconciled without emitting the report line,
+        # which journals nothing rather than failing the row.
+        "branch": branch,
+    }
+

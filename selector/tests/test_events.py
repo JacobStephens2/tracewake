@@ -540,6 +540,55 @@ def test_proposal_updated_and_failed_events_and_records():
     assert rec_f.issue == 631
 
 
+def test_proposal_reconciled_and_failed_events_and_records():
+    kind, payload = events.proposal_reconciled(
+        cycle=7, proposal=13, url="https://github.invalid/acme/widgets/pull/13",
+        issue=631, branch="loop/631-the-nightly-sync")
+    assert kind == "proposal.reconciled"
+    assert payload["cycle"] == 7
+    assert payload["proposal"] == 13
+    assert payload["number"] == 13
+    assert payload["url"] == "https://github.invalid/acme/widgets/pull/13"
+    assert payload["issue"] == 631
+    assert payload["branch"] == "loop/631-the-nightly-sync"
+
+    rec = events.proposal_reconciled_record(row(kind, payload, id=101))
+    assert rec.id == 101
+    assert rec.cycle == 7
+    assert rec.proposal == 13
+    assert rec.url == "https://github.invalid/acme/widgets/pull/13"
+    assert rec.issue == 631
+    assert rec.branch == "loop/631-the-nightly-sync"
+
+    kind_f, payload_f = events.proposal_reconcile_failed(
+        cycle=7, proposal=14, error="the suite went red after the merge",
+        url="https://github.invalid/acme/widgets/pull/14", issue=632,
+        branch="loop/632-the-nightly-sync",
+        added_label="ready-for-human", removed_label="awaiting-review")
+    assert kind_f == "proposal.reconcile-failed"
+    assert payload_f["cycle"] == 7
+    assert payload_f["proposal"] == 14
+    assert payload_f["number"] == 14
+    assert payload_f["error"] == "the suite went red after the merge"
+    assert payload_f["url"] == "https://github.invalid/acme/widgets/pull/14"
+    assert payload_f["issue"] == 632
+    assert payload_f["branch"] == "loop/632-the-nightly-sync"
+    assert payload_f["added_label"] == "ready-for-human"
+    assert payload_f["removed_label"] == "awaiting-review"
+
+    rec_f = events.proposal_reconcile_failed_record(
+        row(kind_f, payload_f, id=102))
+    assert rec_f.id == 102
+    assert rec_f.cycle == 7
+    assert rec_f.proposal == 14
+    assert rec_f.error == "the suite went red after the merge"
+    assert rec_f.url == "https://github.invalid/acme/widgets/pull/14"
+    assert rec_f.issue == 632
+    assert rec_f.branch == "loop/632-the-nightly-sync"
+    assert rec_f.added_label == "ready-for-human"
+    assert rec_f.removed_label == "awaiting-review"
+
+
 # --- Unenrolled-Target warning (#39) ----------------------------------------
 
 UNENROLLED_REPOS = [

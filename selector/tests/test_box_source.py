@@ -9,6 +9,10 @@ check out the run branch, carry the target's repository token and guest template
 without emitting empty exports, invoke `run.sh --repo <repo> --task-ref <task-ref>
 --propose --notify`, and propagate the Run's stdout report and exit code.
 
+Both also take `reconcile <proposal-url-or-number> [--check <command>]`: the
+reconcile Run's way in, reaching `loop/reconcile.sh` with the Proposal and the
+Check instead of starting an ordinary Run.
+
 Local dispatch adds the credential inventory gate: `loop/assert-credentials.sh`
 is run as preflight, refusing dispatch and naming every violation if any
 forbidden credentials (or missing required credentials) are found on the box.
@@ -45,6 +49,13 @@ TARGET_ENV = {
 
 
 @dataclass
+class ReconciledProposal:
+    args: list[str]
+    report: str
+    exit_code: int
+
+
+@dataclass
 class DispatchedRun:
     repo: str | None
     branch: str | None
@@ -70,6 +81,7 @@ class Runner:
         run_calls_file: Path,
         run_env_file: Path,
         assert_shim: Path,
+        reconcile_calls_file: Path,
     ) -> None:
         self.bin_dir = bin_dir
         self.loop_dir = loop_dir
@@ -80,6 +92,7 @@ class Runner:
         self.run_calls_file = run_calls_file
         self.run_env_file = run_env_file
         self.assert_shim = assert_shim
+        self.reconcile_calls_file = reconcile_calls_file
 
     def run(self, script: Path, *argv: str, **env: str) -> subprocess.CompletedProcess[str]:
         environ = dict(os.environ)
@@ -229,6 +242,18 @@ def box_runner(tmp_path: Path) -> Runner:
     )
     run_shim.chmod(0o755)
 
+    reconcile_calls_file = loop_dir / "reconcile.calls"
+    reconcile_shim = loop_dir / "reconcile.sh"
+    reconcile_shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{reconcile_calls_file}"\n'
+        'printf "token=%s\\nguest=%s\\n" "${LOOP_GITHUB_TOKEN_FILE-<unset>}" "${LOOP_GUEST_TEMPLATE-<unset>}" >> "'
+        f'{run_env_file}"\n'
+        'printf "LOOP_RECONCILE_BRANCH=loop/630-the-nightly-sync\\n"\n'
+        'exit "${RECONCILE_EXIT_CODE:-0}"\n'
+    )
+    reconcile_shim.chmod(0o755)
+
     return Runner(
         bin_dir=bin_dir,
         loop_dir=loop_dir,
@@ -239,6 +264,7 @@ def box_runner(tmp_path: Path) -> Runner:
         run_calls_file=run_calls_file,
         run_env_file=run_env_file,
         assert_shim=assert_shim,
+        reconcile_calls_file=reconcile_calls_file,
     )
 
 
@@ -628,3 +654,77 @@ def test_local_box_drives_a_real_run_against_tmpdir(tmp_path):
         capture_output=True, text=True, check=True,
     ).stdout
     assert "WORK.txt" in pushed_tree
+
+
+# --- The reconcile verb (issue #34) ------------------------------------------
+#
+# Both sources also take `reconcile <proposal-url-or-number> [--check
+# <command>]`: the reconcile Run's way in. It reaches loop/reconcile.sh with
+# the Proposal and the Check, starts no ordinary Run, checks out no Run
+# branch, and - on local - passes the same credential gate.
+
+
+def test_local_reconcile_runs_reconcile_sh_with_proposal_and_check(
+    box_runner: Runner,
+) -> None:
+    """The reconcile verb invokes loop/reconcile.sh with the repo, the
+    Proposal and the owning issue's Check - and starts no ordinary Run."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "reconcile", "13", "--check", "make verify", **TARGET_ENV
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LOOP_RECONCILE_BRANCH=loop/630-the-nightly-sync" in result.stdout
+    calls = box_runner.reconcile_calls_file.read_text().splitlines()
+    args = shlex.split(calls[0])
+    assert args[args.index("--repo") + 1] == "/home/loop/gadgets"
+    assert args[args.index("--proposal") + 1] == "13"
+    check_at = args.index("--check") + 1
+    assert args[check_at:check_at + 2] == ["make", "verify"]
+    assert not box_runner.run_calls_file.exists()
+    dispatched = box_runner.dispatched(LOCAL_SOURCE)
+    assert dispatched.assert_called
+    assert dispatched.branch is None
+
+
+def test_local_reconcile_without_a_check_passes_none(
+    box_runner: Runner,
+) -> None:
+    result = box_runner.run(LOCAL_SOURCE, "reconcile", "13", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    calls = box_runner.reconcile_calls_file.read_text().splitlines()
+    assert "--check" not in shlex.split(calls[0])
+
+
+def test_local_reconcile_is_gated_on_the_credential_inventory(
+    box_runner: Runner,
+) -> None:
+    """A reconcile Run is a Run: the gate refuses it like any dispatch."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "reconcile", "13",
+        ASSERT_CREDENTIALS_FAIL="MYSQL_PWD is set in the environment",
+        **TARGET_ENV,
+    )
+
+    assert result.returncode == 2
+    assert "credential inventory reported violations:" in result.stderr
+    assert not box_runner.reconcile_calls_file.exists()
+
+
+def test_ssh_reconcile_sends_reconcile_sh_without_checkout_or_run(
+    box_runner: Runner,
+) -> None:
+    """Across the hop the reconcile carries the Proposal and the Check to
+    loop/reconcile.sh - and fetches nothing, checks out nothing, runs no Run."""
+    result = box_runner.run(
+        SSH_SOURCE, "reconcile", "13", "--check", "make verify", **TARGET_ENV
+    )
+
+    assert result.returncode == 0, result.stderr
+    sent = box_runner.sent().replace("\\n", "\n")
+    assert "reconcile.sh" in sent
+    assert "--proposal" in sent
+    assert "--check" in sent
+    assert "checkout -B" not in sent
+    assert "run.sh" not in sent

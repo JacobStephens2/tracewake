@@ -36,6 +36,7 @@ was deliberately left off are in
 | `seed-run.sh` | The setup step. One chosen task in, a Plan and a Progress Log out (#82). |
 | `run.sh` | One Run. The entry point, and the only thing that is not a declaration. |
 | `propose.sh` | Proposal-Only Output. The push and the draft pull request (#83). |
+| `reconcile.sh` | The reconcile Run's box-side half. A conflicting Proposal's branch merged with its base, verified and pushed (#34). |
 | `boundary-harness.sh` | The Execution Boundary harness (ADR 0024). Boundary lifecycle, contract dispatch, and credential isolation. |
 | `agents/claude.sh` | The first agent as a vendor leaf of boundary-harness.sh (ADR 0004, ADR 0024). |
 | `agents/grok.sh` | The second agent as a vendor leaf (#84, ADR 0024). Agent-less boundary, installed inside at a pin. |
@@ -53,6 +54,7 @@ was deliberately left off are in
 | `tests/fake-sbx.sh` | The scripted Execution Boundary, so the adapter's suite needs no hypervisor. |
 | `tests/fake-curl.sh` | The scripted GitHub, so `draft: true` is asserted rather than stated. |
 | `tests/propose.bats` | The proposal's offline suite, seamed separately (#83). |
+| `tests/reconcile.bats` | The reconcile's offline suite: the merge, the verification gate and the push (#34). |
 | `tests/pr-source.bats` | The pull-request surface's own suite - what one request says. |
 | `tests/notify-source.bats` | The notification surface's own suite - what one comment says. |
 | `tests/boundary.bats` | The first adapter's suite: an Iteration inside the boundary. |
@@ -392,7 +394,7 @@ On the Loop's box, where `deploy/ansible/roles/loop_shell_suite` installs the ha
 bats tests/
 ```
 
-Two hundred and eighty-nine tests, no model and no network. Fifty-eight drive
+Three hundred and seventy-six tests, no model and no network. Fifty-eight drive
 `run.sh` unmodified and assert only what a Run externally produces - exit code,
 reported bound, Progress Log contents, git history, and what it told the
 operator. Fifty-six drive `assert-credentials.sh` against a constructed box - a
@@ -407,7 +409,11 @@ is there for a same-repository task proposed against the default branch, that a
 cross-repository one gets none, that a proposal aimed elsewhere with `--base`
 gets none either - GitHub fires the keyword on a merge into the default branch
 and nowhere else - and that it does not land between the body's bullets and
-split the list. Thirteen drive
+split the list. Sixteen drive `reconcile.sh` against a real `git push` to a
+bare repository and a stubbed forge - the merge, the verification gate that
+stops the push, what the agent is asked to resolve, and the three guards the
+push is never forced, the base is never written, and a head that is the base
+is refused (#34). Thirteen drive
 `pr-sources/github.sh` through a fake `curl`, which is what makes `draft: true`
 something the suite asserts rather than something the file says, and nine drive
 `notify-sources/github-pr-comment.sh` through the same fake, which is how the
@@ -421,8 +427,9 @@ None of them names an internal function or depends on the order of steps.
 `tests/mutation-check.sh` breaks one thing at a time - each bound of the
 Contract, each credential family, each guard of the seed step, each thing
 holding Proposal-Only Output up, each property of the boundary, each thing that
-makes a notification honest - and confirms the suite goes red. A hundred and
-twenty deliberate breaks. The eleven covering
+makes a notification honest, each guard of the reconcile - and confirms the
+suite goes red. A hundred and twenty-five deliberate breaks, five of them on
+`reconcile.sh`. The eleven covering
 `propose.sh` - four of them on the `Closes #n` line and the default-branch
 derivation it turns on - were re-run whole for #163 and all eleven were
 caught; the twenty-three covering

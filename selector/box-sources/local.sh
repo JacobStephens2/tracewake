@@ -3,6 +3,7 @@
 # The box surface, local: execute a Run directly on the controller without SSH.
 #
 #   local.sh <branch> <task-ref>
+#   local.sh reconcile <proposal-url-or-number> [--check <command>]
 #
 # The product-default SELECTOR_BOX_COMMAND (ADR 0029). Sibling to
 # box-sources/ssh.sh for Single-Host instances (ADR 0019). Prints the
@@ -11,6 +12,12 @@
 #
 # It blocks for the length of the Run, capturing the outcome exactly as ssh.sh
 # does, with no SSH hop.
+#
+# The reconcile verb runs a reconcile Run instead: loop/reconcile.sh merges
+# the base into the conflicting Proposal's branch inside the microVM
+# boundary, verifies it, and pushes the branch. --check is the owning
+# issue's Check section when it has one - the suite the merged branch must
+# pass before anything is pushed.
 #
 # Gated by the credential inventory (ADR 0019). The controller may run Runs on
 # itself only while it passes the exact same check the separate box passes:
@@ -52,8 +59,19 @@ die() {
 # shellcheck source-path=SCRIPTDIR source=../require-value.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/require-value.sh"
 
-branch="${1:?usage: local.sh <branch> <task-ref>}"
-task_ref="${2:?usage: local.sh <branch> <task-ref>}"
+mode="run"
+if [[ ${1:-} == reconcile ]]; then
+    mode="reconcile"
+    shift
+fi
+
+if [[ ${mode} == reconcile ]]; then
+    proposal="${1:?usage: local.sh reconcile <proposal-url-or-number> [--check <command>]}"
+    shift
+else
+    branch="${1:?usage: local.sh <branch> <task-ref>}"
+    task_ref="${2:?usage: local.sh <branch> <task-ref>}"
+fi
 
 require SELECTOR_BOX_REPO
 box_repo="${SELECTOR_BOX_REPO}"
@@ -101,9 +119,8 @@ fi
 command -v git >/dev/null 2>&1 || die "git is required on the local machine"
 [[ -x "${box_loop}/run.sh" ]] || die "run.sh not executable or not found at ${box_loop}/run.sh"
 
-git -C "${box_repo}" fetch --prune origin
-git -C "${box_repo}" checkout -B "${branch}" "origin/${branch}"
-
+# Exported before either verb: both the Run and the reconcile reach the
+# target's repository token and guest image through the environment.
 if [[ -n "${LOOP_GITHUB_TOKEN_FILE:-}" ]]; then
     export LOOP_GITHUB_TOKEN_FILE
 else
@@ -114,5 +131,26 @@ if [[ -n "${LOOP_GUEST_TEMPLATE:-}" ]]; then
 else
     unset LOOP_GUEST_TEMPLATE || true
 fi
+
+if [[ ${mode} == reconcile ]]; then
+    check=""
+    while (($# > 0)); do
+        case "$1" in
+            --check) check="${2:?local.sh reconcile --check needs a command}"; shift 2 ;;
+            *) die "unknown reconcile argument: $1" ;;
+        esac
+    done
+    reconcile_script="${box_loop}/reconcile.sh"
+    [[ -x "${reconcile_script}" ]] ||
+        die "reconcile.sh not executable or not found at ${reconcile_script}"
+    reconcile_args=(--repo "${box_repo}" --proposal "${proposal}")
+    if [[ -n ${check} ]]; then
+        reconcile_args+=(--check "${check}")
+    fi
+    exec "${reconcile_script}" "${reconcile_args[@]}"
+fi
+
+git -C "${box_repo}" fetch --prune origin
+git -C "${box_repo}" checkout -B "${branch}" "origin/${branch}"
 
 exec "${box_loop}/run.sh" --repo "${box_repo}" --task-ref "${task_ref}" --propose --notify
