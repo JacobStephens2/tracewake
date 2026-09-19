@@ -1,18 +1,13 @@
-{% extends "base.html" %}
-{% block title %}{{ adr.title }} — decisions{% endblock %}
-{% block content %}
-
-<p class="crumb"><a href="/adr">← all decisions</a></p>
-
-<article class="adr">
-  <div class="adr-head">
-    <span class="adr-num mono">ADR {{ "%04d"|format(adr.number) }}</span>
-    {% if adr.status %}<span class="badge badge-{{ adr.status.split()[0] }}">{{ adr.status }}</span>{% endif %}
-  </div>
-  {{ adr.html | safe }}
-</article>
-
-<p class="crumb"><a href="/adr">← all decisions</a> ·
-   <a href="/docs/adr/{{ adr.slug }}.md">raw</a></p>
-
+{% extends "terminal_base.html" %}
+{% block title %}{{ adr.title }} // Decisions{% endblock %}
+{% block logo %}TRACEWAKE // DECISIONS{% endblock %}
+{% block main %}
+    <p><a href="/adr">&larr; all decisions</a></p>
+    <p><span class="adr-num">ADR {{ "%04d"|format(adr.number) }}</span>
+       {% if adr.status %}<span class="badge badge-adr-status">{{ adr.status }}</span>{% endif %}</p>
+    <article class="adr">
+      {{ adr.html | safe }}
+    </article>
+    <p><a href="/adr">&larr; all decisions</a> &middot;
+       <a href="/docs/adr/{{ adr.slug }}.md">raw</a></p>
 {% endblock %}
