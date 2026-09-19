@@ -215,3 +215,30 @@ def test_conflicting_proposal_shows_as_conflicting_on_board(db, tracker):
     assert "conflicting" in awaiting
     assert "#202" in awaiting
 
+
+def test_a_reconciled_proposal_no_longer_shows_as_conflicting(db, tracker):
+    """The badge derives live from what the forge reports: once a reconcile
+    Run has brought the Proposal current and the tracker reports it
+    mergeable, the flag clears with no Journal row involved (#34)."""
+    tracker.queue(
+        "awaiting-review",
+        [
+            tracker.issue(
+                203,
+                proposals=[
+                    {
+                        "number": 17,
+                        "url": "https://example.invalid/pull/17",
+                        "state": "OPEN",
+                        "mergeable": "MERGEABLE",
+                        "mergeStateStatus": "CLEAN",
+                    }
+                ],
+            ),
+        ],
+    )
+    body = client.get("/").text
+    awaiting = column(body, "awaiting-review")
+    assert "#203" in awaiting
+    assert "conflicting" not in awaiting
+

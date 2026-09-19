@@ -315,6 +315,12 @@ def box(tmp_path):
     log = tmp_path / "commands.log"
     summary = tmp_path / "run-summary.txt"
     summary.write_text(CLEAN_RUN)
+    # What the box's reconcile verb answers with. Separate from the Run
+    # summary above because one drain can hold both: a reconcile Run reports
+    # LOOP_RECONCILE_BRANCH, an ordinary Run reports LOOP_RUN_ENDED_BY, and
+    # one file cannot be both answers at once.
+    reconcile_summary_file = tmp_path / "reconcile-summary.txt"
+    reconcile_summary_file.write_text("LOOP_RECONCILE_BRANCH=\n")
     checks_file = tmp_path / "checks.json"
     checks_file.write_text(GREEN_CHECKS)
     facts_file = tmp_path / "box-facts.txt"
@@ -362,6 +368,7 @@ def box(tmp_path):
             .replace("@QUEUE@", str(queue_file))
             .replace("@GUEST@", str(tmp_path / "guest"))
             .replace("@SEARCH@", str(search_file))
+            .replace("@RSUMMARY@", str(reconcile_summary_file))
         )
 
     # Seeding writes BOTH files, and refuses to overwrite a Progress Log that
@@ -396,6 +403,18 @@ def box(tmp_path):
     '''))
 
     box_command = _script(tmp_path / "box.sh", fill('''
+        # The reconcile verb answers from its own file and exits on its own
+        # variable, so a drain holding both a reconcile and an ordinary Run
+        # scripts each answer separately. Logged the same way, including the
+        # per-target environment the real box command carries across.
+        if [[ "${1:-}" == reconcile ]]; then
+            printf 'box %s\n' "$*" >> "@LOG@"
+            printf 'box-env repo=%s box_repo=%s token=%s guest=%s\n' \
+                "${SELECTOR_TASK_REPO:-}" "${SELECTOR_BOX_REPO:-}" \
+                "${LOOP_GITHUB_TOKEN_FILE:-}" "${LOOP_GUEST_TEMPLATE:-}" >> "@LOG@"
+            cat "@RSUMMARY@"
+            exit "${RECONCILE_EXIT:-0}"
+        fi
         printf 'box %s\n' "$*" >> "@LOG@"
         # The per-target values, as the box command actually receives them
         # (issue #3). Logged rather than assumed: the box checkout, the
@@ -689,6 +708,9 @@ if add_label:
 
         def run_summary(self, text):
             summary.write_text(text)
+
+        def reconcile_summary(self, text):
+            reconcile_summary_file.write_text(text)
 
         def checks(self, text):
             checks_file.write_text(text)

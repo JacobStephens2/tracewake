@@ -291,6 +291,8 @@ GUARDRAIL_OBSERVED = "guardrail.observed"
 GUARDRAIL_UNREADABLE = "guardrail.unreadable"
 PROPOSAL_UPDATED = "proposal.updated"
 PROPOSAL_UPDATE_FAILED = "proposal.update-failed"
+PROPOSAL_RECONCILED = "proposal.reconciled"
+PROPOSAL_RECONCILE_FAILED = "proposal.reconcile-failed"
 TARGET_UNENROLLED = "target.unenrolled"
 
 
@@ -444,6 +446,58 @@ def proposal_update_failed(*, cycle, proposal, error, url=None, number=None, iss
     if issue is not None:
         payload["issue"] = issue
     return PROPOSAL_UPDATE_FAILED, payload
+
+
+def proposal_reconciled(*, cycle, proposal, url=None, number=None, issue=None,
+                        branch=None):
+    """A conflicting Proposal a reconcile Run brought up to date.
+
+    Journaled only after the Run verified the merged branch and pushed it to
+    the Proposal: a reconcile that resolved the conflicts but reds the suite
+    is not reconciled, and the row must never read as though it were.
+    `branch` is the Proposal's working branch as the box reported it.
+    """
+    num = number if number is not None else (proposal if isinstance(proposal, int) else None)
+    prop = proposal if proposal is not None else number
+    payload = {"cycle": cycle, "proposal": prop}
+    if num is not None:
+        payload["number"] = num
+    if url is not None:
+        payload["url"] = url
+    if issue is not None:
+        payload["issue"] = issue
+    if branch is not None:
+        payload["branch"] = branch
+    return PROPOSAL_RECONCILED, payload
+
+
+def proposal_reconcile_failed(*, cycle, proposal, error, url=None, number=None,
+                              issue=None, branch=None, added_label=None,
+                              removed_label=None):
+    """A reconcile Run that left the Proposal conflicting, or a Proposal the
+    Selector could not reconcile without inventing the resolution.
+
+    The Proposal remains un-merged; the owning issue is escalated to
+    `ready-for-human` alongside this row, and `added_label`/`removed_label`
+    name the swap that escalation performed. A tracker that refused the
+    escalation is the same kind with the refusal in `error` and no labels.
+    """
+    num = number if number is not None else (proposal if isinstance(proposal, int) else None)
+    prop = proposal if proposal is not None else number
+    payload = {"cycle": cycle, "proposal": prop, "error": error}
+    if num is not None:
+        payload["number"] = num
+    if url is not None:
+        payload["url"] = url
+    if issue is not None:
+        payload["issue"] = issue
+    if branch is not None:
+        payload["branch"] = branch
+    if added_label is not None:
+        payload["added_label"] = added_label
+    if removed_label is not None:
+        payload["removed_label"] = removed_label
+    return PROPOSAL_RECONCILE_FAILED, payload
 
 
 def target_unenrolled(*, owner, label, repos, new, dry_run=False):
@@ -993,6 +1047,60 @@ def proposal_update_failed_record(row) -> ProposalUpdateFailed:
         error=payload.get("error"),
         url=payload.get("url"),
         issue=payload.get("issue"),
+    )
+
+
+@dataclass(frozen=True)
+class ProposalReconciled:
+    id: int | None
+    at: object
+    cycle: int | None
+    proposal: int | str | None
+    url: str | None
+    issue: int | None
+    branch: str | None
+
+
+@dataclass(frozen=True)
+class ProposalReconcileFailed:
+    id: int | None
+    at: object
+    cycle: int | None
+    proposal: int | str | None
+    error: str | None
+    url: str | None
+    issue: int | None
+    branch: str | None
+    added_label: str | None
+    removed_label: str | None
+
+
+def proposal_reconciled_record(row) -> ProposalReconciled:
+    payload = _payload_of(row, PROPOSAL_RECONCILED)
+    return ProposalReconciled(
+        id=row.get("id"),
+        at=row.get("at"),
+        cycle=payload.get("cycle"),
+        proposal=payload.get("proposal"),
+        url=payload.get("url"),
+        issue=payload.get("issue"),
+        branch=payload.get("branch"),
+    )
+
+
+def proposal_reconcile_failed_record(row) -> ProposalReconcileFailed:
+    payload = _payload_of(row, PROPOSAL_RECONCILE_FAILED)
+    return ProposalReconcileFailed(
+        id=row.get("id"),
+        at=row.get("at"),
+        cycle=payload.get("cycle"),
+        proposal=payload.get("proposal"),
+        error=payload.get("error"),
+        url=payload.get("url"),
+        issue=payload.get("issue"),
+        branch=payload.get("branch"),
+        added_label=payload.get("added_label"),
+        removed_label=payload.get("removed_label"),
     )
 
 

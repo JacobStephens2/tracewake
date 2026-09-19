@@ -28,6 +28,7 @@ CYCLE_SUITE = "tests/test_cycle.py"
 DISPATCH_SUITE = "tests/test_dispatch.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
+RECONCILE_SUITE = "tests/test_reconcile.py"
 WATCHER_SUITE = "tests/test_watcher.py"
 BOARD_SUITE = "../web/tests/test_queue_board.py"
 CYCLE_SERVICE = "../deploy/systemd/tracewake-selector-cycle.service"
@@ -1253,6 +1254,56 @@ MUTATIONS = {
         '    update-branch)\n'
         '        die "update-branch is unsupported"\n'
         '        ;;\n',
+    ),
+    # Reconcile (#34): the drain never dispatches one, so conflicting
+    # Proposals rot under their badge forever.
+    "reconcile-pass-skipped": (CYCLE, RECONCILE_SUITE,
+        "            reconcile_conflicting_proposals(\n"
+        "                conn,\n"
+        "                cycle_id,\n"
+        "                config,\n"
+        "                dispatch_config,\n"
+        "                queue,\n"
+        "                review or [],\n"
+        "                reconciled=reconciled_proposals,\n"
+        "                failed=reconcile_failed_proposals,\n"
+        "            )\n",
+        "            pass\n",
+    ),
+    # Reconcile (#34): a failed reconcile leaves the issue where it was,
+    # so the next cycle dispatches another Run at the same conflicts.
+    "reconcile-failure-not-escalated": (CYCLE, RECONCILE_SUITE,
+        "            add=config.human_label,\n",
+        "            add=config.label,\n",
+    ),
+    # Reconcile (#34): a paused Selector starts reconcile Runs anyway,
+    # spending agent Runs the pause flag exists to suspend.
+    "paused-reconcile-starts-anyway": (CYCLE, RECONCILE_SUITE,
+        "    if control.is_paused(conn):\n        return\n",
+        "    pass\n",
+    ),
+    # Reconcile (#34): the owning issue's Check never reaches the box, so
+    # the merged branch is pushed unverified.
+    "reconcile-check-never-passed": (DISPATCH, RECONCILE_SUITE,
+        "    argv = [config.box_command, \"reconcile\", str(proposal)]\n"
+        "    if check:\n"
+        "        argv += [\"--check\", check]\n",
+        "    argv = [config.box_command, \"reconcile\", str(proposal)]\n",
+    ),
+    # Reconcile (#34): success is journaled as an ordinary fast-forward, so
+    # the Journal cannot tell which path brought the Proposal current.
+    "reconciled-kind-is-updated": (EVENTS, EVENTS_SUITE,
+        'PROPOSAL_RECONCILED = "proposal.reconciled"',
+        'PROPOSAL_RECONCILED = "proposal.updated"',
+    ),
+    # Reconcile (#34): the local box surface drops the Check on the floor
+    # instead of handing it to loop/reconcile.sh.
+    "local-reconcile-drops-the-check": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
+        "    reconcile_args=(--repo \"${box_repo}\" --proposal \"${proposal}\")\n"
+        "    if [[ -n ${check} ]]; then\n"
+        "        reconcile_args+=(--check \"${check}\")\n"
+        "    fi\n",
+        "    reconcile_args=(--repo \"${box_repo}\" --proposal \"${proposal}\")\n",
     ),
     # Unenrolled-Target warning (#39): the Cycle stops looking, so a Handover
     # on a repository with no stanza vanishes silently again.

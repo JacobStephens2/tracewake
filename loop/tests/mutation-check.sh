@@ -29,6 +29,7 @@ subjects=(
     "assert-credentials.sh|tests/assert-credentials.bats|tests/credential-mutations.py"
     "seed-run.sh|tests/seed-run.bats|tests/seed-mutations.py"
     "propose.sh|tests/propose.bats|tests/propose-mutations.py"
+    "reconcile.sh|tests/reconcile.bats|tests/reconcile-mutations.py"
     "pr-sources/github.sh|tests/pr-source.bats|tests/pr-mutations.py"
     "notify-sources/github-pr-comment.sh|tests/notify-source.bats|tests/notify-mutations.py"
     "boundary-harness.sh|tests/boundary.bats|tests/boundary-harness-mutations.py"

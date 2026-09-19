@@ -584,6 +584,202 @@ def update_proposals_freshness(
                     failed.add(k)
 
 
+def conflicting_proposals(
+    issues: list[dict],
+) -> list[tuple[dict, dict]]:
+    """Every open conflicting Proposal, each with its owning issue record.
+
+    The owning record is what names the escalation target and carries the
+    Check section the reconcile Run verifies against - a Proposal without an
+    owning issue in the queues is a Proposal this pass cannot act on.
+    """
+    found: list[tuple[dict, dict]] = []
+    for issue_record in issues:
+        for p in issue_record.get("proposals") or []:
+            if is_conflicting(p):
+                found.append((issue_record, p))
+    return found
+
+
+def _reconcile_failed_comment(config: Config, proposal_ref: object,
+                              branch: str | None, error: str) -> str:
+    """What the operator reads on the owning issue when a reconcile Run fails.
+
+    The Proposal, the reason, and where the issue went: `ready-for-human`,
+    from which no further Run is dispatched under this Handover. A reconcile
+    that cannot be resolved or verified is operator work, not a retry - a
+    second Run would meet the same conflicts, so the budget it would spend is
+    the operator's review queue staying honest about what is in it.
+    """
+    where = (
+        f"\n\nThe reconcile Run worked on branch `{branch}`."
+        if branch else
+        "\n\nThe reconcile Run started no branch work it could report."
+    )
+    return f"""The Selector dispatched a reconcile Run for the conflicting Proposal {proposal_ref}, and it could not be brought up to date with the base branch: {error}.
+
+The Proposal remains un-merged. The label has been swapped to `{config.human_label}`: no further Run will be started for this issue under this Handover, and the conflicts are yours to resolve.{where}
+
+The `proposal.reconcile-failed` row in the Selector Journal is the same ending in the Selector's own terms."""
+
+
+def _escalate_reconcile(
+    conn: psycopg.Connection,
+    cycle_id: int,
+    config: Config,
+    dispatch_config: dispatch.DispatchConfig,
+    record: dict,
+    proposal_target: object,
+    url: str | None,
+    number: int | None,
+    branch: str | None,
+    reconcile_error: str,
+    remove_label: str,
+) -> None:
+    """Comment, swap the owning issue to `ready-for-human`, journal the failure.
+
+    The comment goes first, for the loud skip's reason: a swap that landed
+    with no comment would take the issue out of its queue with nothing on it
+    saying why. A tracker that refuses the bookkeeping is paged like any
+    other: an issue still sitting in its queue with a conflicting Proposal
+    and nothing saying why is exactly the silence story 31 asks to be loud
+    about.
+    """
+    issue_number = int(record["number"])
+    try:
+        dispatch.comment(
+            dispatch_config,
+            config.task_repo,
+            issue_number,
+            _reconcile_failed_comment(
+                config, proposal_target, branch, reconcile_error) + SIGNATURE,
+        )
+        dispatch.relabel(
+            dispatch_config,
+            config.task_repo,
+            issue_number,
+            add=config.human_label,
+            remove=remove_label,
+        )
+    except dispatch.DispatchFailed as exc:
+        journal.append(
+            conn,
+            *events.proposal_reconcile_failed(
+                cycle=cycle_id,
+                proposal=proposal_target,
+                url=url,
+                number=number,
+                issue=issue_number,
+                branch=branch,
+                error=f"{reconcile_error}; escalation refused: {exc}",
+            ),
+        )
+        raise CycleFailed(str(exc)) from exc
+    journal.append(
+        conn,
+        *events.proposal_reconcile_failed(
+            cycle=cycle_id,
+            proposal=proposal_target,
+            url=url,
+            number=number,
+            issue=issue_number,
+            branch=branch,
+            error=reconcile_error,
+            added_label=config.human_label,
+            removed_label=remove_label,
+        ),
+    )
+
+
+def reconcile_conflicting_proposals(
+    conn: psycopg.Connection,
+    cycle_id: int,
+    config: Config,
+    dispatch_config: dispatch.DispatchConfig,
+    handover: list[dict],
+    review: list[dict],
+    *,
+    reconciled: set,
+    failed: set,
+) -> None:
+    """Dispatch a reconcile Run for every conflicting open Proposal.
+
+    The reconcile half of Proposal freshness (ADR 0023): `gh pr update-branch`
+    refuses a Proposal it cannot cleanly merge, so a conflicting one rots
+    unless something meets the conflicts inside the microVM boundary and
+    resolves them. That something is a reconcile Run on the box, verifying the
+    merged branch against the owning issue's Check before it pushes.
+
+    One reconcile per Proposal per drain: `reconciled` and `failed` persist
+    across the drain's passes like the freshness sets, so a Proposal is never
+    reconciled twice in one Cycle. An escalation removes the owning issue
+    from its queue, so the next pass - which re-fetches - no longer sees it.
+
+    Paused means started nothing: unlike a forge-side fast-forward, a
+    reconcile spends an agent Run on the box, and the pause flag suspends new
+    dispatches. Likewise a Target already holding a Run stays serial: the box
+    executes one Run at a time per Target, and a reconcile Run is a Run.
+    Neither gate journals; the `cycle.finished` row already says why nothing
+    was dispatched.
+    """
+    if control.is_paused(conn):
+        return
+    flight = spend(conn)
+    if config.drain_concurrency == 1 and flight.in_flight:
+        return
+    if config.drain_concurrency > 1 and flight.in_flight_on(config.task_repo):
+        return
+    handover_numbers = {int(r["number"]) for r in handover}
+    for issue_record, p in conflicting_proposals(handover + (review or [])):
+        proposal_target = p.get("number") if p.get("number") is not None else p.get("url")
+        if not proposal_target:
+            continue
+        keys = [proposal_target]
+        if p.get("number") is not None:
+            keys.append(p.get("number"))
+        if p.get("url"):
+            keys.append(p.get("url"))
+        if any(k in reconciled or k in failed for k in keys):
+            continue
+        issue_number = int(issue_record["number"])
+        body_sections = sections(issue_record.get("body") or "")
+        check = _check_command(body_sections.get("check", "")) or None
+        # The queue the owning issue came from is the label the escalation
+        # removes: a Handover issue goes from `ready`, a review issue from
+        # the review label, and either way it lands on `ready-for-human`.
+        remove_label = (
+            config.label
+            if issue_number in handover_numbers
+            else config.review_label
+        )
+        try:
+            result = dispatch.reconcile(
+                dispatch_config, config.task_repo, proposal_target, check)
+        except dispatch.DispatchFailed as exc:
+            _escalate_reconcile(
+                conn, cycle_id, config, dispatch_config, issue_record,
+                proposal_target, p.get("url"), p.get("number"),
+                getattr(exc, "branch", None),
+                str(exc), remove_label,
+            )
+            for k in keys:
+                failed.add(k)
+            continue
+        journal.append(
+            conn,
+            *events.proposal_reconciled(
+                cycle=cycle_id,
+                proposal=proposal_target,
+                url=p.get("url"),
+                number=p.get("number"),
+                issue=issue_number,
+                branch=result.get("branch"),
+            ),
+        )
+        for k in keys:
+            reconciled.add(k)
+
+
 # --- Journal state ----------------------------------------------------------
 #
 # The caps and the retry budget are the Selector's own history, and the
@@ -1708,6 +1904,8 @@ def run_cycle(
     last_budget: dict | None = None
     updated_proposals: set = set()
     failed_proposals: set = set()
+    reconciled_proposals: set = set()
+    reconcile_failed_proposals: set = set()
     if not dry_run:
         guardrail, guardrail_error = observe_guardrail(config)
         journal.append(
@@ -1739,6 +1937,16 @@ def run_cycle(
                 queue + (review or []),
                 updated=updated_proposals,
                 failed=failed_proposals,
+            )
+            reconcile_conflicting_proposals(
+                conn,
+                cycle_id,
+                config,
+                dispatch_config,
+                queue,
+                review or [],
+                reconciled=reconciled_proposals,
+                failed=reconcile_failed_proposals,
             )
 
         last_budget = budget
@@ -1913,6 +2121,8 @@ def run_cycle(
     summary["outcome"] = outcomes[-1] if outcomes else None
     summary["route"] = routes[-1] if routes else None
     summary["updated_proposals"] = sorted(str(p) for p in updated_proposals)
+    summary["reconciled_proposals"] = sorted(str(p) for p in reconciled_proposals)
+    summary["reconcile_failures"] = sorted(str(p) for p in reconcile_failed_proposals)
     return summary
 
 
@@ -1997,6 +2207,10 @@ def _report(summary: dict) -> None:
         print(f"  FAILED     {summary['return_failures']} issue(s) could not be returned")
     if summary.get("updated_proposals"):
         print(f"proposals    {', '.join(str(p) for p in summary['updated_proposals'])} updated")
+    if summary.get("reconciled_proposals"):
+        print(f"reconciled   {', '.join(str(p) for p in summary['reconciled_proposals'])} reconciled")
+    if summary.get("reconcile_failures"):
+        print(f"  FAILED     {', '.join(str(p) for p in summary['reconcile_failures'])} proposal(s) could not be reconciled")
     if summary.get("dispatches"):
         print(f"dispatches   {', '.join(f'#{n}' for n in summary['dispatches'])}")
     elif summary["picked"]:

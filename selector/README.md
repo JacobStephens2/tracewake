@@ -53,9 +53,21 @@ as "what did it?".
 
 **Proposal freshness** (ADR 0023). During each drain, every open Proposal that
 is behind its base and mergeable is brought up to date via `SELECTOR_ISSUE_COMMAND`
-`update-branch` and journaled once (`proposal.updated`). Conflicting Proposals
-are not updated and are displayed as conflicting on the board. A forge refusal
+`update-branch` and journaled once (`proposal.updated`). A forge refusal
 is journaled (`proposal.update-failed`) without failing or halting any dispatch.
+
+**Reconcile Runs** (ADR 0030, issue #34). A conflicting Proposal is not updated
+and is displayed as conflicting on the board - and during the same drain, the
+Selector dispatches a reconcile Run for it through the box command's
+`reconcile` verb (`box-sources/local.sh` or `ssh.sh`), which runs
+`loop/reconcile.sh` on the box: merge the base into the Proposal branch
+inside the microVM boundary, resolve conflicts through the agent adapter,
+verify the merged branch against the owning issue's Check, and push the
+Proposal branch - never forced. Success is journaled once
+(`proposal.reconciled`); a reconcile that cannot resolve or reds the suite
+comments on the owning issue, swaps it to `ready-for-human`, and journals
+`proposal.reconcile-failed`. One reconcile per Proposal per drain; none while
+paused, and none on a Target already holding a Run.
 
 **Unenrolled-Target warning** (issue #39). Each Cycle also runs one owner-wide
 search for the Handover label, diffs the repositories found against the

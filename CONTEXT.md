@@ -192,6 +192,15 @@ a Cycle (ADR 0023). A Proposal that encounters merge conflicts is left un-update
 and flagged with a conflict badge on the Queue Board.
 _Avoid_: auto-rebase, branch sync
 
+**Reconcile Run**:
+A Run dispatched for a conflicting Proposal rather than for an issue: the base
+branch is merged into the Proposal's working branch inside the microVM
+boundary, conflicts are resolved there, the merged branch is verified, and the
+Proposal branch is pushed - never the default branch (ADR 0030). Journaled
+`proposal.reconciled` on success; a failure the Run cannot resolve escalates
+the owning issue to `ready-for-human` (`proposal.reconcile-failed`).
+_Avoid_: rebase bot, auto-merge
+
 **Eligible**:
 The predicate a labeled task passes before the Selector may seed it: labeled by
 an allowlisted operator, no open blocking dependency - native tracker edges

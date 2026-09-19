@@ -3,6 +3,7 @@
 # The box surface: put the Loop's box on the Run's branch and start the Run.
 #
 #   ssh.sh <branch> <task-ref>
+#   ssh.sh reconcile <proposal-url-or-number> [--check <command>]
 #
 # The remote-Box SELECTOR_BOX_COMMAND. An instance substitutes this for
 # box-sources/local.sh when the Box is a different machine (ADR 0004,
@@ -14,6 +15,10 @@
 # the outcome exists anywhere is while something is holding the process. This
 # command is that something, and dispatch.py captures what it prints (spec
 # #151, story 13).
+#
+# The reconcile verb runs loop/reconcile.sh on the box instead: the base is
+# merged into the conflicting Proposal's branch inside the microVM boundary,
+# verified against --check when given, and pushed.
 #
 # Two accounts, one hop. Ansible reaches the box as root because that is the
 # only account the droplet was created with; a Run executes as the
@@ -58,8 +63,26 @@ die() {
 # shellcheck source-path=SCRIPTDIR source=../require-value.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/require-value.sh"
 
-branch="${1:?usage: ssh.sh <branch> <task-ref>}"
-task_ref="${2:?usage: ssh.sh <branch> <task-ref>}"
+mode="run"
+if [[ ${1:-} == reconcile ]]; then
+    mode="reconcile"
+    shift
+fi
+
+if [[ ${mode} == reconcile ]]; then
+    proposal="${1:?usage: ssh.sh reconcile <proposal-url-or-number> [--check <command>]}"
+    shift
+    check=""
+    while (($# > 0)); do
+        case "$1" in
+            --check) check="${2:?ssh.sh reconcile --check needs a command}"; shift 2 ;;
+            *) die "unknown reconcile argument: $1" ;;
+        esac
+    done
+else
+    branch="${1:?usage: ssh.sh <branch> <task-ref>}"
+    task_ref="${2:?usage: ssh.sh <branch> <task-ref>}"
+fi
 
 require SELECTOR_BOX_HOST
 require SELECTOR_BOX_REPO
@@ -94,21 +117,37 @@ command -v ssh >/dev/null 2>&1 || die "ssh is required to reach the box"
 
 # Assembled with printf %q so that a branch name or a task reference reaches
 # the remote shell as one word whatever is in it. The remote is bash, which is
-# what %q quotes for.
+# what %q quotes for. The reconcile's --check is an arbitrary command from an
+# issue body, so it travels the same way rather than interpolated.
 #
 # `fetch` then `checkout -B` from the remote ref rather than a plain checkout:
 # the branch was pushed from this VM a moment ago and the box has never seen
 # it. No reset and no clean - a checkout that fails because the box's tree is
 # dirty is a box that needs a human, and discarding whatever is in it
-# unattended is not this script's call.
-remote_command="$(printf 'set -euo pipefail
+# unattended is not this script's call. The reconcile owns its own checkout
+# inside loop/reconcile.sh, so it fetches nothing here.
+if [[ ${mode} == reconcile ]]; then
+    if [[ -n ${check} ]]; then
+        remote_command="$(printf 'set -euo pipefail
+%sexec %q --repo %q --proposal %q --check %q' \
+            "${exports}" \
+            "${box_loop}/reconcile.sh" "${box_repo}" "${proposal}" "${check}")"
+    else
+        remote_command="$(printf 'set -euo pipefail
+%sexec %q --repo %q --proposal %q' \
+            "${exports}" \
+            "${box_loop}/reconcile.sh" "${box_repo}" "${proposal}")"
+    fi
+else
+    remote_command="$(printf 'set -euo pipefail
 git -C %q fetch --prune origin
 git -C %q checkout -B %q %q
 %sexec %q --repo %q --task-ref %q --propose --notify' \
-    "${box_repo}" \
-    "${box_repo}" "${branch}" "origin/${branch}" \
-    "${exports}" \
-    "${box_loop}/run.sh" "${box_repo}" "${task_ref}")"
+        "${box_repo}" \
+        "${box_repo}" "${branch}" "origin/${branch}" \
+        "${exports}" \
+        "${box_loop}/run.sh" "${box_repo}" "${task_ref}")"
+fi
 
 # BatchMode: an unattended dispatch must fail rather than sit at a prompt.
 # No ConnectTimeout on the session itself - the Run is ninety minutes long and

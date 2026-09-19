@@ -219,8 +219,16 @@ In Tracewake, **the human operator exclusively lands work**:
    (`proposal.updated`).
 3. **Conflict Visibility**: If a Proposal encounters merge conflicts (`CONFLICTING` or
    `DIRTY`), Tracewake refuses to force-update it. The Proposal is flagged on the Queue
-   Board with a visual conflict badge, signalling to the operator that manual resolution
-   or a reconcile Run is required.
+   Board with a visual conflict badge.
+4. **Reconcile Runs** (ADR 0030): A conflicting Proposal is not left to rot. During
+   each drain pass, the Selector dispatches a reconcile Run for it on the box: the base
+   branch is merged into the Proposal branch inside the microVM boundary, conflicts are
+   resolved there, the merged branch is verified against the owning issue's Check
+   suite, and only then is the Proposal branch pushed - never force-pushed, and never
+   merged to the default branch. Success is journaled once (`proposal.reconciled`).
+   A reconcile that cannot resolve the conflicts or reds the suite leaves the Proposal
+   un-merged and escalates the owning issue to `ready-for-human`
+   (`proposal.reconcile-failed`).
 
 ---
 
