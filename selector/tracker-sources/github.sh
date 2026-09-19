@@ -80,10 +80,17 @@ name="${task_repo##*/}"
 
 # timelineItems(last: 100) rather than first: the most recent labeling is the
 # handover, and a long-lived issue's early timeline is not interesting here.
+#
+# The cursor variable is named $endCursor because `gh api graphql
+# --paginate` injects exactly that name between pages. A differently-named
+# variable ($cursor) is silently never set, so every page request fetches
+# page one again: an unbounded identical-page loop that only ends when
+# GitHub 504s it or jq runs out of memory. That is how a 72-issue queue
+# once streamed hundreds of megabytes and killed a cycle.
 read -r -d '' query <<'GRAPHQL' || true
-query($owner: String!, $name: String!, $label: String!, $cursor: String) {
+query($owner: String!, $name: String!, $label: String!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
-    issues(first: 50, after: $cursor, states: OPEN, labels: [$label],
+    issues(first: 50, after: $endCursor, states: OPEN, labels: [$label],
            orderBy: {field: CREATED_AT, direction: ASC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
