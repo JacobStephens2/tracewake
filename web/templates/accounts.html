@@ -9,9 +9,7 @@
 {% block main %}
     <h1>Accounts</h1>
     <p>Invite a Window Account by email. They set a password through a single-use link.</p>
-    {% if error %}
-    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
-    {% endif %}
+    {% include "_form_error.html" %}
     <form method="post" action="{{ accounts_url }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <p>

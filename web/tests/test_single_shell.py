@@ -81,9 +81,12 @@ def test_board_history_accounts_and_decisions_wear_the_single_shell(db):
         _assert_terminal_shell(body, path)
 
 
+AUTH_PAGES = ["/sign-in", "/forgot", "/reset/no-such-token", "/invite/no-such-token"]
+
+
 @pytest.mark.anonymous
 def test_auth_pages_wear_the_single_shell(db):
-    for path in ["/sign-in", "/forgot", "/reset/no-such-token", "/invite/no-such-token"]:
+    for path in AUTH_PAGES:
         resp = client.get(path)
         assert resp.status_code == 200, path
         _assert_terminal_shell(resp.text, path)
@@ -105,7 +108,7 @@ def test_every_page_carries_the_decisions_link(db):
 def test_auth_pages_carry_no_live_stream(db):
     """Only the live pages open the Journal stream: a page with no live
     region must not open one it never reads."""
-    for path in ["/sign-in", "/forgot", "/reset/no-such-token", "/invite/no-such-token"]:
+    for path in AUTH_PAGES:
         body = client.get(path).text
         assert "EventSource" not in body, path
         assert "/loop/events" not in body, path
@@ -121,6 +124,30 @@ def test_live_pages_still_open_the_stream(db):
 # --- Meaning survives the move ----------------------------------------------
 
 
+def _seed_dispatched_run(conn):
+    """One finished-iteration-cap Run's opening rows, shared by the badge
+    and briefing tests so the seeded story cannot drift between them."""
+    cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+    journal.append(conn, "run.dispatched", {
+        "cycle": cycle, "issue": 645, "attempt": 1,
+        "title": "Widen the sync window",
+        "url": "https://example.invalid/645",
+        "branch": "loop/645-the-nightly-sync-script",
+        "task_ref": "acme/widgets#645",
+        "area": "The nightly sync script",
+    })
+    return cycle
+
+
+def _record_iteration_cap_outcome(conn, cycle):
+    journal.append(conn, "run.outcome", {
+        "cycle": cycle, "issue": 645, "attempt": 1,
+        "outcome": "iteration-cap", "ended_by": "iteration-cap",
+        "exit": 0, "iterations": 5, "faults": "none", "notified": "sent",
+        "proposal": "https://github.invalid/acme/widgets/pull/12",
+    })
+
+
 def test_route_badges_keep_their_colours(db):
     """Green still means reviewable and red still means needs a human: the
     route badge rules are untouched, and a green Run still renders its own
@@ -129,21 +156,8 @@ def test_route_badges_keep_their_colours(db):
     for name in ("awaiting-review", "handed-to-human", "given-up", "retrying"):
         assert f".badge-{name}" in css, f"loop.css lost the {name} badge rule"
     with journal.connect(db) as conn:
-        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
-        journal.append(conn, "run.dispatched", {
-            "cycle": cycle, "issue": 645, "attempt": 1,
-            "title": "Widen the sync window",
-            "url": "https://example.invalid/645",
-            "branch": "loop/645-the-nightly-sync-script",
-            "task_ref": "acme/widgets#645",
-            "area": "The nightly sync script",
-        })
-        journal.append(conn, "run.outcome", {
-            "cycle": cycle, "issue": 645, "attempt": 1,
-            "outcome": "iteration-cap", "ended_by": "iteration-cap",
-            "exit": 0, "iterations": 5, "faults": "none", "notified": "sent",
-            "proposal": "https://github.invalid/acme/widgets/pull/12",
-        })
+        cycle = _seed_dispatched_run(conn)
+        _record_iteration_cap_outcome(conn, cycle)
         journal.append(conn, "issue.awaiting-review", {
             "cycle": cycle, "issue": 645, "attempt": 1,
             "label": "awaiting-review", "checks": "green",
@@ -175,27 +189,14 @@ def test_the_prompt_block_stays_readable(db):
         "Completion Promise: recorded, never terminal."
     )
     with journal.connect(db) as conn:
-        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
-        journal.append(conn, "run.dispatched", {
-            "cycle": cycle, "issue": 645, "attempt": 1,
-            "title": "Widen the sync window",
-            "url": "https://example.invalid/645",
-            "branch": "loop/645-the-nightly-sync-script",
-            "task_ref": "acme/widgets#645",
-            "area": "The nightly sync script",
-        })
+        cycle = _seed_dispatched_run(conn)
         journal.append(conn, "run.briefing", {
             "cycle": cycle, "issue": 645, "attempt": 1,
             "branch": "loop/645-the-nightly-sync-script",
             "task_ref": "acme/widgets#645",
             "iteration": 1, "briefing": briefing,
         })
-        journal.append(conn, "run.outcome", {
-            "cycle": cycle, "issue": 645, "attempt": 1,
-            "outcome": "iteration-cap", "ended_by": "iteration-cap",
-            "exit": 0, "iterations": 5, "faults": "none", "notified": "sent",
-            "proposal": "https://github.invalid/acme/widgets/pull/12",
-        })
+        _record_iteration_cap_outcome(conn, cycle)
     for path in ["/", "/history"]:
         body = client.get(path).text
         assert "Iteration briefing" in body, path

@@ -4,9 +4,7 @@
 {% block main %}
     <h1>Forgot password</h1>
     <p>Enter the email on the account. If it has a password, a reset link is sent there.</p>
-    {% if error %}
-    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
-    {% endif %}
+    {% include "_form_error.html" %}
     {% if sent %}
     <p>If that address has an account, a reset link is on its way.</p>
     {% else %}

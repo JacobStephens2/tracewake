@@ -7,9 +7,7 @@
 {% block main %}
     <h1>Sign in</h1>
     <p>The Journal is behind an account. There is no registration.</p>
-    {% if error %}
-    <p class="terminal-alert terminal-alert-error">{{ error }}</p>
-    {% endif %}
+    {% include "_form_error.html" %}
     <form method="post" action="">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="next" value="{{ next_url }}">
