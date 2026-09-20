@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 import markdown as md
 import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -1621,6 +1621,13 @@ async def loop_events(request: Request):
             "Connection": "keep-alive",
         },
     )
+
+
+@app.get("/favicon.ico")
+def favicon():
+    """Browsers ask here even when the shell names the SVG. Public, because
+    the tab of the sign-in page is a visitor with no session."""
+    return FileResponse(BASE / "static" / "favicon.svg", media_type="image/svg+xml")
 
 
 @app.get("/healthz", response_class=HTMLResponse)

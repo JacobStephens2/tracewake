@@ -172,6 +172,7 @@ def sign_in_location(request: Request, next_url: str = "/") -> str:
 def is_public(path: str) -> bool:
     return (
         path == "/healthz"
+        or path == "/favicon.ico"
         or path == "/sign-in"
         or path == "/forgot"
         or path.startswith("/static/")
