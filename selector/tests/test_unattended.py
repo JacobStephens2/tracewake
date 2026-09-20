@@ -167,42 +167,10 @@ def test_a_dry_run_does_not_reach_the_box(db, fakes):
 
 
 # --- A Cycle drains the queue (issue #8) ------------------------------------
-
-
-def test_one_cycle_dispatches_several_runs_serially(db, box):
-    """Criterion 1: One Cycle dispatches several Runs serially, routing each
-    before picking the next, and the Journal shows them under one cycle.
-    Criterion 5: One cycle summary per drain names every dispatch and the
-    reason it stopped."""
-    result = box.run(db, [issue(640), issue(645)])
-    assert result.returncode == 0, result.stderr
-
-    # Exactly one cycle
-    assert len(events(db, "cycle.started")) == 1
-    assert len(events(db, "cycle.finished")) == 1
-
-    # Dispatched both issues serially
-    dispatched_issues = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
-    assert dispatched_issues == [640, 645]
-
-    # Both picked and routed
-    picked_numbers = [e["payload"]["number"] for e in events(db, "cycle.picked")]
-    assert picked_numbers == [640, 645]
-    assert len(events(db, "issue.awaiting-review")) == 2
-
-    # Finished summary
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640, 645]
-    assert finished["picked"] == 640
-    assert finished["halted"] == "queue-empty"
-
-    # All events belong to the same cycle id
-    cycle_id = one(db, "cycle.finished")["cycle"]
-    for e in events(db):
-        if "cycle" in e["payload"] and e["payload"]["cycle"] is not None:
-            assert e["payload"]["cycle"] == cycle_id, (
-                f"event {e['kind']} has cycle {e['payload']['cycle']}, expected {cycle_id}"
-            )
+#
+# Multi-pass drain, considered vs eligible, slot ordering, and K>1 slot
+# waits live in tests/test_drain_slots.py. What remains here is production
+# doing (box facts, pause between live Runs) and the entry-point fan-out.
 
 
 def test_the_box_facts_are_read_before_each_dispatch_and_guardrail_once_per_cycle(db, box):
@@ -245,43 +213,6 @@ def test_pause_is_honoured_between_runs_and_does_not_cancel_run_in_flight(db, bo
     assert finished["dispatches"] == [640]
     assert finished["halted"] == "paused"
     assert finished["eligible"] == [645]
-
-
-def test_cycle_ends_when_review_cap_is_reached_during_drain(db, box):
-    """Criterion 2: A Cycle ends when a cap holds."""
-    result = box.run(
-        db,
-        [issue(640), issue(645)],
-        review_issues=[issue(630)],
-        targets=[{"review_cap": 2}],
-    )
-    assert result.returncode == 0, result.stderr
-
-    dispatches = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
-    assert dispatches == [640]
-
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640]
-    assert finished["halted"] == "review-cap-reached"
-    assert finished["awaiting_review"] == 2
-    assert finished["review_cap"] == 2
-    assert finished["eligible"] == [645]
-
-
-def test_cycle_ends_when_nothing_eligible_during_drain(db, box):
-    """Criterion 2: A Cycle ends when nothing is Eligible."""
-    result = box.run(db, [issue(640), issue(645, blockedBy=1)])
-    assert result.returncode == 0, result.stderr
-
-    # 640 was dispatched
-    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [640]
-    assert len(events(db, "issue.awaiting-review")) == 1
-
-    # 645 is blocked, so nothing is eligible
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640]
-    assert finished["halted"] == "none-eligible"
-    assert finished["eligible"] == []
 
 
 # --- Proposal freshness during drains (Issue #10) ---------------------------
@@ -465,26 +396,6 @@ def test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2(db, box):
         assert row["payload"]["halted"] == "queue-empty"
 
 
-def test_two_eligible_tasks_on_one_target_never_overlap_at_any_k(db, box):
-    """Within a Target the drain stays serial, even when K would allow more."""
-    result = box.run(
-        db, [issue(640), issue(645)],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.3",
-    )
-    assert result.returncode == 0, result.stderr
-    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [
-        640, 645,
-    ]
-    assert _run_kinds(db) == [
-        "run.dispatched", "run.outcome",
-        "run.dispatched", "run.outcome",
-    ]
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640, 645]
-    assert finished["halted"] == "queue-empty"
-
-
 def test_k_unset_keeps_the_serial_drain_across_targets(db, box):
     """K unset defaults to 1: two Targets still drain one after the other,
     and each still has its own cycle.started / cycle.finished pair."""
@@ -512,86 +423,4 @@ def test_k_unset_keeps_the_serial_drain_across_targets(db, box):
     assert [row["payload"]["dispatches"] for row in finished] == [
         [640], [700],
     ]
-
-
-def test_a_third_target_waits_when_k_is_2(db, box):
-    """K caps live Dispatches, not Targets: a third Target waits for a slot."""
-    gadgets_work = box.extra_work("work-gadgets")
-    sprockets_work = box.extra_work("work-sprockets")
-    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
-    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
-    box.queue_for("acme/sprockets", "ready-for-agent", [issue(800)])
-
-    result = box.run(
-        db, [],
-        targets=[
-            {},
-            _gadget_target(gadgets_work),
-            {
-                "repo": "acme/sprockets",
-                "work_repo": str(sprockets_work),
-                "box_repo": "/nonexistent/box-sprockets",
-                "token_file": "/nonexistent/token-sprockets",
-                "guest_template": "sprockets-guest:1",
-            },
-        ],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.4",
-    )
-    assert result.returncode == 0, result.stderr
-    assert sorted(
-        e["payload"]["issue"] for e in events(db, "run.dispatched")
-    ) == [640, 700, 800]
-    kinds = _run_kinds(db)
-    first_outcome = kinds.index("run.outcome")
-    assert kinds[:first_outcome].count("run.dispatched") == 2
-
-
-def test_pause_mid_parallel_drain_completes_in_flight_and_picks_nothing_more(
-    db, box, tmp_path,
-):
-    """Pause mid-drain: no new picks; in-flight Runs complete and Route."""
-    gadgets_work = box.extra_work("work-gadgets")
-    box.queue_for(
-        "acme/widgets", "ready-for-agent", [issue(640), issue(641)],
-    )
-    box.queue_for(
-        "acme/gadgets", "ready-for-agent", [issue(700), issue(701)],
-    )
-    pause_script = tmp_path / "pause-when-two-dispatched.sh"
-    pause_script.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        f"dsn={db!r}\n"
-        "for _ in $(seq 1 80); do\n"
-        "  n=$(psql \"$dsn\" -tAc "
-        "\"select count(*) from journal.events where kind = 'run.dispatched'\")\n"
-        "  if [[ ${n} -ge 2 ]]; then\n"
-        "    psql \"$dsn\" -c 'UPDATE selector.control SET paused = true'\n"
-        "    exit 0\n"
-        "  fi\n"
-        "  sleep 0.05\n"
-        "done\n"
-        "exit 1\n"
-    )
-    pause_script.chmod(0o755)
-
-    result = box.run(
-        db, [],
-        targets=[{}, _gadget_target(gadgets_work)],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.4",
-        NESTED_CYCLE=str(pause_script),
-    )
-    assert result.returncode == 0, result.stderr
-
-    dispatched = sorted(
-        e["payload"]["issue"] for e in events(db, "run.dispatched")
-    )
-    assert dispatched == [640, 700]
-    assert len(events(db, "issue.awaiting-review")) == 2
-    assert len(events(db, "run.outcome")) == 2
-    for row in events(db, "cycle.finished"):
-        assert row["payload"]["halted"] == "paused"
-        assert row["payload"]["dispatches"] in ([640], [700])
 

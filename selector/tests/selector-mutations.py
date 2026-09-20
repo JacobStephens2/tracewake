@@ -32,6 +32,7 @@ DISPATCH_SUITE = "tests/test_dispatch.py"
 ELIGIBILITY_SUITE = "tests/test_drain_eligibility.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
+DRAIN_SLOTS_SUITE = "tests/test_drain_slots.py"
 RECONCILE_SUITE = "tests/test_reconcile.py"
 WATCHER_SUITE = "tests/test_watcher.py"
 BOARD_SUITE = "../web/tests/test_queue_board.py"
@@ -626,7 +627,7 @@ MUTATIONS = {
         "                break",
     ),
     # A Cycle stops after one dispatch rather than draining the queue.
-    "cycle-stops-after-one-dispatch": (DRAIN, UNATTENDED_SUITE,
+    "cycle-stops-after-one-dispatch": (DRAIN, DRAIN_SLOTS_SUITE,
         "                dispatches.append(pick[\"number\"])",
         "                dispatches.append(pick[\"number\"])\n                break",
     ),
@@ -646,10 +647,68 @@ MUTATIONS = {
         "        elif config.drain_concurrency > 1 and cycle_spend.in_flight_on(config.task_repo):",
         "        elif False:",
     ),
-    # The slot cap is not taken, so K=2 with three Targets starts all three.
-    "drain-slots-not-acquired": (DRAIN, UNATTENDED_SUITE,
+    # The slot cap is not taken, so K=2 with three Cycles starts all three.
+    "drain-slots-not-acquired": (DRAIN, DRAIN_SLOTS_SUITE,
         "            if slots is not None:",
         "            if False:",
+    ),
+    # Pause during the wait for a slot is not re-checked, so a waiter
+    # picks once the holder finishes even though the operator paused.
+    "pause-during-slot-wait": (DRAIN, DRAIN_SLOTS_SUITE,
+        "                    if control.is_paused(conn):\n"
+        "                        halted = \"paused\"\n"
+        "                        slots.release()\n"
+        "                        held_slot = False\n"
+        "                        break",
+        "                    if False:\n"
+        "                        halted = \"paused\"\n"
+        "                        slots.release()\n"
+        "                        held_slot = False\n"
+        "                        break",
+    ),
+    # The pick is journaled before the slot is taken, so a Cycle still
+    # waiting for a slot already appears as a pick.
+    "slot-before-pick": (DRAIN, DRAIN_SLOTS_SUITE,
+        "                if slots is not None:\n"
+        "                    slots.acquire()\n"
+        "                    held_slot = True\n"
+        "                    if control.is_paused(conn):\n"
+        "                        halted = \"paused\"\n"
+        "                        slots.release()\n"
+        "                        held_slot = False\n"
+        "                        break\n"
+        "                picked_record = eligible[0]\n"
+        "                body_sections = sections(picked_record.get(\"body\") or \"\")\n"
+        "                check = body_sections.get(\"check\", \"\")\n"
+        "                pick = {\n"
+        "                    \"cycle\": cycle_id,\n"
+        "                    \"number\": int(picked_record[\"number\"]),\n"
+        "                    \"title\": picked_record.get(\"title\"),\n"
+        "                    \"url\": picked_record.get(\"url\"),\n"
+        "                    \"area\": _area(picked_record, body_sections),\n"
+        "                    \"check\": _check_command(check) or None,\n"
+        "                }\n"
+        "                journal.append(conn, *events.cycle_picked(**pick))",
+        "                picked_record = eligible[0]\n"
+        "                body_sections = sections(picked_record.get(\"body\") or \"\")\n"
+        "                check = body_sections.get(\"check\", \"\")\n"
+        "                pick = {\n"
+        "                    \"cycle\": cycle_id,\n"
+        "                    \"number\": int(picked_record[\"number\"]),\n"
+        "                    \"title\": picked_record.get(\"title\"),\n"
+        "                    \"url\": picked_record.get(\"url\"),\n"
+        "                    \"area\": _area(picked_record, body_sections),\n"
+        "                    \"check\": _check_command(check) or None,\n"
+        "                }\n"
+        "                journal.append(conn, *events.cycle_picked(**pick))\n"
+        "                if slots is not None:\n"
+        "                    slots.acquire()\n"
+        "                    held_slot = True\n"
+        "                    if control.is_paused(conn):\n"
+        "                        halted = \"paused\"\n"
+        "                        slots.release()\n"
+        "                        held_slot = False\n"
+        "                        break",
     ),
     # Pause is only honoured before the first dispatch, not between runs.
     "pause-not-checked-between-runs": (DRAIN, UNATTENDED_SUITE,
