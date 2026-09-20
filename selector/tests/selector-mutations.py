@@ -1218,6 +1218,18 @@ MUTATIONS = {
         "    if incoming.repo in {target.repo for target in current}:\n",
         "    if False and incoming.repo in {target.repo for target in current}:\n",
     ),
+    # Drafting a sibling reuses the source checkout, so two Targets
+    # share a work directory and the operator thinks enrollment was free.
+    "draft-reuses-source-paths": (TARGETS, TARGETS_SUITE,
+        '        "work_repo": _rename_path(str(source.work_repo), old, new),\n',
+        '        "work_repo": str(source.work_repo),\n',
+    ),
+    # add() no longer fills blanks from the last Target, so the window's
+    # repo-only enrollment is a refusal even when the layout is known.
+    "add-does-not-fill-from-last": (TARGETS, TARGETS_SUITE,
+        "        _fill_from_last(stanza, current),\n",
+        "        stanza,\n",
+    ),
     # The local box's checkout stops being required, so an instance that
     # configured none runs against whatever directory happens to be empty or current.
     "local-box-repo-not-required": (LOCAL_SOURCE, BOX_SOURCE_SUITE,

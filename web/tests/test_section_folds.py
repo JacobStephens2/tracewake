@@ -57,3 +57,28 @@ def test_each_headed_section_on_home_folds_like_the_queue(db, dispatch):
     live = folds_on(client.get("/loop/live").text)
     assert "targets" not in live
     assert live == {k: v for k, v in expected.items() if k != "targets"}
+
+
+def _fold_open(body: str, key: str) -> bool:
+    """Whether a fold's markup starts open.
+
+    The attribute is the default a first visit sees. loop-ui.js may
+    override it from localStorage after paint; these tests read the
+    HTML the server sent.
+    """
+    match = re.search(rf'<details\b([^>]*\bdata-fold="{key}"[^>]*)>', body)
+    assert match, f"no fold named {key!r}"
+    return bool(re.search(r"(?:^|\s)open(?:\s|=|>|$)", match.group(1)))
+
+
+def test_the_targets_section_starts_closed(db):
+    """Configuration, not the reason the page is open.
+
+    The queue, the Host, and the Runs start open so the overview is
+    the page. Targets is a list the operator changes occasionally;
+    starting it open pushes the queue down by a form. Closed on a
+    first visit; a stored choice still wins after paint.
+    """
+    body = client.get("/").text
+    assert _fold_open(body, "targets") is False
+    assert _fold_open(body, "queue") is True

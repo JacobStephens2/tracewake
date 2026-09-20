@@ -1208,7 +1208,7 @@ def _loop_context(request: Request) -> dict:
         # None on every other render, so the template needs no default.
         "timer_error": None,
         "target_error": None,
-        "target_draft": {},
+        **_target_form(configs),
     }
 
 
@@ -1326,6 +1326,32 @@ def stop_timer(request: Request):
     return _set_timer(request, "stop")
 
 
+def _target_form(configs: tuple["cycle.Config", ...] | None) -> dict:
+    """The Add form's pre-fill and path hints, from the last declared Target.
+
+    A second Target is a repository name. guest_template and the
+    allowlist are instance facts and arrive filled. Path placeholders
+    show the last Target's layout with `name` standing in for the
+    short name the operator is about to type. Nothing is invented:
+    a layout the instance has never declared stays blank.
+    """
+    last = configs[-1].target if configs else None
+    if last is None:
+        return {"target_draft": {}, "target_hints": {}}
+    hinted = targets.draft("owner/name", last)
+    return {
+        "target_draft": {
+            "guest_template": last.guest_template,
+            "labeler_allowlist": ", ".join(last.labeler_allowlist),
+        },
+        "target_hints": {
+            "work_repo": hinted["work_repo"],
+            "box_repo": hinted["box_repo"],
+            "token_file": hinted["token_file"],
+        },
+    }
+
+
 def _targets_changed(
     request: Request,
     error: str | None,
@@ -1338,7 +1364,12 @@ def _targets_changed(
         return response
     context = _loop_context(request)
     context["target_error"] = error
-    context["target_draft"] = draft or {}
+    shown = dict(context.get("target_draft") or {})
+    incoming = draft or {}
+    for key, value in incoming.items():
+        if value or key == "repo":
+            shown[key] = value
+    context["target_draft"] = shown
     return _page(request, "_targets.html", context)
 
 
@@ -1405,9 +1436,10 @@ def add_target(
     """Enroll one Target.
 
     The stanza is appended to the targets file; Host checkouts and token
-    files are not created. Success reloads the home page so the queue
-    board matches the list. A failure is a sentence on the section, with
-    the submitted values still in the form.
+    files are not created. Blank fields are filled from the last declared
+    Target, so a second enrollment is a repository name. Success reloads
+    the home page so the queue board matches the list. A failure is a
+    sentence on the section, with the submitted values still in the form.
     """
     draft = {
         "repo": repo,
