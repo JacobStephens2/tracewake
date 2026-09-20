@@ -10,19 +10,23 @@
 # script itself takes no address, it runs on the Host.
 #
 # What it does, in order:
-#   1. Moves the product checkout to the tip of the deployed branch.
-#   2. Re-installs the Selector and window dependencies (pip is a no-op
+#   1. Makes the shared git object store writable by the instance user.
+#      Root-owned worktrees share this git dir and otherwise leave shard
+#      directories that `git fetch` cannot unpack into (Actions run
+#      35517678658: unpack-objects, insufficient permission).
+#   2. Moves the product checkout to the tip of the deployed branch.
+#   3. Re-installs the Selector and window dependencies (pip is a no-op
 #      when the requirements are unchanged).
-#   3. Re-applies selector/schema.sql, which is idempotent by contract
+#   4. Re-applies selector/schema.sql, which is idempotent by contract
 #      (see its header) and is what deploy/ansible's tracewake_controller
 #      role already runs on every apply.
-#   4. Writes the window's timer sudoers drop-in and the conductor-loop
+#   5. Writes the window's timer sudoers drop-in and the conductor-loop
 #      sudoers drop-in (both visudo-validated) and clears NoNewPrivileges
 #      on the installed window unit. Ansible does this on provision; CD
 #      does it too because a Host stood up before the rules existed would
 #      otherwise keep a dead Start/Stop toggle, or a box card that SSHes
 #      to hostname `local`, after every merge.
-#   5. Reloads systemd and restarts the long-lived units (the window and
+#   6. Reloads systemd and restarts the long-lived units (the window and
 #      the notifier). The cycle unit is a oneshot behind a timer, so the
 #      next trigger picks the new tree up on its own.
 #
@@ -55,6 +59,8 @@ if [ "${TRACEWAKE_CD_REEXEC:-0}" != "1" ]; then
     echo "cd-update: commit them or revert them, then re-run the workflow." >&2
     exit 1
   fi
+  chown -R "$TRACEWAKE_USER:$TRACEWAKE_USER" "$TRACEWAKE_DIR/.git/objects"
+  find "$TRACEWAKE_DIR/.git/objects" -type d -exec chmod u+rwx {} +
   as_conductor git -C "$TRACEWAKE_DIR" fetch --prune origin "$TRACEWAKE_BRANCH"
   as_conductor git -C "$TRACEWAKE_DIR" checkout "$TRACEWAKE_BRANCH"
   as_conductor git -C "$TRACEWAKE_DIR" reset --hard "origin/$TRACEWAKE_BRANCH"
