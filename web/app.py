@@ -50,6 +50,7 @@ import targets  # noqa: E402
 import preview  # noqa: E402
 import auth  # noqa: E402
 import host  # noqa: E402
+import microvms  # noqa: E402
 import mail  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
@@ -1120,6 +1121,32 @@ def _host(spend: "cycle.Spend | None") -> dict:
     }
 
 
+def _microvms() -> dict:
+    """The Box's currently running microVMs.
+
+    Sampler failure is a degraded widget, never a missing board: the queue
+    is the page, and an `sbx ls` that failed is not a reason to hide it.
+    """
+    unknown: dict = {"ok": False, "vms": (), "error": None}
+    try:
+        facts = microvms.sample()
+    except Exception as exc:
+        return {**unknown, "error": str(exc)}
+    return {
+        "ok": True,
+        "error": None,
+        "vms": [
+            {
+                "name": vm.name,
+                "agent": vm.agent,
+                "status": vm.status,
+                "workspace": vm.workspace,
+            }
+            for vm in facts.vms
+        ],
+    }
+
+
 def _loop_context(request: Request) -> dict:
     """Everything the home page renders, read now.
 
@@ -1155,6 +1182,7 @@ def _loop_context(request: Request) -> dict:
         else queue_board.unconfigured(unconfigured)
     )
     host_view = _host(spend)
+    microvms_view = _microvms()
     # Review capacity is per Target. The strip reports the first stanza,
     # snapshotted before later Targets were merged in: a second Target's
     # review queue must not spend the first's cap, and a later Target's
@@ -1183,6 +1211,7 @@ def _loop_context(request: Request) -> dict:
         "guardrail": _guardrail(events),
         "board": board_view,
         "host": host_view,
+        "microvms": microvms_view,
         "targets": tuple(c.task_repo for c in configs) if configs else (),
         "unconfigured": unconfigured,
         "paused": paused if error is None else None,

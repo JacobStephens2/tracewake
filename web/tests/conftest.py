@@ -106,6 +106,11 @@ def tracker(tmp_path, monkeypatch):
     # suite configures a whole instance. Unreachable values: nothing in this
     # suite may reach a real box or a real forge.
     monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
+    # The dashboard lists microVMs at request time (#97). Autouse idle, because
+    # the alternative is the real box-surface command, which means sudo and
+    # `sbx ls` from a unit test.
+    import microvms
+    monkeypatch.setattr("microvms.sample", lambda: microvms.Sample(vms=()))
     monkeypatch.setenv("SELECTOR_PROTECTED_REPO", "acme/tracewake")
     monkeypatch.setenv("SELECTOR_PROTECTED_REF", "main")
     monkeypatch.setenv("SELECTOR_SEARCH_OWNER", "acme")

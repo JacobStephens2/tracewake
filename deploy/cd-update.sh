@@ -96,14 +96,14 @@ install -m 0440 -o root -g root "$TIMER_SUDOERS_TMP" "$TIMER_SUDOERS"
 rm -f "$TIMER_SUDOERS_TMP"
 
 # Dispatch and the local box reads become the Run account. Ansible writes
-# /etc/sudoers.d/conductor-loop on provision; CD keeps the two status-read
+# /etc/sudoers.d/conductor-loop on provision; CD keeps the status-read
 # commands there too, because a Host that only had local.sh would keep
 # `ssh: Could not resolve hostname local` on the box card after every merge.
 LOOP_SUDOERS=/etc/sudoers.d/conductor-loop
 LOOP_SUDOERS_TMP=$(mktemp)
 cat > "$LOOP_SUDOERS_TMP" <<EOF
 # Single-Host: the Cycle runs as the instance user; a Run and the local
-# box reads execute as loop. Only these three commands, only as loop:loop,
+# box reads execute as loop. Only these four commands, only as loop:loop,
 # no SETENV.
 Defaults:$TRACEWAKE_USER env_keep += "LOOP_*"
 Defaults:$TRACEWAKE_USER env_keep += "SELECTOR_*"
@@ -111,6 +111,7 @@ Defaults:$TRACEWAKE_USER env_keep += "TRACEWAKE_*"
 $TRACEWAKE_USER ALL=(loop:loop) NOPASSWD: $TRACEWAKE_DIR/selector/box-sources/local.sh *
 $TRACEWAKE_USER ALL=(loop:loop) NOPASSWD: $TRACEWAKE_DIR/selector/box-sources/facts-local.sh
 $TRACEWAKE_USER ALL=(loop:loop) NOPASSWD: $TRACEWAKE_DIR/selector/box-sources/progress-local.sh *
+$TRACEWAKE_USER ALL=(loop:loop) NOPASSWD: $TRACEWAKE_DIR/selector/box-sources/microvms-local.sh
 EOF
 visudo -cf "$LOOP_SUDOERS_TMP" || { rm -f "$LOOP_SUDOERS_TMP"; exit 1; }
 install -m 0440 -o root -g root "$LOOP_SUDOERS_TMP" "$LOOP_SUDOERS"

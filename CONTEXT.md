@@ -246,9 +246,9 @@ in flight, `awaiting-review`, `ready-for-human`. Its columning is the Selector's
 own Eligibility predicate, imported - a board that decided for itself which
 tasks were Eligible would be a second Selector, and their first disagreement
 would be a bug in whichever one you did not read. Beside the queue, the Host's
-live headroom - CPU, memory, and the disk this checkout lives on - and the
-count of Runs in flight, that last derived from the Journal's in-flight
-predicate and nothing else.
+live headroom - CPU, memory, and the disk this checkout lives on - the count
+of Runs in flight, that last derived from the Journal's in-flight predicate
+and nothing else, and the microVMs the box is holding right now.
 _Avoid_: kanban, backlog, dashboard (the Dashboard is the whole app; this is
 one panel on it)
 
@@ -346,6 +346,14 @@ The mechanism the agent cannot cross while unattended. The one subsystem that
 Attendedness re-earns after the single-operator collapses have deleted the rest of
 the isolation apparatus.
 _Avoid_: sandbox, container, isolation stack
+
+**MicroVM**:
+One live instance of the Execution Boundary on the box, created for an
+Iteration and destroyed when that Iteration ends. Listed on `/loop` as they
+stand now, not replayed from the Journal: a Cycle-time observation would
+almost always be empty. The box answers through `sbx ls`; the dashboard says
+microVM.
+_Avoid_: sandbox (the CLI's word), container, VM
 
 **Executed Path**:
 A path in this repository that a timer, or model output, runs with nobody

@@ -43,6 +43,7 @@ def test_each_headed_section_on_home_folds_like_the_queue(db, dispatch):
     expected = {
         "targets": "Targets",
         "host": "The host",
+        "microvms": "MicroVMs",
         "queue": "The queue",
         "runs": "Runs",
         "cycles": "Cycles",

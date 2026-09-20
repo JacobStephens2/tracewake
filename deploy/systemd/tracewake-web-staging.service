@@ -27,6 +27,7 @@ Environment=LAB_PREVIEW_MAX_AGE_SECONDS=14400
 Environment=SELECTOR_TRACKER_COMMAND={{ tracewake_staging_dir }}/selector/preview-sources/tracker.sh
 Environment=SELECTOR_BOX_COMMAND={{ tracewake_staging_dir }}/selector/preview-sources/box.sh
 Environment=SELECTOR_ISSUE_COMMAND={{ tracewake_staging_dir }}/selector/preview-sources/issue.sh
+Environment=SELECTOR_BOX_MICROVMS_COMMAND={{ tracewake_staging_dir }}/selector/preview-sources/microvms.sh
 
 # An Attended Preview is permissible because somebody is looking at it. This
 # is the half of that which does not depend on anybody remembering: four hours

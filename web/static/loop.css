@@ -111,6 +111,15 @@ form.sign-out button {
 .host > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
 .host .strip { margin: 0; }
 
+/* MicroVMs (#97): the same strip-of-cells as the Host, naming each
+   Execution Boundary instance the box is holding. Distinct from the box
+   card (what the box IS) and from runs-in-flight (what the Journal has). */
+.microvms { margin: 1.5rem 0; }
+.microvms h2 { margin-bottom: 0.25rem; }
+.microvms > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
+.microvms .strip { margin: 0; }
+.microvms .detail { color: var(--secondary-color); }
+
 /* The Targets this instance reads issues from. Configuration, not a
    Journal replay: the list is the stanzas in file order. */
 .targets { margin: 1.5rem 0; }
