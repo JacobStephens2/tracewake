@@ -16,8 +16,9 @@ the Journal shape of one `cycle.started` / `cycle.finished` pair per Target.
 This amends ADR 0021 rule 1: "serially" becomes "up to K concurrently, serial
 within a Target". Pause remains non-destructive: an operator pausing mid-drain
 stops new picks while every in-flight Run completes and Routes. Box facts,
-Guardrail status, Review Cap, and the pause flag are still read before each
-Dispatch. One `cycle.finished` row still accounts for every Dispatch of that
+Review Cap, and the pause flag are still read before each Dispatch; the
+Guardrail is read once per Cycle (ADR 0026 rule 5). One
+`cycle.finished` row still accounts for every Dispatch of that
 Target's drain and the reason it stopped.
 
 Zero or a negative K is a configuration error at preflight. The knob has a
