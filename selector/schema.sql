@@ -112,6 +112,10 @@ ALTER TABLE web.accounts ALTER COLUMN password_hash DROP NOT NULL;
 ALTER TABLE web.accounts
     ADD COLUMN IF NOT EXISTS deactivated_at timestamptz;
 
+-- Headed-section order on `/` (#147). NULL is the markup default.
+ALTER TABLE web.accounts
+    ADD COLUMN IF NOT EXISTS section_order text[];
+
 CREATE TABLE IF NOT EXISTS web.sessions (
     token_hash   text PRIMARY KEY,
     account_id   bigint REFERENCES web.accounts (id),

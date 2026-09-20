@@ -1,0 +1,33 @@
+{#- The Dashboard Account's order of headed sections on `/` (#147).
+    On the shell, not in the live region: a Journal row should not shut
+    the list while someone is moving things. A successful move reloads
+    with this open (`?rearrange=1`). -#}
+<details class="section-order"{% if rearrange %} open{% endif %}>
+  <summary>Rearrange sections</summary>
+  <p>The headed panels on this page, for this Dashboard Account. Move
+     one up or down; the choice is stored on the account, not this
+     browser.</p>
+  <ol>
+    {% for s in section_order_view %}
+    <li data-section="{{ s.key }}">
+      {{ s.heading }}
+      {% if s.up %}
+      <form method="post" action="{{ section_move_url }}" class="section-move">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="key" value="{{ s.key }}">
+        <input type="hidden" name="direction" value="up">
+        <button type="submit">move up</button>
+      </form>
+      {% endif %}
+      {% if s.down %}
+      <form method="post" action="{{ section_move_url }}" class="section-move">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="key" value="{{ s.key }}">
+        <input type="hidden" name="direction" value="down">
+        <button type="submit">move down</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</details>

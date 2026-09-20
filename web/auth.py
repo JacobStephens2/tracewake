@@ -555,6 +555,26 @@ def set_role(account_id: int, role: str) -> None:
         )
 
 
+def load_section_order(account_id: int) -> list[str] | None:
+    """The Dashboard Account's headed-section order on `/`, or None for the default."""
+    with journal.connect() as conn:
+        row = conn.execute(
+            "SELECT section_order FROM web.accounts WHERE id = %s",
+            (account_id,),
+        ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return list(row[0])
+
+
+def save_section_order(account_id: int, keys: list[str]) -> None:
+    with journal.connect() as conn:
+        conn.execute(
+            "UPDATE web.accounts SET section_order = %s WHERE id = %s",
+            (keys, account_id),
+        )
+
+
 def deactivate(account_id: int) -> None:
     """Stamp deactivated_at, drop sessions, and consume unused tokens in one transaction."""
     with _tx() as conn:

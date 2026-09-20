@@ -47,6 +47,15 @@
     {% endif %}
     {% endif %}
 
+    {% for key in section_order %}
+    {% if key == "targets" %}
+    {#- Wrapper so a failed Remove or Add swaps the list without replacing
+        the fold element itself. hx-preserve keeps an in-progress add across
+        a Journal swap (#147). -#}
+    <div id="targets" hx-preserve="true">
+{% include "_targets.html" %}
+    </div>
+    {% elif key == "strip" %}
     {#- The status strip (#156). Unattended operation is a claim, and these four
         cells are where it is proved: what the Selector is doing, when the timer
         fires next, what is left of today's budget, and what the box it
@@ -181,15 +190,18 @@
       </div>
     </section>
     </details>
+    {% elif key == "host" %}
     {#- Host telemetry (#42). Beside the queue, riding this live region so
         the figures refresh when a Journal row does - the same machinery,
         not a second timer. -#}
 {% include "_host.html" %}
+    {% elif key == "microvms" %}
     {#- MicroVMs (#97). Same live region as the Host, so a Journal row
         (an Iteration landing, a Run starting) refreshes the list without
         a second timer. Distinct from the box card, which is what the box
         IS; this is what it is running. -#}
 {% include "_microvms.html" %}
+    {% elif key == "queue" %}
     {#- The queue board (#158). Every other panel here is the Journal
         replayed; this one is the tracker as it is right now, columned by the
         same Eligibility predicate the Selector picks with, for every Target.
@@ -254,8 +266,7 @@
       {% endfor %}
     </div>
     </details>
-
-    {% if runs %}
+    {% elif key == "runs" and runs %}
     {#- Same fold as the queue: open by default, stored choice on the cookie
         this fragment reads. -#}
     <details class="fold" data-fold="runs"{% if folds.runs %} open{% endif %}>
@@ -264,9 +275,7 @@
        ended, with the Proposal it left behind.</p>
 {% include "_runs.html" %}
     </details>
-    {% endif %}
-
-    {% if cycles %}
+    {% elif key == "cycles" and cycles %}
     {#- Folded shut by default: the cycle cards are the deep history, and the
         page reads as an overview without them. The operator's choice is
         stored on the same cookie as the queue's. -#}
@@ -325,8 +334,7 @@
     </section>
     {% endfor %}
     </details>
-    {% endif %}
-
+    {% elif key == "events" %}
     {% if events %}
     <details class="fold" data-fold="events"{% if folds.events %} open{% endif %}>
     <summary><h2>Every event</h2></summary>
@@ -347,4 +355,6 @@
     {% elif not error %}
     <p>No events yet. The Journal fills when the Selector runs.</p>
     {% endif %}
+    {% endif %}
+    {% endfor %}
 </div>
