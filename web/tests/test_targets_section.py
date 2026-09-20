@@ -21,7 +21,7 @@ def targets_section(body: str) -> str:
     name a repository without this section having rendered at all.
     """
     match = re.search(
-        r'<aside class="targets"[^>]*>(.*?)</aside>',
+        r'<details class="fold targets"[^>]*>(.*?)</details>',
         body,
         re.DOTALL,
     )

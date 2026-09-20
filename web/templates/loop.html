@@ -20,9 +20,10 @@
     {#- The instance's Targets. Not the queue: the board still columns the
         first stanza, and a Cycle reads every stanza in this file's order.
         Shown here rather than in the live region because it is
-        configuration, not a Journal replay. -#}
-    <aside class="targets">
-      <h2>Targets</h2>
+        configuration, not a Journal replay. Folds at its heading like the
+        other sections, so the page can be skimmed with it shut. -#}
+    <details class="fold targets" data-fold="targets" open>
+      <summary><h2>Targets</h2></summary>
       <p>The repositories this instance reads issues from. A Cycle works
          them in this order.</p>
       {% if targets %}
@@ -34,6 +35,6 @@
       {% else %}
       <p class="detail">{{ unconfigured }}</p>
       {% endif %}
-    </aside>
+    </details>
 {% include "_loop_live.html" %}
 {% endblock %}
