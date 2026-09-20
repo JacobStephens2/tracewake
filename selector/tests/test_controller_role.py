@@ -211,9 +211,10 @@ def test_cd_update_installs_the_timer_sudoers():
 
 
 def test_single_host_box_reads_have_a_scoped_sudoers_rule():
-    """Dispatch already becomes loop through local.sh. The box card and the
-    watcher need the same hop for facts-local.sh and progress-local.sh, or
-    HOST=local keeps facts.sh and the window shows hostname `local`.
+    """Dispatch already becomes loop through local.sh. The box card, the
+    watcher and the MicroVMs widget need the same hop for facts-local.sh,
+    progress-local.sh and microvms-local.sh, or HOST=local keeps the
+    ssh-based reads and the dashboard shows hostname `local`.
     """
     tasks_content = TASKS_FILE.read_text()
     assert "/etc/sudoers.d/conductor-loop" in tasks_content
@@ -230,11 +231,12 @@ def test_single_host_box_reads_have_a_scoped_sudoers_rule():
     assert "box-sources/local.sh *" in content
     assert "box-sources/facts-local.sh" in content
     assert "box-sources/progress-local.sh *" in content
+    assert "box-sources/microvms-local.sh" in content
     rules = [
         line for line in content.splitlines()
         if line.strip() and not line.startswith("#") and not line.startswith("Defaults")
     ]
-    assert len(rules) == 3, rules
+    assert len(rules) == 4, rules
     for rule in rules:
         assert "ALL=(loop:loop)" in rule
         assert "SETENV" not in rule
@@ -261,6 +263,7 @@ def test_cd_update_installs_the_conductor_loop_sudoers():
     assert "/etc/sudoers.d/conductor-loop" in script
     assert "facts-local.sh" in script
     assert "progress-local.sh" in script
+    assert "microvms-local.sh" in script
     assert "local.sh" in script
 
 
