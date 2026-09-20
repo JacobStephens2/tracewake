@@ -57,6 +57,14 @@ def test_home_page_title_is_tracewake():
     assert "<title>Tracewake</title>" in client.get("/").text
 
 
+def test_home_header_is_tracewake():
+    """The header names the product, matching the tab. 'The Loop' is one
+    half of it (CONTEXT.md)."""
+    body = client.get("/").text
+    assert '<div class="logo">TRACEWAKE</div>' in body
+    assert "THE LOOP // SELECTOR JOURNAL" not in body
+
+
 def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
     token = csrf_from(client.get("/").text)
     paused = client.post(
