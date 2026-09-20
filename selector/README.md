@@ -37,7 +37,7 @@ holds, and the reason is the string journaled with it:
 | `labeler-not-allowlisted` | the most recent `ready-for-agent` labeling on the timeline was not by an allowlisted operator - the Handover is the label, so the labeler is who is trusted |
 | `blocked-by-open-dependency` | native tracker edges report open blockers. Prose "Blocked by" text is deliberately not read |
 | `has-open-sub-issues` | a parent spec is not a unit of work |
-| `proposal-open` | an open pull request closes it: the issue is in flight |
+| `proposal-open` | an open pull request closes it: the issue is in flight. Not the leftover draft of a failed attempt that still has retry budget (#102): that draft is the branch the retry continues |
 | `attempts-exhausted` | already dispatched `MAX_ATTEMPTS` times (one automatic retry) |
 | `missing-section` | the label promises an `Acceptance criteria` section and it is absent or empty |
 
@@ -396,7 +396,7 @@ are the same thing:
 | --- | --- |
 | eligible | `ready-for-agent`, and Eligible. Lowest first, so the top card is what the next cycle picks |
 | blocked | `ready-for-agent`, and not - each card carrying the reason string the cycle would journal for it, and a blocked card naming the open issues that block it |
-| in-flight | an open Proposal, or a dispatch the Selector has journaled no outcome for |
+| in-flight | an open Proposal that is not a leftover failed-attempt draft inside the retry budget, or a dispatch the Selector has journaled no outcome for |
 | `awaiting-review` | a green Proposal is open and waiting on the operator |
 | `ready-for-human` | the Selector gave up, or the checks went red |
 
@@ -410,7 +410,9 @@ which is what a `/loop` request now costs, and why the bound is ten seconds
 rather than the minute a cycle would allow.
 
 **The in-flight column has two sources, deliberately.** One is the tracker's:
-an issue with an open Proposal, which is `cycle.eligibility`'s `proposal-open`.
+an issue with an open Proposal, which is `cycle.eligibility`'s `proposal-open`
+- except a leftover draft from a failed attempt still inside the retry budget
+(#102), which Eligibility treats as Eligible so the next Cycle can retry.
 The other is the Journal's: a dispatch with no outcome, which is the Selector's
 own in-flight lock and exists *before* any Proposal does. Per-issue Eligibility
 has no in-flight concept at all - the cycle halts on the lock rather than

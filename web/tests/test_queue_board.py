@@ -189,6 +189,27 @@ def test_the_retry_budget_the_journal_holds_reaches_the_board(db, tracker, dispa
     assert "attempts-exhausted" in column(body, "blocked")
 
 
+def test_a_leftover_failed_attempt_draft_is_eligible_not_in_flight(
+    db, tracker, dispatch
+):
+    """#102. The leftover draft of a failed attempt is the branch the retry
+    continues. The board columns by Eligibility, so that issue is Eligible
+    rather than in-flight."""
+    labeled = "2026-08-01T00:00:00Z"
+    dispatch(db, 109, outcome="agent-failed")
+    tracker.queue(
+        "ready-for-agent",
+        [tracker.issue(109, labeledAt=labeled, proposals=[
+            {"number": 13, "url": "https://example.invalid/pull/13",
+             "state": "OPEN", "isDraft": True},
+        ])],
+    )
+
+    body = client.get("/").text
+    assert "#109" in column(body, "eligible")
+    assert "#109" not in column(body, "in-flight")
+
+
 def test_a_dispatch_with_no_outcome_shows_as_in_flight(db, tracker, dispatch):
     """The Selector's in-flight lock is a dispatch with no outcome, and it
     holds before any Proposal exists. An issue under that lock is in flight

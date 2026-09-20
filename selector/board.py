@@ -218,13 +218,20 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
 
     for record in handover:
         number = record.get("number")
+        labeled_at = record.get("labeledAt")
         attempts = (
-            spend.attempts(number, record.get("labeledAt"),
-                           repo=config.task_repo)
+            spend.attempts(number, labeled_at, repo=config.task_repo)
             if spend is not None
             else 0
         )
-        reason = cycle.eligibility(record, config, attempts)
+        last_failed = (
+            spend.last_attempt_failed(
+                number, labeled_at, repo=config.task_repo
+            )
+            if spend is not None
+            else False
+        )
+        reason = cycle.eligibility(record, config, attempts, last_failed)
         if (
             spend is not None
             and number is not None
@@ -285,8 +292,9 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
                     " Selector journals for it",
                     blocked, handover_error),
             _column("in-flight", "in flight", None,
-                    "being worked: an open Proposal, or a dispatch the"
-                    " Selector has not recorded an outcome for",
+                    "being worked: an open Proposal that is not a leftover"
+                    " failed-attempt draft, or a dispatch the Selector has"
+                    " not recorded an outcome for",
                     in_flight, handover_error),
             _column("awaiting-review", config.review_label,
                     config.review_label,

@@ -173,7 +173,9 @@ operates under a formal **Termination Contract** (ADR 0007):
 4. **Retry Semantics**: If a Run is cut short by `run-clock`, `consecutive-noops`, or
    agent failure on its first attempt, the Selector leaves the issue in the queue with
    its `ready` label intact. On the next cycle, it is dispatched again on the **same
-   branch**, preserving previous progress in `PROGRESS-earlier.md`.
+   branch**, preserving previous progress in `PROGRESS-earlier.md`. A failed Run still
+   proposes; that leftover draft stays open and does not make the issue ineligible
+   (#102). The retry continues the same head and reuses the existing Proposal.
 5. **Two-Attempt Limit**: If a second attempt also terminates without a successful
    proposal, the issue is routed to `ready-for-human`. Nothing is dispatched a third
    time (`attempts-exhausted`). Blind exponential retry loops are barred.

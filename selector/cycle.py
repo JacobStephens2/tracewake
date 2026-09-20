@@ -434,13 +434,22 @@ def _check_command(text: str) -> str:
 # --- Eligibility ------------------------------------------------------------
 
 
-def eligibility(record: dict, config: Config, attempts: int) -> tuple[str, str] | None:
+def eligibility(
+    record: dict,
+    config: Config,
+    attempts: int,
+    last_failed: bool = False,
+) -> tuple[str, str] | None:
     """None when the issue is Eligible, else (reason, detail).
 
     The order is deliberate: the cheap, quiet reasons are tested before
     `missing-section`, which is the loud one - it comments on the issue and
     swaps its label (#154). An issue that is blocked anyway should not be
     shouted at for a gap the operator will fill when it is its turn.
+
+    An open Proposal is in flight, except when it is the leftover draft of a
+    failed attempt that still has retry budget (#102). That draft is the
+    branch the retry continues, not a lock.
     """
     if record.get("labeledBy") not in config.allowlist:
         return (
@@ -460,17 +469,17 @@ def eligibility(record: dict, config: Config, attempts: int) -> tuple[str, str] 
             "has-open-sub-issues",
             f"{sub_issues} open sub-issue(s); a parent spec is not a unit of work",
         )
-    open_proposals = [
-        p for p in record.get("proposals") or [] if p.get("state", "OPEN") == "OPEN"
-    ]
-    if open_proposals:
-        urls = ", ".join(str(p.get("url") or p.get("number")) for p in open_proposals)
-        return ("proposal-open", f"in flight: {urls}")
     if attempts >= MAX_ATTEMPTS:
         return (
             "attempts-exhausted",
             f"{attempts} dispatches already; the retry budget is {MAX_ATTEMPTS}",
         )
+    open_proposals = [
+        p for p in record.get("proposals") or [] if p.get("state", "OPEN") == "OPEN"
+    ]
+    if open_proposals and not last_failed:
+        urls = ", ".join(str(p.get("url") or p.get("number")) for p in open_proposals)
+        return ("proposal-open", f"in flight: {urls}")
     present = sections(record.get("body") or "")
     missing = [
         name
@@ -743,6 +752,21 @@ def reconcile_conflicting_proposals(
         if any(k in reconciled or k in failed for k in keys):
             continue
         issue_number = int(issue_record["number"])
+        # A leftover draft from a failed attempt still inside the retry
+        # budget is the retry's head, not a review artifact to reconcile
+        # (#102). Reconcile failure would escalate and spend the retry.
+        if issue_number in handover_numbers:
+            labeled_at = issue_record.get("labeledAt")
+            if (
+                flight.last_attempt_failed(
+                    issue_number, labeled_at, repo=config.task_repo
+                )
+                and flight.attempts(
+                    issue_number, labeled_at, repo=config.task_repo
+                )
+                < MAX_ATTEMPTS
+            ):
+                continue
         body_sections = sections(issue_record.get("body") or "")
         check = _check_command(body_sections.get("check", "")) or None
         # The queue the owning issue came from is the label the escalation
@@ -801,15 +825,28 @@ class Dispatch:
     repo: str | None = None
 
 
+@dataclass(frozen=True)
+class Outcome:
+    """One `run.outcome` row, enough for in-flight counts and for whether
+    the last attempt under this Handover was a failure (#102)."""
+
+    repo: str | None
+    issue: int
+    at: datetime
+    ended_by: str | None
+    proposal: str | None
+
+
 class Spend:
     """What the Selector has already spent, read back from the Journal."""
 
     def __init__(
         self,
         dispatches: list[Dispatch],
-        outcomes: list[tuple[str | None, int]],
+        outcomes: list[Outcome],
     ):
         self._dispatches = dispatches
+        self._outcomes = outcomes
         started: dict[tuple[str | None, int], int] = {}
         for d in dispatches:
             if d.stale:
@@ -817,8 +854,8 @@ class Spend:
             key = (d.repo, d.issue)
             started[key] = started.get(key, 0) + 1
         ended: dict[tuple[str | None, int], int] = {}
-        for repo, issue in outcomes:
-            key = (repo, issue)
+        for o in outcomes:
+            key = (o.repo, o.issue)
             ended[key] = ended.get(key, 0) + 1
         # Per attempt rather than per issue: an issue dispatched, finished,
         # and dispatched again is in flight, even though an outcome for it
@@ -872,6 +909,28 @@ class Spend:
             and (after is None or d.at > after)
         )
 
+    def last_attempt_failed(
+        self, issue: int, since: str | None, repo: str | None = None
+    ) -> bool:
+        """Whether the most recent Run of `issue` since it was last labeled
+        was a failure.
+
+        The leftover draft of that failure is not in flight (#102): Eligibility
+        uses this so a budgeted retry is not skipped as `proposal-open`.
+        """
+        after = _parse_time(since)
+        matching = [
+            o
+            for o in self._outcomes
+            if o.issue == issue
+            and (repo is None or not o.repo or o.repo == repo)
+            and (after is None or o.at > after)
+        ]
+        if not matching:
+            return False
+        last = max(matching, key=lambda o: o.at)
+        return is_failure(last.ended_by, last.proposal)
+
 
 def _parse_time(value: str | None) -> datetime | None:
     if not value:
@@ -892,11 +951,13 @@ def spend(conn: psycopg.Connection) -> Spend:
         ).fetchall()
     ]
     outcomes = [
-        (row[0], row[1])
+        Outcome(*row)
         for row in conn.execute(
             "SELECT nullif(split_part(payload->>'task_ref', '#', 1), ''),"
-            "       (payload->>'issue')::bigint FROM journal.events"
-            " WHERE kind = %s",
+            "       (payload->>'issue')::bigint, at,"
+            "       payload->>'ended_by',"
+            "       nullif(payload->>'proposal', '')"
+            "  FROM journal.events WHERE kind = %s",
             (events.RUN_OUTCOME,),
         ).fetchall()
     ]
@@ -2018,10 +2079,14 @@ def run_cycle(
             number = int(record["number"])
             if number in dispatches:
                 continue
+            labeled_at = record.get("labeledAt")
             verdict = eligibility(
                 record, config,
                 cycle_spend.attempts(
-                    number, record.get("labeledAt"), repo=config.task_repo,
+                    number, labeled_at, repo=config.task_repo,
+                ),
+                cycle_spend.last_attempt_failed(
+                    number, labeled_at, repo=config.task_repo,
                 ),
             )
             if verdict is None:
