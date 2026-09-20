@@ -58,7 +58,12 @@ Tracewake does not continuously poll tracker state transitions. Instead:
    performed by an operator listed in the target's `labeler_allowlist` (configured in
    `targets.toml`). An issue labeled by an unknown user is skipped with reason
    `labeler-not-allowlisted`.
-4. **The Issue Contract**: The issue body must satisfy the contract:
+4. **Archived repositories are not work**: GitHub makes an archived repository
+   read-only. The tracker adapter reports that fact and lists no issues; the
+   owner-wide search excludes archived repositories; a Cycle that still sees
+   the flag journals `halted: repository-archived` and does not dispatch,
+   comment, relabel, or refresh Proposals.
+5. **The Issue Contract**: The issue body must satisfy the contract:
    - `## Acceptance criteria` (**required**): A markdown section containing bulleted
      criteria. This section is parsed at Seeding and copied verbatim into the agent's
      Plan. An issue lacking this section triggers a **Loud Skip** (`missing-section`):

@@ -76,6 +76,15 @@ appearing gap is one notice through the existing notification surface; a
 standing gap journals without mailing again. The search is warn-only: it
 never enrolls a Target and never writes to any tracker. `SELECTOR_SEARCH_OWNER`
 is required instance configuration; there is no default that names an account.
+Archived repositories are excluded from the search: a Handover label on one
+is not a gap the operator can enroll, and GitHub has made the repository
+read-only.
+
+**Archived repositories.** GitHub makes an archived repository read-only. The
+tracker command reports `archived: true` and an empty issue list. A Cycle that
+still sees the flag journals `halted: repository-archived` and does not
+dispatch, comment, relabel, refresh Proposals, or reconcile. The queue board
+reads the same empty list.
 
 **Pause.** `/loop` is the flag's only writer. A paused Selector still runs its
 timer, reads the queue, applies Eligibility and journals the cycle; it stops

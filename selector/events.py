@@ -346,8 +346,8 @@ def cycle_finished(*, cycle, considered, eligible, skipped, picked=None,
                    dispatches=None, halted, in_flight, awaiting_review,
                    review_cap, returned, dry_run):
     """The cycle summary: what was read, what survived, every dispatch made,
-    and - when `halted` names a cap or the pause - why nothing more was
-    dispatched."""
+    and - when `halted` names a cap, the pause, or an archived Target - why
+    nothing more was dispatched."""
     if dispatches is None:
         dispatches = [picked] if picked is not None else []
     elif picked is None and dispatches:
