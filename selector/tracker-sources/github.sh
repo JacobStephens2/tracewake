@@ -19,14 +19,20 @@
 # box's token still holds no Issues permission and still cannot run this.
 #
 # Output shape, one flat record per issue - everything Eligibility needs and
-# nothing else:
+# nothing else - plus whether GitHub has archived the repository:
 #
-#   {"issues": [{"number": 646, "title": ..., "url": ..., "state": "OPEN",
+#   {"archived": false,
+#    "issues": [{"number": 646, "title": ..., "url": ..., "state": "OPEN",
 #                "body": ..., "labeledBy": "an-operator",
 #                "labeledAt": "2026-08-26T12:00:00Z", "blockedBy": 1,
 #                "blockers": [{"number": 645, "title": ..., "url": ...}],
 #                "openSubIssues": 0,
 #                "proposals": [{"number": 12, "url": ..., "isDraft": true}]}]}
+#
+# `archived` is a repository fact. When it is true the issue list is empty:
+# GitHub makes an archived repository read-only, so listing its labeled
+# queue would hand the Selector work it cannot comment on, relabel, or open
+# a Proposal for. A payload that omits the field is treated as not archived.
 #
 # labeledBy is the actor of the MOST RECENT application of the label, which is
 # the timeline check ADR 0014 asks for: the allowlist is checked against who
@@ -90,6 +96,7 @@ name="${task_repo##*/}"
 read -r -d '' query <<'GRAPHQL' || true
 query($owner: String!, $name: String!, $label: String!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
+    isArchived
     issues(first: 50, after: $endCursor, states: OPEN, labels: [$label],
            orderBy: {field: CREATED_AT, direction: ASC}) {
       pageInfo { hasNextPage endCursor }
@@ -120,35 +127,46 @@ gh api graphql --paginate \
     -F owner="${owner}" -F name="${name}" -F label="${label}" \
     -f query="${query}" |
     # `label` is a jq keyword, so the argument cannot be named for what it is.
-    jq -s --arg wanted "${label}" '{
-        issues: [
-            .[].data.repository.issues.nodes[] | {
-                number, title, url, state,
-                body: (.body // ""),
-                labeledBy: (
-                    [.timelineItems.nodes[]
-                     | select((.["label"].name? // "") == $wanted)]
-                    | last | .actor.login? // null
-                ),
-                labeledAt: (
-                    [.timelineItems.nodes[]
-                     | select((.["label"].name? // "") == $wanted)]
-                    | last | .createdAt? // null
-                ),
-                blockedBy: (.issueDependenciesSummary.blockedBy // 0),
-                blockers: [
-                    .blockedBy.nodes[]
-                    | select(.state == "OPEN")
-                    | {number, title, url}
-                ],
-                openSubIssues: (
-                    [.subIssues.nodes[] | select(.state == "OPEN")] | length
-                ),
-                proposals: [
-                    .closedByPullRequestsReferences.nodes[]
-                    | {number, url, state, isDraft, mergeable, mergeStateStatus}
-                ]
-            }
-        ] | sort_by(.number)
-    }'
+    jq -s --arg wanted "${label}" '
+        (.[0].data.repository.isArchived // false) as $archived
+        | {
+            archived: $archived,
+            issues: (
+                if $archived then
+                    []
+                else
+                    [
+                        .[].data.repository.issues.nodes[] | {
+                            number, title, url, state,
+                            body: (.body // ""),
+                            labeledBy: (
+                                [.timelineItems.nodes[]
+                                 | select((.["label"].name? // "") == $wanted)]
+                                | last | .actor.login? // null
+                            ),
+                            labeledAt: (
+                                [.timelineItems.nodes[]
+                                 | select((.["label"].name? // "") == $wanted)]
+                                | last | .createdAt? // null
+                            ),
+                            blockedBy: (.issueDependenciesSummary.blockedBy // 0),
+                            blockers: [
+                                .blockedBy.nodes[]
+                                | select(.state == "OPEN")
+                                | {number, title, url}
+                            ],
+                            openSubIssues: (
+                                [.subIssues.nodes[] | select(.state == "OPEN")]
+                                | length
+                            ),
+                            proposals: [
+                                .closedByPullRequestsReferences.nodes[]
+                                | {number, url, state, isDraft,
+                                   mergeable, mergeStateStatus}
+                            ]
+                        }
+                    ] | sort_by(.number)
+                end
+            )
+        }'
 

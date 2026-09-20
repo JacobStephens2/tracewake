@@ -51,10 +51,15 @@ command -v jq >/dev/null 2>&1 ||
 # unenrolled pile would warn about a subset and then treat the rest as new
 # the next time they scrolled into view.
 hits=""
+# --archived=false: GitHub's default is every repository the account can
+# see, including archived ones. An archived repository is read-only, so a
+# Handover label on one is not work this instance can operate on and not
+# an unenrolled-Target gap the operator can enroll.
 hits="$(gh search issues \
     --owner "${owner}" \
     --label "${label}" \
     --state open \
+    --archived=false \
     --limit 1000 \
     --json repository,number,title,url)" ||
     die "GitHub refused the owner-wide search for ${label} on ${owner}"
@@ -64,7 +69,9 @@ hits="$(gh search issues \
 printf '%s' "${hits}" | jq -c '
     {
         issues: [
-            .[] | {
+            .[]
+            | select((.repository.isArchived // false) | not)
+            | {
                 repo: (.repository.nameWithOwner // ""),
                 number, title, url
             }
