@@ -1,4 +1,4 @@
-{# Window accounts (issues #38, #40): invite by email, change roles,
+{# Dashboard accounts (issues #38, #40): invite by email, change roles,
    deactivate. Wears the terminal shell like every other page (#84). The
    status words stay words - admin, reader, invited, deactivated - styled
    neutrally so they never borrow the route badges' colours and their
@@ -8,7 +8,7 @@
 {% block logo %}TRACEWAKE // ACCOUNTS{% endblock %}
 {% block main %}
     <h1>Accounts</h1>
-    <p>Invite a Window Account by email. They set a password through a single-use link.</p>
+    <p>Invite a Dashboard Account to this control panel by email. They set a password through a single-use link.</p>
     {% include "_form_error.html" %}
     <form method="post" action="{{ accounts_url }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -25,7 +25,7 @@
       </p>
       <p><button type="submit" class="btn btn-primary">Invite</button></p>
     </form>
-    <h2>Window accounts</h2>
+    <h2>Dashboard accounts</h2>
     <ul class="account-list">
       {% for a in accounts %}
       <li class="account" data-email="{{ a.email }}">

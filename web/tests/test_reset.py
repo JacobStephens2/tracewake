@@ -84,6 +84,10 @@ def test_an_activated_account_reset_mails_exactly_one_usable_link(db, mailbox):
     assert posted.status_code == 200, posted.text
     assert mailbox.invocations() == 1
     assert last_to(mailbox) == ADMIN_EMAIL
+    delivered = mailbox.text()
+    assert "--- subject: Reset your Tracewake dashboard password" in delivered
+    assert "A password reset was requested for this Tracewake dashboard." in delivered
+    assert "window" not in delivered.lower()
     link = last_link(mailbox)
     assert "/reset/" in link
 

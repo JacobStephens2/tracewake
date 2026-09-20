@@ -17,20 +17,20 @@
 #      directories that `git fetch` cannot unpack into (Actions run
 #      35517678658: unpack-objects, insufficient permission).
 #   2. Moves the product checkout to the tip of the deployed branch.
-#   3. Re-installs the Selector and window dependencies (pip is a no-op
+#   3. Re-installs the Selector and dashboard dependencies (pip is a no-op
 #      when the requirements are unchanged).
 #   4. Re-applies selector/schema.sql, which is idempotent by contract
 #      (see its header) and is what deploy/ansible's tracewake_controller
 #      role already runs on every apply.
-#   5. Writes the window's timer sudoers drop-in and the conductor-loop
+#   5. Writes the dashboard's timer sudoers drop-in and the conductor-loop
 #      sudoers drop-in (both visudo-validated), clears NoNewPrivileges on
-#      the installed window unit, and opens ReadWritePaths on the config
+#      the installed dashboard unit, and opens ReadWritePaths on the config
 #      directory so Remove can rewrite the targets file under
 #      ProtectSystem=full. Ansible does this on provision; CD does it too
 #      because a Host stood up before the rules existed would otherwise
 #      keep a dead Start/Stop toggle, a box card that SSHes to hostname
 #      `local`, or a Remove that cannot write, after every merge.
-#   6. Reloads systemd and restarts the long-lived units (the window and
+#   6. Reloads systemd and restarts the long-lived units (the dashboard and
 #      the notifier). The cycle unit is a oneshot behind a timer, so the
 #      next trigger picks the new tree up on its own.
 #
@@ -84,9 +84,9 @@ as_conductor psql -d "$TRACEWAKE_JOURNAL_DB" -v ON_ERROR_STOP=1 \
 TIMER_SUDOERS=/etc/sudoers.d/tracewake-timer
 TIMER_SUDOERS_TMP=$(mktemp)
 cat > "$TIMER_SUDOERS_TMP" <<EOF
-# Let the window's admin toggle drive the Selector's timer without a shell.
+# Let the dashboard's admin toggle drive the Selector's timer without a shell.
 #
-# The window runs as the instance's unprivileged user while the timer is a
+# The dashboard runs as the instance's unprivileged user while the timer is a
 # system unit, so the Start/Stop buttons on the status strip reach it through
 # exactly these two commands on the one unit - and nothing else.
 $TRACEWAKE_USER ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now tracewake-selector-cycle.timer, /usr/bin/systemctl disable --now tracewake-selector-cycle.timer
@@ -116,7 +116,7 @@ visudo -cf "$LOOP_SUDOERS_TMP" || { rm -f "$LOOP_SUDOERS_TMP"; exit 1; }
 install -m 0440 -o root -g root "$LOOP_SUDOERS_TMP" "$LOOP_SUDOERS"
 rm -f "$LOOP_SUDOERS_TMP"
 
-# The shipped window unit no longer sets NoNewPrivileges (sudo cannot
+# The shipped dashboard unit no longer sets NoNewPrivileges (sudo cannot
 # become root through that flag). Hosts that already have the old unit
 # keep it until ansible re-copies; drop the line here so the restart
 # below actually lets the toggle work.
@@ -140,7 +140,7 @@ systemctl daemon-reload
 systemctl try-restart tracewake-web.service
 systemctl try-restart tracewake-selector-notifier.service
 
-# A deploy that leaves the window down is a failed deploy.
+# A deploy that leaves the dashboard down is a failed deploy.
 systemctl is-active --quiet tracewake-web.service
 
 echo "cd-update: deployed $(as_conductor git -C "$TRACEWAKE_DIR" rev-parse --short HEAD) on branch $TRACEWAKE_BRANCH."

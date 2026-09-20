@@ -150,7 +150,7 @@ address or a command have no default at all:
 | `TRACEWAKE_TARGETS_FILE` | required | the targets file |
 | `SELECTOR_BOX_HOST` | required | where the box is, as `ssh` takes it |
 
-| `SELECTOR_LOOP_URL` | required | where this instance publishes its window |
+| `SELECTOR_LOOP_URL` | required | where this instance publishes its dashboard |
 | `SELECTOR_NOTIFY_COMMAND` | required | the mail surface (see below) |
 | `SELECTOR_PROTECTED_REPO` | required | the repository holding the guardrail's rules |
 | `SELECTOR_PROTECTED_REF` | required | the ref the executed paths are deployed from |
@@ -421,7 +421,7 @@ the issue a Run is working right now as the next thing to pick, which is the
 one card on the page an operator would act on wrongly. This is the page reading
 one more Journal fact, not the page deciding work: nothing about the column
 changes what any cycle does, and ADR 0015's rule is that the tracker remains
-the only work source, not that the window may only read one source.
+the only work source, not that the dashboard may only read one source.
 
 The columning is `cycle.eligibility`, imported. Two of the things it decides
 on are not on the tracker at all - the retry budget and the in-flight lock are
@@ -486,7 +486,7 @@ Flipping it is a one-line reviewable change - the shape ADR 0014 already asks
 for when widening the labeler allowlist - and the play prints which way it left
 the timer. Out of band it is `sudo systemctl enable --now tracewake-selector-cycle.timer`.
 Setting it back to `false` stops a running timer, not merely a future one.
-The window offers the same toggle to admin accounts on the status strip -
+The dashboard offers the same toggle to admin accounts on the status strip -
 Start and Stop beside the next-cycle cell - through a sudoers rule the role
 installs that names exactly those two commands on the one unit.
 
@@ -1045,7 +1045,7 @@ Detection precedes notification, or the mail is a guess.
   the unix socket, zero credentials.
 - `testdb.py` - the shared throwaway-test-database harness: create a random
   database, apply `schema.sql`, drop it afterwards. Used by this suite and by
-  `web/tests/` (the window's side). Needs a Postgres role matching
+  `web/tests/` (the dashboard's side). Needs a Postgres role matching
   the OS user with CREATEDB. It also keeps the books on its own residue, for
   the reason in **Throwaway databases that outlive their run** below.
 - `tests/` - suites at their boundaries. `test_events.py` drives the
@@ -1093,7 +1093,7 @@ Detection precedes notification, or the mail is a guess.
   against real databases on the real instance, including a second process
   driven through `throwaway_db()` to stand in for a concurrent run.
 
-The window is `web`'s `/loop` page, which imports `journal.py` from
+The dashboard is `web`'s `/loop` page, which imports `journal.py` from
 here and renders at request time.
 
 ### Throwaway databases that outlive their run (#178)

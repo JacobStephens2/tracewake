@@ -3,7 +3,7 @@
 This guide walks an operator from an empty machine to a running instance of
 Tracewake and a verified first dry-run cycle. The product teaches one setup:
 **Single-Host** (ADR 0019, ADR 0029). One Linux machine is the Host. It runs
-the Selector, the PostgreSQL Journal, the window, and the Box locally via
+the Selector, the PostgreSQL Journal, the dashboard, and the Box locally via
 `box-sources/local.sh`. Local dispatch is gated by `loop/assert-credentials.sh`.
 
 A remote Box remains possible as a substituted `SELECTOR_BOX_COMMAND`
@@ -20,7 +20,7 @@ One machine, with both the controller's and the Box's needs:
   for Runs. Ubuntu 22.04 LTS or 24.04 LTS recommended. Rocky Linux 9,
   Debian 12+, or Fedora also work for the controller half; `sbx` itself
   wants Ubuntu 24.04 or later. A local Host on Docker (below) does not
-  promise `/dev/kvm`: the window and Selector still run.
+  promise `/dev/kvm`: the dashboard and Selector still run.
 - **PostgreSQL**: Version 14 or higher.
 - **Python**: Version 3.9 or higher with `python3-venv` and `pip`.
 - **Git & GitHub CLI**: `git` 2.30+ and `gh` 2.40+.
@@ -88,7 +88,7 @@ does not perform its subscription login or supply Instance secrets.
 
 The same Single-Host shape, on a laptop (issue #107, ADR 0031). OpenTofu
 creates one Ubuntu 24.04 systemd container; `deploy/ansible/host.yml` is
-still the play. Nested virtualization is not promised: the window and
+still the play. Nested virtualization is not promised: the dashboard and
 Selector run; a Run may fail at the Execution Boundary until `/dev/kvm`
 exists.
 
@@ -149,7 +149,7 @@ The Selector requires a PostgreSQL database to store its append-only Journal.
 
 ### Step 3: Build Python Virtual Environments
 
-Tracewake isolates the Selector automation and the Web window in separate virtual
+Tracewake isolates the Selector automation and the dashboard in separate virtual
 environments.
 
 1. **Build the Selector environment**:
@@ -160,7 +160,7 @@ environments.
    .venv/bin/pip install -r requirements.txt
    ```
 
-2. **Build the Web window environment**:
+2. **Build the dashboard environment**:
    ```bash
    cd /srv/tracewake/web
    python3 -m venv .venv
@@ -333,7 +333,7 @@ export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts-local.sh"
 export SELECTOR_BOX_PROGRESS_COMMAND="box-sources/progress-local.sh"
 export SELECTOR_BOX_LOOP="/srv/tracewake/loop"
 
-# Web Window URL & Mail Surface
+# Dashboard URL & Mail Surface
 export SELECTOR_LOOP_URL="http://127.0.0.1:8100"
 export SELECTOR_NOTIFY_COMMAND="/bin/true"
 
@@ -382,9 +382,9 @@ to the Journal without modifying git branches or opening pull requests.
 
 ---
 
-## 4. Starting the Web Window
+## 4. Starting the Dashboard
 
-The Web window renders the real-time Queue Board and Run history. It requires
+The dashboard renders the real-time Queue Board and Run history. It requires
 sign-in (ADR 0028). There is no registration page: seed the first admin before
 the first request.
 
@@ -407,10 +407,10 @@ the first request.
      `ready-for-human`).
    - The status strip reporting review capacity and the Guardrail chip.
    - The Run history at `http://127.0.0.1:8100/history`.
-   - **Accounts** (admins only): invite a Window Account by email. That send goes through
+   - **Accounts** (admins only): invite a Dashboard Account by email. That send goes through
      `WINDOW_MAIL_COMMAND` (`<to> <subject> [link]`, body on stdin) - the same
      substitutable-command seam as `SELECTOR_NOTIFY_COMMAND`, with the recipient
-     named because the window addresses invitees. There is no default.
+     named because the dashboard addresses invitees. There is no default.
 
 ---
 
@@ -453,7 +453,7 @@ SSHs to the Host as root, and pipes `deploy/cd-update.sh` into a remote
 bash. The runner sends the pushed copy, so a Host whose checkout predates
 the script still converges. The script then moves `/srv/tracewake` to the
 branch tip, refreshes both virtualenvs, re-applies the (idempotent) Journal
-schema, and restarts the window and the notifier. The cycle unit is a
+schema, and restarts the dashboard and the notifier. The cycle unit is a
 oneshot behind its timer, so the next trigger picks the new tree up on its
 own. Full provisioning stays in `deploy/ansible/host.yml`; the workflow
 only rolls the deployed revision forward. A checkout with local

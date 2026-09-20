@@ -285,7 +285,7 @@ Tracewake keeps configuration strictly **outside the target repository**:
    repository remains completely agnostic of Tracewake's existence.
 2. **Two-Tier External Configuration**:
    - **Instance Configuration** (`tracewake.env`): Instance-wide environment variables
-     defining the database Journal DSN, box execution command (SSH or local), window URL,
+     defining the database Journal DSN, box execution command (SSH or local), dashboard URL,
      notification command, guardrail write-protection rules, and operational timeouts.
    - **Target Declarations** (`targets.toml`): A structured TOML file defining one
      `[[target]]` stanza per repository worked:
@@ -319,7 +319,7 @@ Tracewake establishes five clear, predictable interaction surfaces across the
 
 1. **The Handover**: The operator specifies acceptance criteria and adds `ready-for-agent`.
    No further human intervention is required until the Run completes.
-2. **The Queue Board** (`/` on the web window): A five-column real-time board
+2. **The Queue Board** (`/` on the dashboard): A five-column real-time board
    representing the entire queue state:
    - `eligible`: Issues meeting all criteria, ordered lowest-number first.
    - `blocked`: Issues gated by open dependencies, sub-issues, or missing sections.

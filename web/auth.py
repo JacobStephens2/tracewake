@@ -1,7 +1,7 @@
-"""Window accounts: passwords, sessions, cookies, CSRF, roles, invites, reset
+"""Dashboard accounts: passwords, sessions, cookies, CSRF, roles, invites, reset
 (issues #38, #40, #41, #43, ADR 0028).
 
-Queries live here rather than in the Journal writer: the window is the only
+Queries live here rather than in the Journal writer: the dashboard is the only
 reader and writer of `web.accounts` / `web.sessions` / `web.account_tokens`.
 The connection is the Journal's, because the tables sit in the same postgres
 (ADR 0015).
@@ -55,7 +55,7 @@ class NotAuthorised(Exception):
 
 
 def refuse() -> HTMLResponse:
-    """The one refusal the window returns for a control the caller cannot use."""
+    """The one refusal the dashboard returns for a control the caller cannot use."""
     return HTMLResponse("not authorised", status_code=403)
 
 

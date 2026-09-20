@@ -37,7 +37,7 @@ runs this apply, and then `host.yml` is `wizards/local-host-up.sh` (issue #114).
 ## Shape
 
 Ubuntu 24.04, because that is the image the Execution Boundary supports.
-Nested virtualization is not promised on a laptop: the window and Selector
+Nested virtualization is not promised on a laptop: the dashboard and Selector
 still run; a Run may fail at `sbx` until `/dev/kvm` exists.
 
 The checkout is bind-mounted at `/srv/tracewake`. Named volumes hide the

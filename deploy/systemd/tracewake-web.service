@@ -1,5 +1,5 @@
 [Unit]
-Description=Tracewake's window — FastAPI + Jinja2 + HTMX
+Description=Tracewake's dashboard — FastAPI + Jinja2 + HTMX
 After=network.target postgresql.service
 
 [Service]
@@ -22,7 +22,7 @@ RestartSec=3
 TimeoutStopSec=8
 KillMode=mixed
 {% endif %}
-# ProtectSystem and PrivateTmp stay. NoNewPrivileges does not: the window
+# ProtectSystem and PrivateTmp stay. NoNewPrivileges does not: the dashboard
 # toggles the cycle timer through `sudo -n systemctl` (see
 # /etc/sudoers.d/tracewake-timer), and that flag makes sudo refuse to run
 # as root before the sudoers rule is consulted, with a warning about

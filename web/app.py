@@ -1,4 +1,4 @@
-"""Tracewake's window — the front door of an instance.
+"""Tracewake's dashboard — the front door of an instance.
 
 Built with FastAPI + Jinja2 + HTMX: server renders HTML, HTMX swaps in
 server-rendered fragments, no client-side framework and no build step. The
@@ -30,14 +30,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE = Path(__file__).resolve().parent
-# The repository root. The window renders the project it is part of - the
+# The repository root. The dashboard renders the project it is part of - the
 # ADRs, the lessons page, the notes - so the project is one directory up
 # from `web/` rather than a sibling checkout to be found.
 PROJECT = BASE.parent
 ADR_DIR = PROJECT / "docs" / "adr"
 
 # The Selector Journal's writer/reader module lives with the Selector; this
-# app is its window (ADR 0015), so import it from there rather than forking
+# app is its dashboard (ADR 0015), so import it from there rather than forking
 # the SQL.
 sys.path.insert(0, str(PROJECT / "selector"))
 import board as queue_board  # noqa: E402
@@ -53,7 +53,7 @@ import host  # noqa: E402
 import mail  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
-# instance publishes its window is a fact about that instance (issue #3),
+# instance publishes its dashboard is a fact about that instance (issue #3),
 # and it is carried in SELECTOR_LOOP_URL where a notice needs it.
 app = FastAPI(title="Tracewake")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
@@ -290,14 +290,14 @@ def accounts_invite(
         return _accounts_page(request, error=str(exc))
     link = _token_url(request, "invite", raw)
     body = (
-        f"You have been invited to this Tracewake window as {role}.\n\n"
+        f"You have been invited to this Tracewake dashboard as {role}.\n\n"
         f"Set your password at:\n{link}\n\n"
         "This link works once and expires in about 72 hours.\n"
     )
     try:
         mail.send(
             to=email.strip().lower(),
-            subject="You're invited to this Tracewake window",
+            subject="You're invited to this Tracewake dashboard",
             link=link,
             body=body,
         )
@@ -354,7 +354,7 @@ def forgot_post(request: Request, email: str = Form("")):
     if raw:
         link = _token_url(request, "reset", raw)
         body = (
-            "A password reset was requested for this Tracewake window.\n\n"
+            "A password reset was requested for this Tracewake dashboard.\n\n"
             f"Set a new password at:\n{link}\n\n"
             "This link works once and expires in about an hour. "
             "If you did not request it, you can ignore this.\n"
@@ -362,7 +362,7 @@ def forgot_post(request: Request, email: str = Form("")):
         try:
             mail.send(
                 to=email.strip().lower(),
-                subject="Reset your Tracewake window password",
+                subject="Reset your Tracewake dashboard password",
                 link=link,
                 body=body,
             )
@@ -523,7 +523,7 @@ def _cycles(rows: list[dict]) -> list[dict]:
 
     A cycle's events all carry the id of its `cycle.started` row in
     `payload.cycle`, so the grouping is the Journal's own, not a guess made
-    here. This page is a window and a scribe: it re-renders what the Selector
+    here. This page is a dashboard and a scribe: it re-renders what the Selector
     decided and decides nothing itself (ADR 0015) - and what each row holds is
     the vocabulary's knowledge, read through its records rather than re-guessed
     here as key tuples.
@@ -746,7 +746,7 @@ def _runs(rows: list[dict]) -> list[dict]:
 # None of it is computed here. The budget is read through `cycle.spend` - the
 # same function the Selector enforces the cap with, so the page cannot
 # reassure about a cap it is not the one reading - and the box facts are
-# replayed from the Journal row the cycle wrote. The page stays a window.
+# replayed from the Journal row the cycle wrote. The page still decides no work.
 
 # `systemctl show` on the timer, as one substitutable command. A read, no
 # privilege, and overridable so the strip can be driven in tests without a
@@ -765,12 +765,12 @@ TIMER_TIMEOUT_SECONDS = 5
 # short enough that a wedged control does not hold the page open.
 TIMER_CONTROL_TIMEOUT_SECONDS = 30
 
-# What runs the toggle below. `sudo -n systemctl` because the window runs as
+# What runs the toggle below. `sudo -n systemctl` because the dashboard runs as
 # the instance's unprivileged user while the timer is a system unit: without
 # the ansible role's sudoers drop-in this refuses cleanly (`sudo: a password
 # is required`), which the cell then says. `SELECTOR_TIMER_CONTROL_COMMAND`
 # names a different one whole - tests drive the toggle without a systemd
-# through it, and a window running as root would set it to `systemctl`.
+# through it, and a dashboard running as root would set it to `systemctl`.
 TIMER_CONTROL_COMMAND = "sudo -n systemctl"
 TIMER_CONTROL_COMMAND_ENV = "SELECTOR_TIMER_CONTROL_COMMAND"
 

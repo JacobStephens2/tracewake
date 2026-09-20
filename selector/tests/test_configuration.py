@@ -480,12 +480,12 @@ def test_local_host_wizard_is_the_laptop_walkthrough():
         "the wizard seeds an admin via web/seed-admin.py (issue #114)."
     )
     assert "WINDOW_COOKIE_SECURE=0" in text, (
-        "the wizard sets WINDOW_COOKIE_SECURE=0 so a plain-HTTP window "
+        "the wizard sets WINDOW_COOKIE_SECURE=0 so a plain-HTTP dashboard "
         "can sign in (issue #114)."
     )
     assert not re.search(r"(?m)^export WINDOW_COOKIE_SECURE=", text), (
         "systemd EnvironmentFile ignores 'export KEY=value'; the instance "
-        "file must be KEY=value so the window process sees "
+        "file must be KEY=value so the dashboard process sees "
         "WINDOW_COOKIE_SECURE=0 (issue #114)."
     )
     assert "127.0.0.1" in text and "/healthz" in text, (

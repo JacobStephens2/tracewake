@@ -48,8 +48,8 @@ substituted `SELECTOR_BOX_COMMAND`, not a second setup.
 | `CONTEXT.md` | The single domain vocabulary for the project. |
 | `loop/` | The Run-side half: the Termination Contract, one Run, Seeding, the Proposal, the agent adapters, and the offline bats suite that drives all of it through scripted fakes. Start at `loop/README.md`. |
 | `selector/` | The controller: the Cycle, Eligibility, Dispatch, the Journal, the watcher, the notifier, the board, and its pytest suite. Start at `selector/README.md`. |
-| `web/` | The window: a FastAPI app that renders the Journal - the queue board, a Run's history, the ADRs - and its suite. |
-| `deploy/systemd/` | The units: the Selector's cycle timer and notifier, the window and its Attended Preview. |
+| `web/` | The dashboard: a FastAPI app that renders the Journal - the queue board, a Run's history, the ADRs - and its suite. |
+| `deploy/systemd/` | The units: the Selector's cycle timer and notifier, the dashboard and its Attended Preview. |
 | `deploy/ansible/` | `host.yml` installs the Single-Host Controller, local Box, and HTTPS proxy. |
 | `deploy/tofu/` | The Host machine: a DigitalOcean droplet, or `local/` for a Docker Ubuntu 24.04 container. Ansible is still the play that turns the machine into a Host. |
 | `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. `host-up.sh` stands the droplet Host up (droplet, play, `/healthz`, credential inventory) for #57. `local-host-up.sh` stands the same Host up on Docker (play, `/healthz`) for #114. `host-credentials.sh` mints Google SMTP, Grok login, per-target forge tokens, and the signing-key registration for #59. |
@@ -111,7 +111,7 @@ cd loop && bats tests/
 cd selector && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 
-# The window - pytest
+# The dashboard - pytest
 cd web && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```
