@@ -1271,7 +1271,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```
 
-Tests skip (not fail) when the local Postgres is unreachable.
+Tests skip (not fail) when the local Postgres is unreachable, and when a
+Host-only facility is missing (`ansible_facts.services`, systemd). A macOS
+checkout is expected green; those proofs run on the Host or the Ubuntu
+check-mode container in `deploy/ansible/tests/README.md`.
 
 Then the mutation check, which is the suite's own grade:
 

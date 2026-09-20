@@ -15,6 +15,7 @@ Issue #4 acceptance criteria:
 from pathlib import Path
 import re
 import subprocess
+import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +50,7 @@ def test_selinux_relabel_and_dropin_logic_proven_both_ways():
     We prove this directly using Ansible's Jinja2 templating engine via python subprocess,
     reading the exact expression from tasks/main.yml.
     """
+    pytest.importorskip("jinja2", reason="Jinja2 is not importable")
     condition_expr = _extract_selinux_condition()
     script = f"""
 import sys
@@ -78,7 +80,9 @@ assert result_permissive is False, f"Expected False for permissive, got {{result
 
 print("OK")
 """
-    proc = subprocess.run(["python3", "-c", script], capture_output=True, text=True)
+    proc = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
     assert proc.returncode == 0, f"SELinux evaluation failed: {proc.stderr}\n{proc.stdout}"
     assert proc.stdout.strip() == "OK"
 
@@ -89,10 +93,40 @@ print("OK")
     assert "ExecStartPre=" in content
 
 
+def _ansible_facts_have_services() -> bool:
+    """The check-mode play indexes ansible_facts.services after service_facts.
+
+    Default fact gathering does not populate that mapping; the role's first
+    task is `service_facts`. On macOS that module is skipped, so a debug
+    probe against gathered facts would skip this test on a Host too.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ansible",
+                "-i", "localhost,",
+                "-c", "local",
+                "localhost",
+                "-m", "service_facts",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    combined = proc.stdout + proc.stderr
+    if proc.returncode != 0 or "| SKIPPED" in combined:
+        return False
+    return "| SUCCESS" in combined
+
+
 def test_playbook_check_mode_with_disabled_selinux_removes_dropin():
     """On a non-enforcing / disabled SELinux host (like Ubuntu),
     ansible-playbook skips the drop-in install and marks it absent.
     """
+    if not _ansible_facts_have_services():
+        pytest.skip("requires Linux ansible_facts.services")
     cmd = [
         "ansible-playbook",
         "-i", "localhost,",
