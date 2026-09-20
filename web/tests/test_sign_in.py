@@ -102,6 +102,15 @@ def test_the_health_endpoint_answers_without_a_session():
     assert response.text.strip() == "ok"
 
 
+def test_the_default_favicon_request_is_an_icon_not_a_page():
+    """Browsers still ask for /favicon.ico. That must not 303 into sign-in
+    HTML, or the tab wears the login form as its icon."""
+    response = browser().get("/favicon.ico")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
+    assert "text/html" not in response.headers["content-type"]
+
+
 def test_sign_in_returns_the_visitor_to_the_page_they_asked_for(db):
     seed_admin(db)
     client = browser()

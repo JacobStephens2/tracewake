@@ -62,6 +62,7 @@ def _assert_terminal_shell(body, page):
     assert "terminal.css" in body, f"{page} does not wear the terminal shell"
     assert "app.css" not in body, f"{page} still wears the deleted shell"
     assert 'id="theme-toggle"' in body, f"{page} has no terminal header"
+    assert 'rel="icon"' in body, f"{page} has no favicon"
 
 
 def test_board_history_accounts_and_decisions_wear_the_single_shell(db):
