@@ -111,6 +111,19 @@ form.sign-out button {
 .host > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
 .host .strip { margin: 0; }
 
+/* The Targets this instance reads issues from. Configuration, not a
+   Journal replay: the list is the stanzas in file order. */
+.targets { margin: 1.5rem 0; }
+.targets h2 { margin-bottom: 0.25rem; }
+.targets > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
+.targets ul {
+  padding-left: 0;
+  list-style: none;
+  margin: 0;
+}
+.targets li { padding: 0.15rem 0; }
+.targets .detail { color: var(--secondary-color); }
+
 /* The page's only control (#161). Paused is a page-wide operating state, so
    its banner sits above the strip rather than pretending to be one status
    cell among four. */

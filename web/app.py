@@ -994,21 +994,21 @@ def _loop_rows(conn) -> tuple[list[dict], bool]:
     return journal.events(conn), control.is_paused(conn)
 
 
-def _config() -> tuple["cycle.Config | None", str | None]:
-    """The first declared target's configuration, or why there is none.
+def _configs() -> tuple[tuple["cycle.Config", ...] | None, str | None]:
+    """Every declared target's configuration, or why there is none.
 
-    The window renders one target today - `/` growing a target switcher is
-    the board's own ticket - so it takes the first stanza in the targets
-    file. What it must not do is fail: an instance whose configuration is
-    missing or malformed is exactly when somebody opens the page, so the
-    refusal is carried as a sentence into the board's columns rather than
-    raised as a 500 (issue #3).
+    The queue board still columns the first stanza - `/` growing a target
+    switcher is the board's own ticket - but the Targets section lists
+    every stanza, because that is what a Cycle reads. What this must not
+    do is fail: an instance whose configuration is missing or malformed is
+    exactly when somebody opens the page, so the refusal is carried as a
+    sentence into the board's columns rather than raised as a 500
+    (issue #3).
     """
     try:
-        configs = cycle.Config.load()
+        return cycle.Config.load(), None
     except targets.NotConfigured as exc:
         return None, str(exc)
-    return configs[0], None
 
 
 def _gib(n: int) -> str:
@@ -1057,15 +1057,17 @@ def _host(spend: "cycle.Spend | None") -> dict:
 
 
 def _loop_context(request: Request) -> dict:
-    """Everything the live region renders, read now.
+    """Everything the home page renders, read now.
 
-    One reader for both routes. The page and the fragment it updates to are
-    the same HTML by construction rather than by two handlers being kept in
-    step - a fragment that drifted from the page would show one thing on load
-    and another the moment a row landed, which is the failure a live page has
-    that a static one cannot.
+    One reader for the page and the live fragment. The Targets list is
+    configuration and lives on the shell; everything a Journal row can
+    change lives in the fragment. They share this dict so a key the
+    fragment ignores is still one spelling, not a second handler to keep
+    in step - a fragment that drifted from the page would show one thing
+    on load and another the moment a row landed.
     """
-    config, unconfigured = _config()
+    configs, unconfigured = _configs()
+    config = configs[0] if configs else None
     empty: tuple[list[dict], bool] = ([], False)
     (events, paused), spend, error = _read_journal(_loop_rows, empty)
     view = [
@@ -1110,6 +1112,8 @@ def _loop_context(request: Request) -> dict:
         "guardrail": _guardrail(events),
         "board": board_view,
         "host": host_view,
+        "targets": tuple(c.task_repo for c in configs) if configs else (),
+        "unconfigured": unconfigured,
         "paused": paused if error is None else None,
         "state": (
             _selector_state(runs, budget, timer, paused)
