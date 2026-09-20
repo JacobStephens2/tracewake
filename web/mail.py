@@ -1,8 +1,8 @@
-"""The window's outbound mail seam (issue #41).
+"""The dashboard's outbound mail seam (issue #41).
 
 One substitutable command configured on the Instance, mirroring the Selector's
 notification surface (ADR 0018): the provider lives entirely in configuration.
-The window additionally names the recipient, because it addresses invitees
+The dashboard additionally names the recipient, because it addresses invitees
 rather than a fixed operator inbox.
 
     $WINDOW_MAIL_COMMAND <to> <subject> [link]      # body on stdin
@@ -26,7 +26,7 @@ class MailFailed(Exception):
 def command() -> str:
     """The configured mail command, or a named refusal if it is unset."""
     return os.environ.get("WINDOW_MAIL_COMMAND") or targets.missing(
-        "WINDOW_MAIL_COMMAND", "the window's mail surface"
+        "WINDOW_MAIL_COMMAND", "the dashboard's mail surface"
     )
 
 

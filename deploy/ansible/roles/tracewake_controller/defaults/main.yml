@@ -28,7 +28,7 @@ tracewake_extra_env_files: []
 # Alert failure service.
 tracewake_on_failure: "notify-unit-failure@%n.service"
 
-# Window service settings
+# Dashboard service settings
 tracewake_web_enabled: true
 tracewake_web_port: 8100
 # uvicorn --reload. Production stays false; a local Host with a bind-mounted

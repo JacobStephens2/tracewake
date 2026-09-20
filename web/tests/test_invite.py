@@ -1,4 +1,4 @@
-"""An admin invites a Window Account (issue #41).
+"""An admin invites a Dashboard Account (issue #41).
 
 HTTP-level, against a throwaway database, with the mail command captured:
 an admin's invite mails a single-use link, the invitee sets a password once,
@@ -7,6 +7,7 @@ and a reader cannot reach the account-management surface.
 from __future__ import annotations
 
 import re
+from html import unescape
 from urllib.parse import urlparse
 
 import psycopg
@@ -39,7 +40,7 @@ DEACTIVATE_ACTION = re.compile(
 
 @pytest.fixture
 def mailbox(tmp_path, monkeypatch):
-    """The window's mail surface, scripted: one log of argv plus stdin."""
+    """The dashboard's mail surface, scripted: one log of argv plus stdin."""
     delivered = tmp_path / "delivered.log"
     command = tmp_path / "mail.sh"
     command.write_text(
@@ -121,12 +122,26 @@ def account_id_for(page_text: str, email: str) -> str:
 # --- Invite and mail -------------------------------------------------------
 
 
+def test_the_accounts_page_says_dashboard_account_not_window_account(db):
+    admin = admin_browser(db)
+    page = admin.get("/accounts")
+    assert page.status_code == 200, page.text
+    assert "Invite a Dashboard Account to this control panel by email" in page.text
+    assert "Dashboard accounts" in page.text
+    assert "Window Account" not in page.text
+    assert "Window accounts" not in page.text
+
+
 def test_an_admin_invite_mails_exactly_one_usable_link(db, mailbox):
     admin = admin_browser(db)
     posted = invite(admin)
     assert posted.status_code == 303, posted.text
     assert mailbox.invocations() == 1
     assert mailbox.to() == INVITEE_EMAIL
+    delivered = mailbox.text()
+    assert "--- subject: You're invited to this Tracewake dashboard" in delivered
+    assert "You have been invited to this Tracewake dashboard as reader." in delivered
+    assert "window" not in delivered.lower()
     link = mailbox.link()
     assert "/invite/" in link
 
@@ -292,6 +307,9 @@ def test_an_unset_mail_command_is_refused_by_name(db):
     })
     assert posted.status_code == 200, posted.text
     assert "WINDOW_MAIL_COMMAND" in posted.text
+    shown = unescape(posted.text)
+    assert "the dashboard's mail surface" in shown
+    assert "the window's mail surface" not in shown
     listing = admin.get("/accounts")
     assert INVITEE_EMAIL not in listing.text
 

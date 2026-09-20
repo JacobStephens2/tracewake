@@ -689,12 +689,12 @@ say "their activity everywhere - not just the Loop's proposals. It is"
 say "deliberately off (ADR 0013, amended)."
 printf '\n'
 step "Nothing to click here. Confirm the Selector's notifier is deployed"
-step "  - until it is, a finished Run is visible on this instance's window"
+step "  - until it is, a finished Run is visible on this instance's dashboard"
 step "  and on the proposal itself, but no email arrives."
 printf '\n'
 
 if ! confirm "Is the Selector's email notifier live?"; then
-    SKIPPED+=("the Selector email notifier - until it ships, watch this instance's window; no email announces a finished Run")
+    SKIPPED+=("the Selector email notifier - until it ships, watch this instance's dashboard; no email announces a finished Run")
 fi
 
 finish

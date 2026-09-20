@@ -383,7 +383,7 @@ fi
 # ── 5. Instance files ─────────────────────────────────────────────────────
 stage "Instance: tracewake.env and targets.toml on the container"
 say "These files live at /etc/tracewake on the Host, on a named volume."
-say "WINDOW_COOKIE_SECURE=0 is set so a plain-HTTP window can sign in."
+say "WINDOW_COOKIE_SECURE=0 is set so a plain-HTTP dashboard can sign in."
 if docker exec "$CONTAINER" test -f /etc/tracewake/tracewake.env \
     && confirm "Reuse existing instance files on the container"; then
   say "Reusing /etc/tracewake/tracewake.env and targets.toml."
@@ -456,7 +456,7 @@ EOF
   say "Wrote instance files on $CONTAINER."
 fi
 if docker exec "$CONTAINER" systemctl restart tracewake-web.service; then
-  say "Restarted the window so WINDOW_COOKIE_SECURE=0 is live."
+  say "Restarted the dashboard so WINDOW_COOKIE_SECURE=0 is live."
 else
   warn "Could not restart tracewake-web.service; /healthz may still fail until the unit is up."
   SKIPPED+=("restart tracewake-web.service on $CONTAINER")
@@ -464,7 +464,7 @@ fi
 
 # ── 6. Admin ──────────────────────────────────────────────────────────────
 stage "Admin: seed-admin.py"
-say "There is no registration page. Seed the first window admin."
+say "There is no registration page. Seed the first dashboard admin."
 ask ADMIN_EMAIL "Admin email:"
 : "${ADMIN_EMAIL:?admin email is required}"
 if [[ -f "$ADMIN_PASSWORD_FILE" ]] && confirm "Reuse existing $ADMIN_PASSWORD_FILE"; then

@@ -19,7 +19,7 @@ ETA's.
 _Avoid_: the Loop, our Ralph
 
 **Tracewake**:
-The product: the Selector, the Loop and the window, with everything that names
+The product: the Selector, the Loop and the dashboard, with everything that names
 a company, a tracker, a box or a person arriving as configuration rather than
 living in the code. Every term in this glossary is a Tracewake term. An
 instance has no name of its own - ETA's is "ETA's Tracewake", the way its
@@ -77,7 +77,7 @@ _Avoid_: approval, sign-off, triage
 
 **Operator**:
 The one person an Instance trusts: the identity whose Handover the Selector
-honours and whose review lands work. Not a Window Account and not a role of one.
+honours and whose review lands work. Not a Dashboard Account and not a role of one.
 _Avoid_: admin, user, owner, maintainer
 
 **Instance**:
@@ -89,19 +89,25 @@ the code has a default for any of it. An instance has no name of its own;
 ETA's is "ETA's Tracewake".
 _Avoid_: deployment, tenant, install, the Loop
 
-**Window Account**:
-An email-identified identity for an Instance's window, carrying a role of admin
-or reader. Not an Operator.
-_Avoid_: user, login, viewer (the role is reader), operator
+**Dashboard**:
+The instance's web app - its control panel: the Queue Board, Run History,
+decisions, accounts, and the controls that change the Instance. Not a
+watch-only surface; it still decides no work.
+_Avoid_: window, the window, UI, frontend, status page
+
+**Dashboard Account**:
+An email-identified identity for an Instance's Dashboard, carrying a role of
+admin or reader. Not an Operator.
+_Avoid_: user, login, viewer (the role is reader), operator, Window Account
 
 **Admin**:
-The Window Account role that may change the Instance from the window - today,
-pause and resume, the Selector timer, and the Target list. Any number of
+The Dashboard Account role that may change the Instance from the dashboard -
+today, pause and resume, the Selector timer, and the Target list. Any number of
 accounts may carry it; none of them is the Operator.
 _Avoid_: operator, owner, superuser
 
 **Reader**:
-The Window Account role that may look at every page and the live stream, and
+The Dashboard Account role that may look at every page and the live stream, and
 may change nothing.
 _Avoid_: viewer, guest, user, operator
 
@@ -113,7 +119,7 @@ environment satisfies all Execution Boundary and credential isolation guarantees
 _Avoid_: local loop, dev mode, standalone mode
 
 **Host**:
-The machine this Instance's window and Selector run on. Distinct from the box,
+The machine this Instance's dashboard and Selector run on. Distinct from the box,
 where Runs execute; in Single-Host Mode they are the same machine. OpenTofu
 creates it — a DigitalOcean droplet, or a local Docker Ubuntu 24.04
 container — and `host.yml` configures it (ADR 0006, ADR 0031).
@@ -243,8 +249,8 @@ would be a bug in whichever one you did not read. Beside the queue, the Host's
 live headroom - CPU, memory, and the disk this checkout lives on - and the
 count of Runs in flight, that last derived from the Journal's in-flight
 predicate and nothing else.
-_Avoid_: kanban, backlog, dashboard (the page is the dashboard; this is one
-panel on it)
+_Avoid_: kanban, backlog, dashboard (the Dashboard is the whole app; this is
+one panel on it)
 
 **Run History**:
 Every Run that has ended, on `/loop/history`, replayed from the Selector

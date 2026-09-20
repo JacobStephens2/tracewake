@@ -1,5 +1,5 @@
 [Unit]
-Description=Tracewake's window, Attended Preview (ADR 0016)
+Description=Tracewake's dashboard, Attended Preview (ADR 0016)
 Documentation=file://{{ tracewake_dir }}/docs/adr/0016-unreviewed-code-is-not-model-output-and-attendedness-separates-them.md
 After=network.target postgresql.service
 

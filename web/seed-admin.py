@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the first window admin. There is no registration page.
+"""Create the first dashboard admin. There is no registration page.
 
     WINDOW_ADMIN_PASSWORD=... python seed-admin.py operator@example.com
 
@@ -32,7 +32,7 @@ def _password() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Seed the first window admin. There is no registration page."
+        description="Seed the first dashboard admin. There is no registration page."
     )
     parser.add_argument("email", help="the admin's email")
     args = parser.parse_args(argv)

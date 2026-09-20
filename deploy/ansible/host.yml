@@ -38,7 +38,7 @@
     - loop_account
     - tracewake_host
     - tracewake_controller
-    # Caddy is what makes the window reachable from outside the Host.
+    # Caddy is what makes the dashboard reachable from outside the Host.
     # The Execution Boundary role fails on a missing sbx login, so the
     # proxy has to be up before that, or a first apply leaves no Dashboard
     # (issue #107).

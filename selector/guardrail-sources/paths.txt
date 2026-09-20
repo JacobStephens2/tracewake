@@ -38,7 +38,7 @@ deploy/systemd/tracewake-selector-notifier.service
 
 # Deliberately NOT here:
 #
-#   web/                  the window. It renders the Journal and owns one
+#   web/                  the dashboard. It renders the Journal and owns one
 #                         control (the pause flag); it dispatches nothing, and
 #                         no Run reads it.
 #   deploy/ansible/       the apply that puts the Loop on the box. An apply is

@@ -1575,11 +1575,11 @@ MUTATIONS = {
         "    if hashed is None:\n"
         "        return Account(id=account_id, email=stored_email, role=role)\n",
     ),
-    # An unset window mail command is filled in, so an invite sends with
+    # An unset dashboard mail command is filled in, so an invite sends with
     # nobody configured.
     "unconfigured-window-mail-gets-a-default": (MAIL, INVITE_SUITE,
         "    return os.environ.get(\"WINDOW_MAIL_COMMAND\") or targets.missing(\n"
-        "        \"WINDOW_MAIL_COMMAND\", \"the window's mail surface\"\n"
+        "        \"WINDOW_MAIL_COMMAND\", \"the dashboard's mail surface\"\n"
         "    )\n",
         "    return os.environ.get(\"WINDOW_MAIL_COMMAND\") or \"/bin/true\"\n",
     ),
@@ -1689,7 +1689,7 @@ MUTATIONS = {
     "reset-skips-the-mail": (WINDOW, RESET_SUITE,
         "            mail.send(\n"
         "                to=email.strip().lower(),\n"
-        '                subject="Reset your Tracewake window password",\n'
+        '                subject="Reset your Tracewake dashboard password",\n'
         "                link=link,\n"
         "                body=body,\n"
         "            )\n",
