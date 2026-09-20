@@ -201,7 +201,7 @@ MUTATIONS = {
     # The in-flight lock never expires, so one cycle killed between
     # dispatching and recording the outcome wedges every later cycle forever.
     "in-flight-lock-never-expires": (CYCLE, CYCLE_SUITE,
-        "IN_FLIGHT_STALE_HOURS = 4",
+        "IN_FLIGHT_STALE_HOURS = 8",
         "IN_FLIGHT_STALE_HOURS = 99999",
     ),
     # Ordering the queue moves outside the guarded read, so a malformed

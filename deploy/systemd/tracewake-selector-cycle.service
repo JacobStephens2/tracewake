@@ -48,14 +48,14 @@ ExecStart={{ (tracewake_cycle_wrapper ~ ' ') if tracewake_cycle_wrapper else '' 
 # review pause. A draining Cycle might dispatch several Runs in a row and take
 # hours; the unit's job is to let it drain without an arbitrary deadline cutting
 # it off. An individual Run continues to be bounded by the Termination Contract
-# (90 minutes) and by the Selector's per-dispatch backstop
-# (SELECTOR_DISPATCH_TIMEOUT_SECONDS, 7200s).
+# (6 hours) and by the Selector's per-dispatch backstop
+# (SELECTOR_DISPATCH_TIMEOUT_SECONDS, 23400s).
 TimeoutStartSec=infinity
 
 # Two cycles never run at once - cycle.py takes a Postgres advisory lock and a
 # second one stands down, exit 0. This is belt and braces for the ordinary
-# case: with a 30-minute timer and a 90-minute Run, the timer fires two or
-# three times into a Run that is still going, and systemd refusing to start a
+# case: with a 30-minute timer and a 6-hour Run, the timer fires about a
+# dozen times into a Run that is still going, and systemd refusing to start a
 # second instance of a oneshot that is still activating keeps those firings
 # from even reaching Python.
 

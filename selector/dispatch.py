@@ -127,13 +127,13 @@ class DispatchConfig:
                 env("SELECTOR_COMMAND_TIMEOUT_SECONDS", "300")
             ),
             # The Run's own is longer than the Termination Contract's run
-            # clock (90 minutes) by enough to cover the checkout and the
+            # clock (6 hours) by enough to cover the checkout and the
             # proposal. It is a backstop for a box command that wedged, not a
             # second bound on the Run: the Run bounds itself, and a number
             # here that could fire first would be a bound nobody declared in
             # contract.sh.
             run_timeout_seconds=int(
-                env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "7200")
+                env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "23400")
             ),
             # How long a Proposal's checks may stay pending before the
             # Selector stops waiting (#155). CI starts when the Run pushes,

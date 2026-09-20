@@ -125,13 +125,13 @@ SIGNATURE = (
 
 
 # How long a dispatch with no outcome still counts as a Run in flight. The
-# Termination Contract's run clock is 90 minutes (loop/contract.sh,
+# Termination Contract's run clock is 6 hours (loop/contract.sh,
 # LOOP_RUN_TIMEOUT_SECONDS), so nothing legitimate is still running after
 # this; what is, is a cycle that died between dispatching and recording the
 # outcome. Without the bound that one death wedges every later cycle at
 # `run-in-flight` forever, which is the failure the rolling cap window exists
 # to prevent and this lock needs just as much.
-IN_FLIGHT_STALE_HOURS = 4
+IN_FLIGHT_STALE_HOURS = 8
 
 # One cycle at a time, whoever started it. A Postgres advisory lock on the
 # Journal connection rather than a lock file, for two reasons: the Journal is
