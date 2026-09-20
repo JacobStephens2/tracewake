@@ -25,6 +25,7 @@ GITHUB = SELECTOR / "tracker-sources" / "github.sh"
 PAGE = {
     "data": {
         "repository": {
+            "isArchived": False,
             "issues": {
                 "pageInfo": {"hasNextPage": False, "endCursor": "cursor-1"},
                 "nodes": [
@@ -61,9 +62,9 @@ def run(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     argv_log = tmp_path / "gh-argv"
-    hits = json.dumps(PAGE)
 
-    def go(*args, gh_rc=0, gh_err=""):
+    def go(*args, page=PAGE, gh_rc=0, gh_err=""):
+        hits = json.dumps(page)
         gh = bin_dir / "gh"
         gh.write_text(
             "#!/usr/bin/env bash\n"
@@ -96,6 +97,7 @@ def test_the_query_advances_through_ghs_paginate_cursor(run):
     assert "$endCursor: String" in argv
     assert "after: $endCursor" in argv
     assert "$cursor" not in argv.replace("$endCursor", "")
+    assert "isArchived" in argv
 
 
 def test_one_page_of_hits_normalizes_to_the_queue_shape(run):
@@ -103,6 +105,7 @@ def test_one_page_of_hits_normalizes_to_the_queue_shape(run):
 
     assert done.returncode == 0, done.stderr
     assert json.loads(done.stdout) == {
+        "archived": False,
         "issues": [{
             "number": 7,
             "title": "Do the thing",
@@ -117,6 +120,27 @@ def test_one_page_of_hits_normalizes_to_the_queue_shape(run):
             "proposals": [],
         }]
     }
+
+
+def test_an_archived_repository_yields_an_empty_queue(run):
+    """GitHub makes an archived repository read-only. Listing its labeled
+    issues would hand the Selector work it cannot comment on, relabel, or
+    open a Proposal for."""
+    archived = {
+        "data": {
+            "repository": {
+                "isArchived": True,
+                "issues": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": "cursor-1"},
+                    "nodes": PAGE["data"]["repository"]["issues"]["nodes"],
+                },
+            }
+        }
+    }
+    done = run("acme/widgets", "ready-for-agent", page=archived)
+
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"archived": True, "issues": []}
 
 
 def test_a_github_refusal_fails_closed(run):

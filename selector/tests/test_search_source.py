@@ -71,6 +71,7 @@ def test_the_search_lists_labeled_issues_across_the_owner(run):
     assert "--owner acme" in argv
     assert "--label ready-for-agent" in argv
     assert "--state open" in argv
+    assert "--archived=false" in argv
 
 
 def test_zero_hits_is_an_empty_list_not_a_failure(run):
@@ -105,3 +106,34 @@ def test_the_search_never_writes(run):
     assert "issue comment" not in argv
     assert "issue edit" not in argv
     assert "pr " not in argv
+
+
+def test_hits_from_archived_repositories_are_dropped(run):
+    """An archived repository is read-only. A Handover label on one is not
+    an unenrolled-Target gap the operator can enroll, and it is not work
+    the Selector may operate on."""
+    hits = json.dumps([
+        {
+            "repository": {"nameWithOwner": "acme/old", "isArchived": True},
+            "number": 1,
+            "title": "Old work",
+            "url": "https://github.com/acme/old/issues/1",
+        },
+        {
+            "repository": {"nameWithOwner": "acme/other"},
+            "number": 7,
+            "title": "Do the thing",
+            "url": "https://github.com/acme/other/issues/7",
+        },
+    ])
+    done = run("acme", "ready-for-agent", hits=hits)
+
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {
+        "issues": [{
+            "repo": "acme/other",
+            "number": 7,
+            "title": "Do the thing",
+            "url": "https://github.com/acme/other/issues/7",
+        }]
+    }

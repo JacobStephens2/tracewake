@@ -48,6 +48,8 @@ ISSUE_SOURCE = "issue-sources/github.sh"
 ISSUE_SOURCE_SUITE = "tests/test_issue_source.py"
 SEARCH_SOURCE = "search-sources/github.sh"
 SEARCH_SUITE = "tests/test_search_source.py"
+TRACKER_SOURCE = "tracker-sources/github.sh"
+TRACKER_SUITE = "tests/test_tracker_source.py"
 
 # The window (#156). Its path is relative to the Selector, and its suite is
 # the window's own - run from `web/`, which mutation-check.sh handles by
@@ -208,13 +210,23 @@ MUTATIONS = {
     # Ordering the queue moves outside the guarded read, so a malformed
     # record crashes with nothing journaled instead of failing the cycle.
     "malformed-record-crashes-unjournaled": (CYCLE, CYCLE_SUITE,
-        '        return sorted(payload["issues"], key=lambda record: int(record["number"]))\n'
+        '        issues = sorted(payload["issues"], key=lambda record: int(record["number"]))\n'
+        "        return TrackerQueue(issues=issues, archived=False)\n"
         "    except (ValueError, KeyError, TypeError) as exc:\n"
         '        raise CycleFailed(f"tracker command did not return a queue: {exc}") from exc',
         '        issues = payload["issues"]\n'
         "    except (ValueError, KeyError, TypeError) as exc:\n"
         '        raise CycleFailed(f"tracker command did not return a queue: {exc}") from exc\n'
-        '    return sorted(issues, key=lambda record: int(record["number"]))',
+        "    return TrackerQueue(\n"
+        '        issues=sorted(issues, key=lambda record: int(record["number"])),\n'
+        "        archived=False,\n"
+        "    )",
+    ),
+    # An archived Target is still picked, so the Selector tries to write a
+    # repository GitHub has made read-only.
+    "archived-repo-still-picked": (CYCLE, CYCLE_SUITE,
+        "            if tracked.archived:",
+        "            if False:",
     ),
     # --- Dispatch (#154) ---------------------------------------------------
     #
@@ -1407,6 +1419,34 @@ MUTATIONS = {
         '    die "owner must be a GitHub user or organization, got ${owner}"\n',
         "true ||\n"
         '    die "owner must be a GitHub user or organization, got ${owner}"\n',
+    ),
+    # The owner-wide search includes archived repositories, so a Handover
+    # label on a read-only repo is journaled as an unenrolled-Target gap.
+    "owner-search-includes-archived": (SEARCH_SOURCE, SEARCH_SUITE,
+        "    --state open \\\n"
+        "    --archived=false \\\n"
+        "    --limit 1000 \\\n",
+        "    --state open \\\n"
+        "    --limit 1000 \\\n",
+    ),
+    # Hits from archived repositories survive the jq filter, so a flag
+    # GitHub's search still returned is treated as work.
+    "archived-search-hits-not-dropped": (SEARCH_SOURCE, SEARCH_SUITE,
+        "            .[]\n"
+        "            | select((.repository.isArchived // false) | not)\n"
+        "            | {\n",
+        "            .[]\n"
+        "            | {\n",
+    ),
+    # An archived Target still lists its labeled issues, so the Selector is
+    # handed work GitHub will refuse every write for.
+    "archived-repo-issues-still-listed": (TRACKER_SOURCE, TRACKER_SUITE,
+        "                if $archived then\n"
+        "                    []\n"
+        "                else\n",
+        "                if false then\n"
+        "                    []\n"
+        "                else\n",
     ),
     # Freshness: foreign proposal URL in update-branch is accepted.
     "update-branch-foreign-proposal-answers-for-this-one": (ISSUE_SOURCE, ISSUE_SOURCE_SUITE,

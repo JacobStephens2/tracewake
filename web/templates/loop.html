@@ -17,8 +17,8 @@
        re-rendered the moment a row lands. The Runs that have already ended
        are on the <a href="{{ history_url }}">history</a>, which needs no
        tracker to render.</p>
-    {#- Wrapper so a failed Remove swaps the list without replacing the
-        fold element itself: loop-ui.js re-applies stored open/shut on
+    {#- Wrapper so a failed Remove or Add swaps the list without replacing
+        the fold element itself: loop-ui.js re-applies stored open/shut on
         the swap target's descendants, and would miss a details that was
         the target. -#}
     <div id="targets">

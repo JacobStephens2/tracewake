@@ -127,15 +127,24 @@ def fakes(tmp_path):
 
         def run(self, dsn, issues=(), *, review_issues=(), owner_issues=(),
                 tracker_command=None, search_command=None,
-                dry_run=True, targets=None, select=None, **env):
+                dry_run=True, targets=None, select=None, archived=False,
+                **env):
             """One cycle against a canned queue.
 
             `targets` is a list of stanza overrides when a test cares what
             the target declares; without it one default target is written,
             because there is no longer any way to name a repository except
             through the targets file (issue #3).
+
+            `archived` is the tracker payload's repository flag. The canned
+            command does not empty the issue list when it is set: leaking
+            the records is how the cycle suite checks that the Cycle itself
+            refuses to operate, rather than only the GitHub adapter.
             """
-            queue_file.write_text(json.dumps({"issues": list(issues)}))
+            payload = {"issues": list(issues)}
+            if archived:
+                payload["archived"] = True
+            queue_file.write_text(json.dumps(payload))
             search_file.write_text(json.dumps({"issues": list(owner_issues)}))
             stanzas = targets or ()
             review_label = "awaiting-review"
@@ -641,8 +650,11 @@ if add_label:
         work_repo = work
 
         def run(self, dsn, issues=(), *, review_issues=(), owner_issues=(),
-                dry_run=False, targets=None, **env):
-            queue_file.write_text(json.dumps({"issues": list(issues)}))
+                dry_run=False, targets=None, archived=False, **env):
+            payload = {"issues": list(issues)}
+            if archived:
+                payload["archived"] = True
+            queue_file.write_text(json.dumps(payload))
             search_file.write_text(json.dumps({"issues": list(owner_issues)}))
             stanzas = targets or ({},)
             review_label = stanzas[0].get("labels", {}).get("review", "awaiting-review")

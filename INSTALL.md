@@ -91,7 +91,13 @@ creates one Ubuntu 24.04 systemd container; `host.yml` is still the play.
 Nested virtualization is not promised: the window and Selector run; a Run
 may fail at the Execution Boundary until `/dev/kvm` exists.
 
-Keep instance facts out of this tree, in `~/.config/tracewake/`:
+The walkthrough is [`wizards/local-host-up.sh`](wizards/local-host-up.sh)
+(issue #114). It writes instance facts under `~/.config/tracewake/`, applies
+the local module, runs the play, seeds an admin, and waits for `/healthz`.
+`wizards/host-up.sh` stays the droplet path.
+
+Keep instance facts out of this tree, in `~/.config/tracewake/`. The wizard
+writes these files; the snippets below are the shape it stands up:
 
 ```hcl
 # ~/.config/tracewake/local.tfvars
@@ -143,8 +149,8 @@ curl http://127.0.0.1:8080/healthz
 
 A first apply may stop at `sbx` sign-in (`wizards/loop-sbx-login.sh`).
 Caddy is installed before that role, so `/healthz` should already answer.
-Write `/etc/tracewake/tracewake.env` and `targets.toml` on the container
-as in Step 6, seed an admin, and open the URL OpenTofu printed.
+The wizard writes `/etc/tracewake/tracewake.env` and `targets.toml` on the
+container (Step 6), seeds an admin, and opens the URL OpenTofu printed.
 
 The manual steps below describe those components and the remaining configuration.
 

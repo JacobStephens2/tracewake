@@ -88,6 +88,15 @@ def test_the_history_still_serves_when_the_tracker_is_down(db, tracker):
     assert "could not resolve host" not in body
 
 
+def test_a_history_card_names_the_target_the_run_worked(db):
+    """Same card as `/` (#160): the repository is on it, not only in the
+    payload dump the history page does not even render."""
+    with journal.connect(db) as conn:
+        _run(conn, task_ref="acme/voice-agent#645")
+    body = history(client.get("/loop/history").text)
+    assert "acme/voice-agent" in body
+
+
 def test_a_run_outlives_the_branch_it_worked_on(db):
     """The second criterion. Nothing on the card is fetched from the forge, so
     a branch merged and deleted an hour ago changes nothing here: the Proposal

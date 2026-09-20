@@ -25,7 +25,8 @@
             card that does not survive: a Proposal is merged and its branch
             deleted, and a link to it would be a 404 dressed up as a working
             link. The issue and the Proposal are the two durable ones. -#}
-        <span class="detail">branch <code>{{ r.branch }}</code>
+        <span class="detail">{% if r.repo %}repo <code>{{ r.repo }}</code>
+          &middot; {% endif %}branch <code>{{ r.branch }}</code>
           &middot; owning area: {{ r.area }}
           &middot; dispatched {{ r.at }}</span>
       </p>

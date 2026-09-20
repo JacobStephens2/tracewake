@@ -148,7 +148,11 @@ Iteration entry above tells you to avoid: a Cycle chooses work and an Iteration 
 A Cycle also searches the configured owner for the Handover label on repositories
 with no Target stanza and journals the gap (`target.unenrolled`); it never enrolls
 anything. Deduplication is keyed off the Journal so a standing gap does not mail
-every half hour.
+every half hour. It does not operate on an archived repository: GitHub makes
+those read-only, so the tracker reports no issues, the owner-wide search
+excludes them, and a Cycle that still sees the flag journals
+`halted: repository-archived` rather than dispatching, commenting, or
+refreshing Proposals.
 _Avoid_: tick, sweep, poll, pass
 
 **Dispatch**:

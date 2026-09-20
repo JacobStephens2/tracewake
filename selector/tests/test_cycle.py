@@ -315,6 +315,21 @@ def test_a_queue_with_nothing_eligible_journals_why(db, fakes):
     assert summary["skipped"] == {"blocked-by-open-dependency": 1}
 
 
+def test_an_archived_repository_is_not_operated_on(db, fakes):
+    """An archived Target is read-only. The Cycle must not pick, Loud Skip,
+    or otherwise treat its labeled issues as work, even if the tracker
+    payload still lists them."""
+    result = fakes.run(db, [issue(645), issue(646, blockedBy=1)], archived=True)
+    assert result.returncode == 0, result.stderr
+    assert picked(db) is None
+    assert skips(db) == {}
+    summary = finished(db)
+    assert summary["halted"] == "repository-archived"
+    assert summary["eligible"] == []
+    assert summary["considered"] == 0
+    assert summary["picked"] is None
+
+
 def test_a_dead_tracker_fails_the_cycle_loudly(db, fakes, tmp_path):
     broken = tmp_path / "broken.sh"
     broken.write_text("#!/usr/bin/env bash\necho 'tracker exploded' >&2\nexit 4\n")

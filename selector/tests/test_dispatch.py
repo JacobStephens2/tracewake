@@ -79,6 +79,34 @@ def test_the_run_branch_is_created_and_pushed(db, box):
     assert "loop/645-the-nightly-sync-script" in box.remote_branches()
 
 
+def test_an_archived_repository_is_not_dispatched_or_commented(db, box):
+    """GitHub makes an archived repository read-only. A Cycle must not seed,
+    comment, relabel, refresh a Proposal, or start a Run against one -
+    including the Loud Skip, which would try to write the tracker."""
+    missing = "## Problem\n\nNo criteria here.\n"
+    behind = {
+        "number": 12,
+        "url": "https://example.invalid/pull/12",
+        "state": "OPEN",
+        "isDraft": True,
+        "mergeable": True,
+        "mergeStateStatus": "BEHIND",
+    }
+    result = box.run(
+        db,
+        [issue(645, proposals=[behind]), issue(646, body=missing)],
+        archived=True,
+    )
+    assert result.returncode == 0, result.stderr
+    log = box.commands()
+    assert "seed " not in log
+    assert "box " not in log
+    assert "issue " not in log
+    assert one(db, "cycle.finished")["halted"] == "repository-archived"
+    assert not events(db, "issue.skipped")
+    assert not events(db, "issue.returned")
+
+
 def test_the_unenrolled_warning_does_not_write_to_the_tracker(db, box):
     """Issue #39: the warning is a Journal row and a notice. It must not
     comment, relabel, or otherwise mutate a repository the instance has not
