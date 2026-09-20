@@ -63,12 +63,12 @@ def test_each_headed_section_on_home_folds_like_the_queue(db, dispatch):
     body = client.get("/").text
     assert folds_on(body) == expected
 
-    # The live fragment is what a Journal row swaps in. Targets stays on
-    # the shell (configuration, not a replay); everything else has to be
-    # in the fragment or a swap would drop the fold.
+    # The live fragment is what a Journal row swaps in. Every headed
+    # section, including Targets, lives here so a Dashboard Account's
+    # order can put The queue first (#147). A swap that omitted one
+    # would drop its fold.
     live = folds_on(client.get("/loop/live").text)
-    assert "targets" not in live
-    assert live == {k: v for k, v in expected.items() if k != "targets"}
+    assert live == expected
 
 
 def test_the_targets_section_starts_closed(db):
@@ -108,7 +108,7 @@ def test_a_stored_fold_choice_is_the_markup_on_the_next_load(db, dispatch):
     assert home["events"] is True
 
     live = fold_open(browser.get("/loop/live").text)
-    assert "targets" not in live
+    assert live["targets"] is True
     assert live["strip"] is False
     assert live["queue"] is False
     assert live["cycles"] is True

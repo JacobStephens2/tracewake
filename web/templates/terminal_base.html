@@ -19,6 +19,7 @@
 {# Home is the product name alone. Other pages fill `title` and the base
    appends " // Tracewake"; `full_title` lets home skip that suffix. #}
 <title>{% block full_title %}{% block title %}{% endblock %} // Tracewake{% endblock %}</title>
+<link rel="icon" href="{{ static_base }}/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="{{ static_base }}/terminal.css">
 <link rel="stylesheet" href="{{ static_base }}/loop.css">
 {# HTMX does the swapping. Not deferred: the live region below is processed

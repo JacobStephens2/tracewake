@@ -327,6 +327,26 @@ details.fold > summary::before {
 }
 details.fold:not([open]) > summary::before { content: "[+]"; }
 
+/* The Dashboard Account's headed-section order on `/` (#147). A control,
+   not a headed panel: closed until someone is rearranging. */
+.section-order {
+  margin: 1rem 0 1.5rem;
+}
+.section-order > summary {
+  cursor: pointer;
+  color: var(--secondary-color);
+}
+.section-order ol {
+  padding-left: 1.5rem;
+}
+.section-order li {
+  padding: 0.25rem 0;
+}
+.section-order .section-move {
+  display: inline;
+  margin-left: 0.5rem;
+}
+
 /* Accounts, decisions, and auth pages (#84). The window's second shell is
    gone, so these pages wear the terminal identity too. terminal.css already
    owns the forms, tables, and prompt blocks; what is left here is what those

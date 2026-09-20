@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 import markdown as md
 import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -112,6 +112,60 @@ FOLD_DEFAULTS = {
     "events": True,
 }
 FOLD_COOKIE = "fold"
+SECTION_ORDER_DEFAULT = tuple(FOLD_DEFAULTS)
+SECTION_HEADINGS = {
+    "targets": "Targets",
+    "strip": "The status strip",
+    "host": "The host",
+    "microvms": "MicroVMs",
+    "queue": "The queue",
+    "runs": "Runs",
+    "cycles": "Cycles",
+    "events": "Every event",
+}
+
+
+def _resolve_section_order(chosen: list[str] | None) -> list[str]:
+    """A complete order of headed sections.
+
+    Known keys keep the offered sequence; anything else is ignored so a
+    hand-edited row cannot invent a section. Keys the row omits (a new
+    panel, a partial save) append in the markup default (#147).
+    """
+    default = list(SECTION_ORDER_DEFAULT)
+    if not chosen:
+        return default
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for key in chosen:
+        if key in FOLD_DEFAULTS and key not in seen:
+            ordered.append(key)
+            seen.add(key)
+    for key in default:
+        if key not in seen:
+            ordered.append(key)
+    return ordered
+
+
+def _section_order(request: Request) -> list[str]:
+    account = getattr(request.state, "account", None)
+    raw = None
+    if account is not None:
+        raw = auth.load_section_order(account.id)
+    return _resolve_section_order(raw)
+
+
+def _section_order_view(order: list[str]) -> list[dict]:
+    n = len(order)
+    return [
+        {
+            "key": key,
+            "heading": SECTION_HEADINGS[key],
+            "up": i > 0,
+            "down": i < n - 1,
+        }
+        for i, key in enumerate(order)
+    ]
 
 
 def _folds(request: Request) -> dict[str, bool]:
@@ -1233,6 +1287,7 @@ def _loop_context(request: Request) -> dict:
         error=review_col.get("error") if review_col else None,
         timeout=config.board_timeout_seconds if config else None,
     )
+    order = _section_order(request)
     return {
         "events": view,
         "cycles": _cycles(events),
@@ -1272,6 +1327,10 @@ def _loop_context(request: Request) -> dict:
         "target_error": None,
         **_target_form(configs),
         "folds": _folds(request),
+        "section_order": order,
+        "section_order_view": _section_order_view(order),
+        "section_move_url": _path(request, "/loop/sections/move"),
+        "rearrange": request.query_params.get("rearrange") == "1",
     }
 
 
@@ -1323,6 +1382,31 @@ def loop_redirect(request: Request):
     `/loop/...` routes; only this exact path moves.
     """
     return RedirectResponse(_path(request, "/"), status_code=307)
+
+
+@app.post("/loop/sections/move", dependencies=[Depends(require_csrf)])
+def move_section(
+    request: Request,
+    key: str = Form(""),
+    direction: str = Form(""),
+):
+    """Swap one headed section with its neighbour for this Dashboard Account.
+
+    Not an instance control: a reader may rearrange their own view. Unknown
+    keys and a move off the end of the list are no-ops, then the page
+    reloads with the rearrange list still open (#147).
+    """
+    account = getattr(request.state, "account", None)
+    if account is None:
+        raise auth.NotAuthorised()
+    order = _section_order(request)
+    if key in order and direction in ("up", "down"):
+        i = order.index(key)
+        j = i - 1 if direction == "up" else i + 1
+        if 0 <= j < len(order):
+            order[i], order[j] = order[j], order[i]
+            auth.save_section_order(account.id, order)
+    return RedirectResponse(_path(request, "/?rearrange=1"), status_code=303)
 
 
 @app.get("/loop/live", response_class=HTMLResponse)
@@ -1621,6 +1705,13 @@ async def loop_events(request: Request):
             "Connection": "keep-alive",
         },
     )
+
+
+@app.get("/favicon.ico")
+def favicon():
+    """Browsers ask here even when the shell names the SVG. Public, because
+    the tab of the sign-in page is a visitor with no session."""
+    return FileResponse(BASE / "static" / "favicon.svg", media_type="image/svg+xml")
 
 
 @app.get("/healthz", response_class=HTMLResponse)
