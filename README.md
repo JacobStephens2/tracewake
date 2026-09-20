@@ -97,7 +97,11 @@ refuses to do:
 
 Three suites and two mutation checks, all offline - no model, no network, no
 spend. The two Python suites need a Postgres role matching the OS user with
-`CREATEDB`; they create and drop a throwaway database per run.
+`CREATEDB`; they create and drop a throwaway database per run. A macOS
+checkout is expected green: tests that need a Host facility (`/proc/stat`,
+systemd, `ansible_facts.services`) skip with a reason naming it. Those proofs
+run on the Host, or for the Single-Host play's check-mode in the Ubuntu
+container in `deploy/ansible/tests/README.md`.
 
 ```bash
 # The Loop - bats

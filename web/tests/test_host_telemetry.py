@@ -144,12 +144,16 @@ def test_a_stale_dispatch_is_not_in_flight(db, dispatch, monkeypatch):
     """Eligibility's predicate, not the Run cards: a dispatch older than the
     stale bound still has a card and no outcome, but it does not hold a slot."""
     monkeypatch.setattr("host.sample", lambda: _sample())
-    dispatch(db, 108, hours_ago=5)
+    dispatch(db, 108, hours_ago=9)
     assert ">0<" in in_flight_cell(client.get("/").text).replace(" ", "")
 
 
 def test_the_default_sampler_reads_this_machine():
     import host
+    from pathlib import Path
+
+    if not Path("/proc/stat").is_file():
+        pytest.skip("requires /proc/stat")
     first = host.sample()
     second = host.sample()
     for facts in (first, second):
