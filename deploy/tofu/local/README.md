@@ -31,7 +31,8 @@ deploy/tofu/local/up.sh
 ```
 
 It reads `$HOME/.config/tracewake/local.tfvars` (or `$TRACEWAKE_CONF/local.tfvars`)
-and writes state next to it.
+and writes state next to it. The laptop walkthrough that writes those files,
+runs this apply, and then `host.yml` is `wizards/local-host-up.sh` (issue #114).
 
 ## Shape
 

@@ -55,6 +55,7 @@ microVM. That is a Host whose Box cannot yet run, not a second topology.
 INSTALL documents the local Host as Single-Host on Docker. It is not a
 "dev instance" (that name is Attended Preview's to avoid, ADR 0016) and not
 a two-machine setup. `wizards/host-up.sh` stays the droplet path.
+`wizards/local-host-up.sh` is the laptop walkthrough (issue #114).
 
 The configuration test pins the local module the same way it pins the
 droplet: required variables, no product defaults, one Ubuntu 24.04 machine.
