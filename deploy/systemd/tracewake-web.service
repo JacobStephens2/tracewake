@@ -16,8 +16,11 @@ Environment=PATH={{ tracewake_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/b
 
 Restart=on-failure
 RestartSec=3
-# hardening: read-only system, writable nowhere it doesn't need
-NoNewPrivileges=true
+# ProtectSystem and PrivateTmp stay. NoNewPrivileges does not: the window
+# toggles the cycle timer through `sudo -n systemctl` (see
+# /etc/sudoers.d/tracewake-timer), and that flag makes sudo refuse to run
+# as root before the sudoers rule is consulted, with a warning about
+# containers.
 ProtectSystem=full
 PrivateTmp=true
 

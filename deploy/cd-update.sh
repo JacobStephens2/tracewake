@@ -16,7 +16,12 @@
 #   3. Re-applies selector/schema.sql, which is idempotent by contract
 #      (see its header) and is what deploy/ansible's tracewake_controller
 #      role already runs on every apply.
-#   4. Reloads systemd and restarts the long-lived units (the window and
+#   4. Writes the window's timer sudoers drop-in (visudo-validated) and
+#      clears NoNewPrivileges on the installed window unit, so Start/Stop
+#      can sudo. Ansible does this on provision; CD does it too because a
+#      Host stood up before the rule existed would otherwise keep a dead
+#      toggle after every merge.
+#   5. Reloads systemd and restarts the long-lived units (the window and
 #      the notifier). The cycle unit is a oneshot behind a timer, so the
 #      next trigger picks the new tree up on its own.
 #
@@ -61,6 +66,31 @@ as_conductor "$TRACEWAKE_DIR/web/.venv/bin/pip" install -r "$TRACEWAKE_DIR/web/r
 
 as_conductor psql -d "$TRACEWAKE_JOURNAL_DB" -v ON_ERROR_STOP=1 \
   -f "$TRACEWAKE_DIR/selector/schema.sql"
+
+# Two commands on the one unit and nothing else - the same rule ansible
+# templates into /etc/sudoers.d/tracewake-timer.
+TIMER_SUDOERS=/etc/sudoers.d/tracewake-timer
+TIMER_SUDOERS_TMP=$(mktemp)
+cat > "$TIMER_SUDOERS_TMP" <<EOF
+# Let the window's admin toggle drive the Selector's timer without a shell.
+#
+# The window runs as the instance's unprivileged user while the timer is a
+# system unit, so the Start/Stop buttons on the status strip reach it through
+# exactly these two commands on the one unit - and nothing else.
+$TRACEWAKE_USER ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now tracewake-selector-cycle.timer, /usr/bin/systemctl disable --now tracewake-selector-cycle.timer
+EOF
+visudo -cf "$TIMER_SUDOERS_TMP" || { rm -f "$TIMER_SUDOERS_TMP"; exit 1; }
+install -m 0440 -o root -g root "$TIMER_SUDOERS_TMP" "$TIMER_SUDOERS"
+rm -f "$TIMER_SUDOERS_TMP"
+
+# The shipped window unit no longer sets NoNewPrivileges (sudo cannot
+# become root through that flag). Hosts that already have the old unit
+# keep it until ansible re-copies; drop the line here so the restart
+# below actually lets the toggle work.
+WEB_UNIT=/etc/systemd/system/tracewake-web.service
+if [ -f "$WEB_UNIT" ] && grep -q '^NoNewPrivileges=true' "$WEB_UNIT"; then
+  sed -i '/^NoNewPrivileges=true$/d' "$WEB_UNIT"
+fi
 
 systemctl daemon-reload
 systemctl try-restart tracewake-web.service
