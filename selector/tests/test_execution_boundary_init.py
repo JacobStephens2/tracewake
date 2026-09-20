@@ -91,3 +91,33 @@ def test_auth_precheck_is_read_only():
         "the auth probe must also be bounded: an unbounded read ahead of init "
         "would leave the hang the timeout was added to kill"
     )
+
+
+def test_kvm_group_is_declared_before_loop_joins_it():
+    """Issue #107: the stock Ubuntu Docker image has no kvm group. The
+    role must create it rather than assuming the cloud image did."""
+    tasks = _tasks()
+    assert re.search(r"name:\s*kvm", tasks), (
+        "loop_execution_boundary must declare the kvm group so a Host "
+        "without one still applies (issue #107)."
+    )
+    group_at = tasks.index("name: kvm")
+    join_at = tasks.index("The Loop's account can open /dev/kvm")
+    assert group_at < join_at, (
+        "the kvm group must exist before loop is added to it"
+    )
+
+
+def test_docker_apt_architecture_follows_the_host():
+    """Issue #107: the Docker apt source must match the Host's dpkg
+    architecture. Hardcoding amd64 breaks an arm64 local Host."""
+    tasks = _tasks()
+    assert "arch=amd64" not in tasks, (
+        "loop_execution_boundary hardcodes arch=amd64 in the Docker apt "
+        "source. Use the Host's architecture so an arm64 machine applies "
+        "(issue #107)."
+    )
+    assert "amd64" in tasks and "arm64" in tasks, (
+        "the Docker apt source must name both amd64 and arm64 so the "
+        "architecture map is visible in the role (issue #107)."
+    )

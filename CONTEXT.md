@@ -114,7 +114,9 @@ _Avoid_: local loop, dev mode, standalone mode
 
 **Host**:
 The machine this Instance's window and Selector run on. Distinct from the box,
-where Runs execute; in Single-Host Mode they are the same machine.
+where Runs execute; in Single-Host Mode they are the same machine. OpenTofu
+creates it — a DigitalOcean droplet, or a local Docker Ubuntu 24.04
+container — and `host.yml` configures it (ADR 0006, ADR 0031).
 _Avoid_: the box, server, node, telemetry
 
 **Target**:
