@@ -10,7 +10,7 @@ stale; the board is never stale, and the gap between the two is itself worth
 seeing.
 
 What makes it a board rather than a second opinion is that the columning is
-`cycle.eligibility` - imported, not reimplemented. A page that decided for
+`drain.eligibility` - imported, not reimplemented. A page that decided for
 itself which issues were Eligible would be a second Selector, and the first
 disagreement between them would be a bug in whichever one you did not read
 (ADR 0015: the page is a window and a scribe).
@@ -28,7 +28,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import cycle  # noqa: E402
+import drain  # noqa: E402
+import doing  # noqa: E402
+from targets import Config  # noqa: E402
 
 # The one skip reason that is not a blockage but a state: an issue with an
 # open Proposal is being worked, which is a column of its own on the board
@@ -36,14 +38,14 @@ import cycle  # noqa: E402
 PROPOSAL_OPEN_REASON = "proposal-open"
 
 # The reason a card carries when the Journal, not the tracker, is what puts it
-# in flight: a dispatch with no outcome. Not a `cycle.eligibility` reason -
+# in flight: a dispatch with no outcome. Not a `drain.eligibility` reason -
 # per-issue Eligibility does not know about the in-flight lock, the cycle
 # halts on it - so it is named here, and named for the halt the cycle
 # journals so that the board and a `cycle.finished` row use one word.
 DISPATCHED_REASON = "run-in-flight"
 
 
-def _read(config: cycle.Config, label: str, timeout: float):
+def _read(config: Config, label: str, timeout: float):
     """One label's queue, or the reason it could not be read.
 
     A failure is caught per label rather than for the board as a whole: three
@@ -51,18 +53,18 @@ def _read(config: cycle.Config, label: str, timeout: float):
     render none of them.
     """
     try:
-        return cycle.fetch_queue(config, label=label, timeout=timeout), None
-    except cycle.CycleFailed as exc:
+        return drain.fetch_queue(config, label=label, timeout=timeout), None
+    except drain.CycleFailed as exc:
         return [], str(exc)
 
 
 def _has_conflicting_proposal(record: dict) -> bool:
-    return any(cycle.is_conflicting(p) for p in record.get("proposals") or [])
+    return any(doing.is_conflicting(p) for p in record.get("proposals") or [])
 
 
 def _conflicting_proposal_reason(record: dict) -> tuple[str, str] | None:
     for p in record.get("proposals") or []:
-        if cycle.is_conflicting(p):
+        if doing.is_conflicting(p):
             target = f"#{p['number']}" if p.get("number") else (p.get("url") or "proposal")
             return ("conflicting", f"proposal {target} has merge conflicts with base")
     return None
@@ -142,7 +144,7 @@ def unconfigured(error: str) -> dict:
     }
 
 
-def combined(configs: tuple[cycle.Config, ...], spend=None,
+def combined(configs: tuple[Config, ...], spend=None,
              *, timeout: float | None = None) -> dict:
     """Every Target's queue, in one board. Each card names its repo.
 
@@ -190,7 +192,7 @@ def combined(configs: tuple[cycle.Config, ...], spend=None,
     }
 
 
-def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
+def board(config: Config, spend=None, *, timeout: float | None = None):
     """The five columns, read from the tracker now.
 
     `spend` is the Journal's half of Eligibility - the retry budget and the
@@ -231,7 +233,7 @@ def board(config: cycle.Config, spend=None, *, timeout: float | None = None):
             if spend is not None
             else False
         )
-        reason = cycle.eligibility(record, config, attempts, last_failed)
+        reason = drain.eligibility(record, config, attempts, last_failed)
         if (
             spend is not None
             and number is not None

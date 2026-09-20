@@ -42,7 +42,7 @@ ADR_DIR = PROJECT / "docs" / "adr"
 sys.path.insert(0, str(PROJECT / "selector"))
 import board as queue_board  # noqa: E402
 import control  # noqa: E402
-import cycle  # noqa: E402
+import drain  # noqa: E402
 import events  # noqa: E402
 import journal  # noqa: E402
 import targets  # noqa: E402
@@ -777,7 +777,7 @@ def _runs(rows: list[dict]) -> list[dict]:
 # next, how much of today's budget is left, and what the box it dispatches to
 # is holding.
 #
-# None of it is computed here. The budget is read through `cycle.spend` - the
+# None of it is computed here. The budget is read through `drain.spend` - the
 # same function the Selector enforces the cap with, so the page cannot
 # reassure about a cap it is not the one reading - and the box facts are
 # replayed from the Journal row the cycle wrote. The page still decides no work.
@@ -924,7 +924,7 @@ def _box(rows: list[dict]) -> dict | None:
     however long the page sat open - and wrong in the reassuring direction,
     which is the failure #260 is about.
 
-    That is not the guardrail chip's rule being broken. `cycle.py` grades the
+    That is not the guardrail chip's rule being broken. `doing.py` grades the
     guardrail because whether the paths are protected is a judgement with
     rejected alternatives in it; whether an instant has passed is not.
     """
@@ -982,7 +982,7 @@ def _guardrail(rows: list[dict]) -> dict | None:
     The box card's rule, turned up one notch by `stale`: a chip is a claim
     about the present, and this one is only as good as the cycle that took it.
 
-    The verdict itself is NOT computed here. `cycle.py` decided it when it
+    The verdict itself is NOT computed here. `doing.py` decided it when it
     read the guardrail, and a page that graded the facts a second time would
     be a second opinion about whether the Selector is protected, with no way
     to tell which of the two had been reviewed.
@@ -1051,7 +1051,7 @@ _ReadT = TypeVar("_ReadT")
 
 def _read_journal(
     read: Callable[[psycopg.Connection], _ReadT], default: _ReadT
-) -> tuple[_ReadT, "cycle.Spend | None", str | None]:
+) -> tuple[_ReadT, "drain.Spend | None", str | None]:
     """One read of the Journal: what `read` asks of it, and what has been spent.
 
     Both pages start here, so "the Journal is down" is one sentence written
@@ -1068,7 +1068,7 @@ def _read_journal(
     """
     try:
         with journal.connect() as conn:
-            return read(conn), cycle.spend(conn), None
+            return read(conn), drain.spend(conn), None
     except psycopg.Error as exc:
         return default, None, f"journal unavailable: {exc}"
 
@@ -1092,7 +1092,7 @@ def _loop_rows(conn) -> tuple[list[dict], bool]:
     return journal.events(conn), control.is_paused(conn)
 
 
-def _configs() -> tuple[tuple["cycle.Config", ...] | None, str | None]:
+def _configs() -> tuple[tuple["targets.Config", ...] | None, str | None]:
     """Every declared target's configuration, or why there is none.
 
     The queue board columns every stanza, each card naming its Target, so
@@ -1104,7 +1104,7 @@ def _configs() -> tuple[tuple["cycle.Config", ...] | None, str | None]:
     than raised as a 500 (issue #3).
     """
     try:
-        return cycle.Config.load(), None
+        return targets.Config.load(), None
     except targets.NotConfigured as exc:
         return None, str(exc)
 
@@ -1121,7 +1121,7 @@ def _gib(n: int) -> str:
     return f"{value:.1f} GiB"
 
 
-def _host(spend: "cycle.Spend | None") -> dict:
+def _host(spend: "drain.Spend | None") -> dict:
     """The Host's headroom, plus how many Runs the Journal has in flight.
 
     Sampler failure is a degraded widget, never a missing board: the queue
@@ -1227,7 +1227,7 @@ def _loop_context(request: Request) -> dict:
              if c.get("key") == "awaiting-review"),
             None,
         )
-    budget = cycle.review_budget(
+    budget = drain.review_budget(
         config,
         review=review_col["cards"] if review_col and not review_col.get("error") else None,
         error=review_col.get("error") if review_col else None,
@@ -1389,7 +1389,7 @@ def stop_timer(request: Request):
     return _set_timer(request, "stop")
 
 
-def _target_form(configs: tuple["cycle.Config", ...] | None) -> dict:
+def _target_form(configs: tuple["targets.Config", ...] | None) -> dict:
     """The Add form's pre-fill and path hints, from the last declared Target.
 
     A second Target is a repository name. guest_template and the

@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import cycle
+import doing
 from conftest import FAILED_RUN, events, issue, last, one
 
 
@@ -285,5 +285,5 @@ def test_a_dry_run_reconciles_nothing(db, fakes):
 
 def test_conflicting_proposals_carry_their_owning_issue():
     record = issue(630, proposals=[conflicting(13), mergeable(12)])
-    found = cycle.conflicting_proposals([record, issue(640)])
+    found = doing.conflicting_proposals([record, issue(640)])
     assert [(r["number"], p["number"]) for r, p in found] == [(630, 13)]

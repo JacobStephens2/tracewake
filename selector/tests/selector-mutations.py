@@ -20,6 +20,8 @@ import pathlib
 import sys
 
 CYCLE = "cycle.py"
+DRAIN = "drain.py"
+DOING = "doing.py"
 CONTROL = "control.py"
 DISPATCH = "dispatch.py"
 WATCHER = "watcher.py"
@@ -36,7 +38,7 @@ CONTROLLER_UNITS_SUITE = "tests/test_controller_units.py"
 
 # The write protection over the executed paths (#165). Two targets, because
 # the guardrail is two things: the command that reads the forge and the tree,
-# and the verdict `cycle.py` makes of what it read.
+# and the verdict `doing.py` makes of what it read.
 PROTECTION = "guardrail-sources/protection.sh"
 GUARDRAIL_SUITE = "tests/test_guardrail.py"
 PROTECTION_SUITE = "tests/test_protection_source.py"
@@ -132,36 +134,36 @@ BOX_SOURCE_SUITE = "tests/test_box_source.py"
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
-    "highest-picked-first": (CYCLE, CYCLE_SUITE, "record = eligible[0]", "record = eligible[-1]"),
+    "highest-picked-first": (DRAIN, CYCLE_SUITE, "record = eligible[0]", "record = eligible[-1]"),
     # Anyone who can apply the label spends the operator's Runs - the whole of
     # ADR 0014's trust argument, deleted.
-    "labeler-not-checked": (CYCLE, CYCLE_SUITE,
+    "labeler-not-checked": (DRAIN, CYCLE_SUITE,
         'if record.get("labeledBy") not in config.allowlist:',
         "if False:",
     ),
     # A chain gets worked top-down: an issue with open blocking edges is
     # started before the work it depends on exists.
-    "blockers-ignored": (CYCLE, CYCLE_SUITE, "if blocked:", "if False:"),
+    "blockers-ignored": (DRAIN, CYCLE_SUITE, "if blocked:", "if False:"),
     # A parent spec is mistaken for a unit of work and seeded whole.
-    "sub-issues-ignored": (CYCLE, CYCLE_SUITE, "if sub_issues:", "if False:"),
+    "sub-issues-ignored": (DRAIN, CYCLE_SUITE, "if sub_issues:", "if False:"),
     # An issue already in flight is picked again, so the same work is started
     # twice on two branches.
-    "open-proposal-ignored": (CYCLE, CYCLE_SUITE,
+    "open-proposal-ignored": (DRAIN, CYCLE_SUITE,
         "if open_proposals and not last_failed:",
         "if False:"),
     # A leftover draft from a failed attempt is treated as in flight, so the
     # budgeted retry never dispatches while that draft stays open (#102).
-    "leftover-draft-blocks-retry": (CYCLE, OUTCOMES_SUITE,
+    "leftover-draft-blocks-retry": (DRAIN, OUTCOMES_SUITE,
         "if open_proposals and not last_failed:",
         "if open_proposals:"),
     # The Journal half of that exception never runs, so a leftover draft is
     # always in flight even when Eligibility would have allowed the retry.
-    "last-attempt-never-failed": (CYCLE, OUTCOMES_SUITE,
+    "last-attempt-never-failed": (DRAIN, OUTCOMES_SUITE,
         "return is_failure(last.ended_by, last.proposal)",
         "return False"),
     # A leftover failed-attempt draft is reconciled instead of retried, so a
     # conflict on that head escalates and spends the budgeted retry (#102).
-    "leftover-draft-is-reconciled": (CYCLE, RECONCILE_SUITE,
+    "leftover-draft-is-reconciled": (DOING, RECONCILE_SUITE,
         "        if issue_number in handover_numbers:",
         "        if False:"),
     # The retry budget never runs out, so a task that cannot be done is
@@ -169,25 +171,25 @@ MUTATIONS = {
     "retry-budget-unbounded": (EVENTS, CYCLE_SUITE, "MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 9999"),
     # The budget stops being scoped to the current Handover, so re-labeling a
     # given-up issue - the operator saying "try that again" - does nothing.
-    "budget-ignores-the-handover": (CYCLE, CYCLE_SUITE,
+    "budget-ignores-the-handover": (DRAIN, CYCLE_SUITE,
         "and (after is None or d.at > after)",
         "and True",
     ),
     # In flight is counted per issue rather than per attempt, so a retry of an
     # issue that already has an outcome does not hold the lock and a second
     # Run is dispatched underneath it.
-    "in-flight-counted-per-issue": (CYCLE, CYCLE_SUITE,
+    "in-flight-counted-per-issue": (DRAIN, CYCLE_SUITE,
         "key for key, n in started.items() if n > ended.get(key, 0)",
         "key for key, n in started.items() if key[1] not in {i for _, i in ended}",
     ),
     # Concurrency arrives by accident: a second Run is dispatched while one is
     # still in flight.
-    "in-flight-cap-ignored": (CYCLE, CYCLE_SUITE,
+    "in-flight-cap-ignored": (DRAIN, CYCLE_SUITE,
         "elif config.drain_concurrency == 1 and cycle_spend.in_flight:",
         "elif False:",
     ),
     # The review cap stops bounding the review pile.
-    "review-cap-ignored": (CYCLE, CYCLE_SUITE,
+    "review-cap-ignored": (DRAIN, CYCLE_SUITE,
         'elif budget["remaining"] == 0:',
         "elif False:",
     ),
@@ -195,24 +197,24 @@ MUTATIONS = {
     # says must be returned to the operator rather than guessed at.
     # Anchored with its indentation: `guardrail_verdict` has an `if missing:`
     # of its own, and an anchor that matches twice is one the harness refuses.
-    "sections-not-required": (CYCLE, CYCLE_SUITE,
+    "sections-not-required": (DRAIN, CYCLE_SUITE,
         "\n    if missing:", "\n    if False:",
     ),
     # A section heading with nothing under it satisfies the requirement, so an
     # empty `## Owning area` seeds a Run scoped to the empty string.
-    "empty-section-counts-as-present": (CYCLE, CYCLE_SUITE,
+    "empty-section-counts-as-present": (DRAIN, CYCLE_SUITE,
         'if not _first_line(present.get(name.lower(), ""))',
         "if name.lower() not in present",
     ),
     # Headings inside fenced blocks count, so an issue quoting another
     # issue's template passes the section check on the quote.
-    "fenced-headings-count": (CYCLE, CYCLE_SUITE,
+    "fenced-headings-count": (DRAIN, CYCLE_SUITE,
         "heading = None if fence else _HEADING.match(line)",
         "heading = _HEADING.match(line)",
     ),
     # A tracker that failed reads as an empty queue: the Selector goes quiet
     # and nothing pages the operator (spec story 31).
-    "tracker-failure-swallowed": (CYCLE, CYCLE_SUITE,
+    "tracker-failure-swallowed": (DRAIN, CYCLE_SUITE,
         "if completed.returncode != 0:",
         "if False:",
     ),
@@ -223,13 +225,13 @@ MUTATIONS = {
     ),
     # The in-flight lock never expires, so one cycle killed between
     # dispatching and recording the outcome wedges every later cycle forever.
-    "in-flight-lock-never-expires": (CYCLE, CYCLE_SUITE,
+    "in-flight-lock-never-expires": (DRAIN, CYCLE_SUITE,
         "IN_FLIGHT_STALE_HOURS = 8",
         "IN_FLIGHT_STALE_HOURS = 99999",
     ),
     # Ordering the queue moves outside the guarded read, so a malformed
     # record crashes with nothing journaled instead of failing the cycle.
-    "malformed-record-crashes-unjournaled": (CYCLE, CYCLE_SUITE,
+    "malformed-record-crashes-unjournaled": (DRAIN, CYCLE_SUITE,
         '        issues = sorted(payload["issues"], key=lambda record: int(record["number"]))\n'
         "        return TrackerQueue(issues=issues, archived=False)\n"
         "    except (ValueError, KeyError, TypeError) as exc:\n"
@@ -244,7 +246,7 @@ MUTATIONS = {
     ),
     # An archived Target is still picked, so the Selector tries to write a
     # repository GitHub has made read-only.
-    "archived-repo-still-picked": (CYCLE, CYCLE_SUITE,
+    "archived-repo-still-picked": (DRAIN, CYCLE_SUITE,
         "            if tracked.archived:",
         "            if False:",
     ),
@@ -257,19 +259,19 @@ MUTATIONS = {
 
     # An underspecified issue is passed over in silence every half hour
     # forever, which is the case ADR 0014 says must be handed back.
-    "loud-skip-goes-quiet": (CYCLE, DISPATCH_SUITE,
+    "loud-skip-goes-quiet": (DRAIN, DISPATCH_SUITE,
         'if reason == "missing-section" and not dry_run:',
         "if False:",
     ),
     # A dry run writes to the tracker: the mode that exists to change nothing
     # comments on issues and swaps their labels.
-    "dry-run-hands-issues-back": (CYCLE, DISPATCH_SUITE,
+    "dry-run-hands-issues-back": (DRAIN, DISPATCH_SUITE,
         'if reason == "missing-section" and not dry_run:',
         'if reason == "missing-section":',
     ),
     # A dry run starts a Run. The one mode an operator uses to see what WOULD
     # happen spends a Run finding out.
-    "dry-run-dispatches": (CYCLE, DISPATCH_SUITE,
+    "dry-run-dispatches": (DRAIN, DISPATCH_SUITE,
         "if pick and not dry_run:", "if pick:",
     ),
     # The in-flight lock stops being written under the name every cycle reads,
@@ -277,7 +279,7 @@ MUTATIONS = {
     # dispatches underneath the first.
     # Spend reads outcomes where it should read dispatches, so the ninety
     # minutes between the two rows - the in-flight lock itself - goes unread.
-    "in-flight-lock-not-taken": (CYCLE, DISPATCH_SUITE,
+    "in-flight-lock-not-taken": (DRAIN, DISPATCH_SUITE,
         "(IN_FLIGHT_STALE_HOURS, events.RUN_DISPATCHED),",
         "(IN_FLIGHT_STALE_HOURS, events.RUN_OUTCOME),",
     ),
@@ -286,7 +288,7 @@ MUTATIONS = {
     # Pre-existing stale anchor, repointed 2026-08-27: the call gained
     # `+ SIGNATURE` and this was never updated, so it had stopped mutating
     # anything and the comment's contents were unverified.
-    "return-comment-says-nothing": (CYCLE, DISPATCH_SUITE,
+    "return-comment-says-nothing": (DOING, DISPATCH_SUITE,
         "            _missing_section_comment(config, detail) + SIGNATURE,",
         '            "" + SIGNATURE,',
     ),
@@ -297,7 +299,7 @@ MUTATIONS = {
     ),
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
-    "every-dispatch-is-the-first": (CYCLE, DISPATCH_SUITE,
+    "every-dispatch-is-the-first": (DRAIN, DISPATCH_SUITE,
         '                attempt = cycle_spend.attempts(\n'
         '                    pick["number"], picked_record.get("labeledAt"),\n'
         '                    repo=config.task_repo,\n'
@@ -383,24 +385,24 @@ MUTATIONS = {
     ),
     # The retry budget is never spent on failures, so a Run that fails every
     # time is retried forever and the operator is never told.
-    "failure-retried-forever": (CYCLE, OUTCOMES_SUITE,
+    "failure-retried-forever": (DOING, OUTCOMES_SUITE,
         "if failure and attempt < MAX_ATTEMPTS:",
         "if failure:",
     ),
     # The first failure gives up immediately, so story 14's self-healing
     # retry never happens and every transient failure reaches the operator.
-    "first-failure-never-retried": (CYCLE, OUTCOMES_SUITE,
+    "first-failure-never-retried": (DOING, OUTCOMES_SUITE,
         "if failure and attempt < MAX_ATTEMPTS:",
         "if False:",
     ),
     # Checks are never consulted: every clean Run goes to review, red or not.
-    "checks-ignored": (CYCLE, OUTCOMES_SUITE,
+    "checks-ignored": (DOING, OUTCOMES_SUITE,
         '    if state == "green":',
         "    if True:",
     ),
     # CI that has not finished is treated as CI that passed, so unverified
     # work is put in the review queue - the failure the wait bound exists for.
-    "pending-treated-as-decided": (CYCLE, OUTCOMES_SUITE,
+    "pending-treated-as-decided": (DOING, OUTCOMES_SUITE,
         '    if state == "pending":',
         "    if False:",
     ),
@@ -413,7 +415,7 @@ MUTATIONS = {
     # A Proposal that no check ran against is called green, so unverified
     # work reaches the review queue - the false pass a permission error once
     # produced, arrived at by a different road.
-    "no-checks-treated-as-green": (CYCLE, OUTCOMES_SUITE,
+    "no-checks-treated-as-green": (DOING, OUTCOMES_SUITE,
         '    if state == "green":',
         '    if state in ("green", "none"):',
     ),
@@ -422,20 +424,20 @@ MUTATIONS = {
     # The route's one value used to be split into a journaled label and an
     # applied one; the constructors closed that seam, so the divergence left
     # to guard is the relabel itself applying something other than the route.
-    "journaled-label-is-not-the-applied-one": (CYCLE, OUTCOMES_SUITE,
+    "journaled-label-is-not-the-applied-one": (DOING, OUTCOMES_SUITE,
         "            add=route.label, remove=config.label,",
         "            add=config.review_label, remove=config.label,",
     ),
     # Bookkeeping the tracker refused is swallowed, so a Run whose result
     # never reached the issue looks like a cycle that worked (story 31).
-    "route-failure-not-paged": (CYCLE, OUTCOMES_SUITE,
+    "route-failure-not-paged": (DOING, OUTCOMES_SUITE,
         "journal.append(conn, *failed(str(exc)))\n        raise CycleFailed(str(exc)) from exc",
         "journal.append(conn, *failed(str(exc)))\n        return route.name",
     ),
     # The comment is posted after the swap rather than before, so a swap that
     # landed and a comment that failed leaves the issue out of every queue
     # with nothing on it saying why.
-    "handover-relabels-before-commenting": (CYCLE, OUTCOMES_SUITE,
+    "handover-relabels-before-commenting": (DOING, OUTCOMES_SUITE,
         "        if body is not None:\n            dispatch.comment(\n                dispatch_config, config.task_repo, number, body + SIGNATURE\n            )\n        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=route.label, remove=config.label,\n        )",
         "        dispatch.relabel(\n            dispatch_config, config.task_repo, number,\n            add=route.label, remove=config.label,\n        )\n        if body is not None:\n            dispatch.comment(\n                dispatch_config, config.task_repo, number, body + SIGNATURE\n            )",
     ),
@@ -452,14 +454,14 @@ MUTATIONS = {
     # A dry run reaches the box. The property that a dry run touches the
     # tracker and nothing else is what makes it safe to run against
     # production from a keyboard.
-    "a-dry-run-reaches-the-box": (CYCLE, UNATTENDED_SUITE,
+    "a-dry-run-reaches-the-box": (DRAIN, UNATTENDED_SUITE,
         "            if not dry_run:\n                facts, box_error = observe_box(config)",
         "            if True:\n                facts, box_error = observe_box(config)",
     ),
     # The owning area stops falling back to the issue title, so every issue
     # without the section - which is most of them, and is why the requirement
     # was dropped - reaches Seeding with an empty `--area` and is refused.
-    "area-is-not-defaulted": (CYCLE, CYCLE_SUITE,
+    "area-is-not-defaulted": (DRAIN, CYCLE_SUITE,
         '    return named or str(record.get("title") or "").strip()'
         ' or f"issue #{record[\'number\']}"',
         "    return named",
@@ -473,7 +475,7 @@ MUTATIONS = {
     # that watches a caller - because the two cells fail differently: the box
     # card would show a box holding no Loop scripts, and the guardrail chip
     # would grade a silence instead of journaling it.
-    "an-unreadable-box-reads-as-an-empty-one": (CYCLE, UNATTENDED_SUITE,
+    "an-unreadable-box-reads-as-an-empty-one": (DOING, UNATTENDED_SUITE,
         "    if done.returncode != 0:", "    if False:",
     ),
     # --- The Iteration watcher (#157) ---------------------------------------
@@ -574,14 +576,14 @@ MUTATIONS = {
     ),
     # The page says dispatch is paused, but the next cycle ignores the flag
     # and starts a Run anyway.
-    "the-pause-flag-is-ignored": (CYCLE, UNATTENDED_SUITE,
+    "the-pause-flag-is-ignored": (DRAIN, UNATTENDED_SUITE,
         "        if control.is_paused(conn):\n"
         "            # The timer keeps running while paused.",
         "        if False:\n"
         "            # The timer keeps running while paused.",
     ),
     # A Cycle stops after one dispatch rather than draining the queue.
-    "cycle-stops-after-one-dispatch": (CYCLE, UNATTENDED_SUITE,
+    "cycle-stops-after-one-dispatch": (DRAIN, UNATTENDED_SUITE,
         "            dispatches.append(pick[\"number\"])",
         "            dispatches.append(pick[\"number\"])\n            break",
     ),
@@ -592,22 +594,22 @@ MUTATIONS = {
     ),
     # K of zero is accepted, so a misconfigured instance drains nothing and
     # looks like a quiet queue.
-    "zero-drain-concurrency-accepted": (CYCLE, CYCLE_SUITE,
+    "zero-drain-concurrency-accepted": (TARGETS, CYCLE_SUITE,
         "    if value < 1:",
         "    if False:",
     ),
     # Per-Target leftover no longer halts, so two Runs start on one Target.
-    "per-target-in-flight-ignored": (CYCLE, UNATTENDED_SUITE,
+    "per-target-in-flight-ignored": (DRAIN, UNATTENDED_SUITE,
         "        elif config.drain_concurrency > 1 and cycle_spend.in_flight_on(config.task_repo):",
         "        elif False:",
     ),
     # The slot cap is not taken, so K=2 with three Targets starts all three.
-    "drain-slots-not-acquired": (CYCLE, UNATTENDED_SUITE,
+    "drain-slots-not-acquired": (DRAIN, UNATTENDED_SUITE,
         "            if slots is not None:",
         "            if False:",
     ),
     # Pause is only honoured before the first dispatch, not between runs.
-    "pause-not-checked-between-runs": (CYCLE, UNATTENDED_SUITE,
+    "pause-not-checked-between-runs": (DRAIN, UNATTENDED_SUITE,
         "        if control.is_paused(conn):\n"
         "            # The timer keeps running while paused.",
         "        if control.is_paused(conn) and not dispatches:\n"
@@ -652,7 +654,7 @@ MUTATIONS = {
     # eligible, so a blocked chain and an underspecified issue are shown as
     # the next thing that will be worked.
     "the-board-invents-its-own-eligibility": (BOARD, BOARD_SUITE,
-        "        reason = cycle.eligibility(record, config, attempts, last_failed)",
+        "        reason = drain.eligibility(record, config, attempts, last_failed)",
         "        reason = None",
     ),
     # A blocked card names no blockers, which is the count again: "blocked by
@@ -672,8 +674,8 @@ MUTATIONS = {
     # outage renders as an empty queue - the same silence story 31 exists to
     # prevent, arrived at from the page rather than from the cycle.
     "a-tracker-failure-empties-the-board": (BOARD, BOARD_SUITE,
-        "    except cycle.CycleFailed as exc:\n        return [], str(exc)",
-        "    except cycle.CycleFailed:\n        return [], None",
+        "    except drain.CycleFailed as exc:\n        return [], str(exc)",
+        "    except drain.CycleFailed:\n        return [], None",
     ),
     # The Journal's half of Eligibility is dropped: an issue the Selector is
     # running right now shows as eligible, because a dispatch with no outcome
@@ -737,7 +739,7 @@ MUTATIONS = {
     ),
     # An unreadable tracker renders as a full budget, so the page promises
     # 20 Runs remaining on the strength of a queue it never read.
-    "an-unknown-budget-reads-as-full": (CYCLE, HISTORY_SUITE,
+    "an-unknown-budget-reads-as-full": (DRAIN, HISTORY_SUITE,
         "    remaining = None if count is None or cap is None else max(0, cap - count)",
         "    remaining = cap - (count or 0)",
     ),
@@ -790,19 +792,19 @@ MUTATIONS = {
     # A dry run reads the guardrail - a `gh` call and a walk of the deployed
     # tree, on the mode whose property is that it reaches the tracker and
     # nothing else.
-    "a-dry-run-reads-the-guardrail": (CYCLE, GUARDRAIL_SUITE,
+    "a-dry-run-reads-the-guardrail": (DRAIN, GUARDRAIL_SUITE,
         "    if not dry_run:\n        guardrail, guardrail_error = observe_guardrail(config)",
         "    if True:\n        guardrail, guardrail_error = observe_guardrail(config)",
     ),
     # Two declared trees are read in one cycle and the chip is green only when
     # both are: one green tree is not enough.
-    "one-green-tree-protects-the-whole-guardrail": (CYCLE, GUARDRAIL_SUITE,
+    "one-green-tree-protects-the-whole-guardrail": (DOING, GUARDRAIL_SUITE,
         '    all_protected = all(t["protected"] for t in tree_results)',
         '    all_protected = any(t["protected"] for t in tree_results)',
     ),
     # A tree the command did not answer for counts against the verdict; unknown
     # is never green.
-    "an-unreadable-tree-is-treated-as-protected": (CYCLE, GUARDRAIL_SUITE,
+    "an-unreadable-tree-is-treated-as-protected": (DOING, GUARDRAIL_SUITE,
         '                "protected": False,\n'
         '                "detail": f"{tree.repo}: could not be read ({err_msg})",',
         '                "protected": True,\n'
@@ -810,25 +812,25 @@ MUTATIONS = {
     ),
     # The second half of the pair above: the same break, checked by the suite
     # that watches the guardrail rather than the one that watches the box.
-    "an-unreadable-guardrail-reads-as-an-answer": (CYCLE, GUARDRAIL_SUITE,
+    "an-unreadable-guardrail-reads-as-an-answer": (DOING, GUARDRAIL_SUITE,
         "    if done.returncode != 0:", "    if False:",
     ),
     # A required rule can go missing and the chip stays green - the branch the
     # executed paths are deployed from stops needing a review and nothing on
     # the page says so.
-    "a-missing-rule-is-still-protected": (CYCLE, GUARDRAIL_SUITE,
+    "a-missing-rule-is-still-protected": (DOING, GUARDRAIL_SUITE,
         "        if missing:",
         "        if False:",
     ),
     # An executed path ahead of the protected ref is green: the deployed tree
     # holds code nobody reviewed and the chip asserts that it cannot.
-    "an-unreviewed-path-is-still-protected": (CYCLE, GUARDRAIL_SUITE,
+    "an-unreviewed-path-is-still-protected": (DOING, GUARDRAIL_SUITE,
         "    elif unreviewed:",
         "    elif False:",
     ),
     # A comparison that never ran reads as one that found nothing, which is
     # the difference between `UNREVIEWED=` and no line at all.
-    "an-unrun-comparison-reads-as-a-clean-one": (CYCLE, GUARDRAIL_SUITE,
+    "an-unrun-comparison-reads-as-a-clean-one": (DOING, GUARDRAIL_SUITE,
         "    if unreviewed is None:",
         "    if False:",
     ),
@@ -1051,7 +1053,7 @@ MUTATIONS = {
     ),
     # A shipping module spells a kind by hand again - behavior identical, and
     # only the sweep can notice, which is what the sweep is for.
-    "a-kind-spelled-outside-the-vocabulary": (CYCLE, EVENTS_SUITE,
+    "a-kind-spelled-outside-the-vocabulary": (DRAIN, EVENTS_SUITE,
         "            journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n            raise\n",
         '            journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n            raise\n',
     ),
@@ -1288,7 +1290,7 @@ MUTATIONS = {
         '[[ -f "${assert_script}" ]] || die "assert-credentials.sh not executable or not found at ${assert_script}"\n',
     ),
     # Freshness: open proposals behind their base are not updated during a drain.
-    "proposal-behind-not-updated": (CYCLE, UNATTENDED_SUITE,
+    "proposal-behind-not-updated": (DRAIN, UNATTENDED_SUITE,
         "        if not dry_run:\n"
         "            update_proposals_freshness(\n"
         "                conn,\n"
@@ -1302,12 +1304,12 @@ MUTATIONS = {
         "        pass\n",
     ),
     # Freshness: conflicting proposals are erroneously updated.
-    "conflicting-proposal-updated": (CYCLE, UNATTENDED_SUITE,
+    "conflicting-proposal-updated": (DOING, UNATTENDED_SUITE,
         "    if is_conflicting(proposal):\n        return False\n",
         "    if False:\n        return False\n",
     ),
     # Freshness: forge refusal of proposal update halts drain instead of journaling and continuing.
-    "refused-proposal-update-halts-drain": (CYCLE, UNATTENDED_SUITE,
+    "refused-proposal-update-halts-drain": (DOING, UNATTENDED_SUITE,
         "            except dispatch.DispatchFailed as exc:\n"
         "                journal.append(\n"
         "                    conn,\n"
@@ -1336,7 +1338,7 @@ MUTATIONS = {
     ),
     # Reconcile (#34): the drain never dispatches one, so conflicting
     # Proposals rot under their badge forever.
-    "reconcile-pass-skipped": (CYCLE, RECONCILE_SUITE,
+    "reconcile-pass-skipped": (DRAIN, RECONCILE_SUITE,
         "            reconcile_conflicting_proposals(\n"
         "                conn,\n"
         "                cycle_id,\n"
@@ -1351,13 +1353,13 @@ MUTATIONS = {
     ),
     # Reconcile (#34): a failed reconcile leaves the issue where it was,
     # so the next cycle dispatches another Run at the same conflicts.
-    "reconcile-failure-not-escalated": (CYCLE, RECONCILE_SUITE,
+    "reconcile-failure-not-escalated": (DOING, RECONCILE_SUITE,
         "            add=config.human_label,\n",
         "            add=config.label,\n",
     ),
     # Reconcile (#34): a paused Selector starts reconcile Runs anyway,
     # spending agent Runs the pause flag exists to suspend.
-    "paused-reconcile-starts-anyway": (CYCLE, RECONCILE_SUITE,
+    "paused-reconcile-starts-anyway": (DOING, RECONCILE_SUITE,
         "    if control.is_paused(conn):\n        return\n",
         "    pass\n",
     ),
@@ -1663,7 +1665,7 @@ MUTATIONS = {
         "    in_flight = None if spend is None else len(spend.in_flight)\n",
     ),
     # Same collapse, from Spend's own count rather than from the window.
-    "spend-count-collapses-two-targets": (CYCLE, HOST_SUITE,
+    "spend-count-collapses-two-targets": (DRAIN, HOST_SUITE,
         "        return len(self._in_flight_keys)\n",
         "        return len(self.in_flight)\n",
     ),
