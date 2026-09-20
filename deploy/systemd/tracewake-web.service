@@ -16,6 +16,12 @@ Environment=PATH={{ tracewake_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/b
 
 Restart=on-failure
 RestartSec=3
+{% if tracewake_web_reload | default(false) | bool %}
+# A live /loop/events stream holds the worker across --reload. systemd's
+# default stop timeout then leaves /healthz hung (issue #114).
+TimeoutStopSec=8
+KillMode=mixed
+{% endif %}
 # ProtectSystem and PrivateTmp stay. NoNewPrivileges does not: the window
 # toggles the cycle timer through `sudo -n systemctl` (see
 # /etc/sudoers.d/tracewake-timer), and that flag makes sudo refuse to run

@@ -30,6 +30,16 @@ resource "docker_volume" "web_venv" {
   name = "${var.name}-web-venv"
 }
 
+# Recreating the container must not drop the Journal or the instance files
+# the wizard writes on the Host (issue #114).
+resource "docker_volume" "journal" {
+  name = "${var.name}-journal"
+}
+
+resource "docker_volume" "instance" {
+  name = "${var.name}-instance"
+}
+
 resource "docker_container" "host" {
   name  = var.name
   image = docker_image.host.image_id
@@ -58,6 +68,18 @@ resource "docker_container" "host" {
     type   = "volume"
     source = docker_volume.web_venv.name
     target = "/srv/tracewake/web/.venv"
+  }
+
+  mounts {
+    type   = "volume"
+    source = docker_volume.journal.name
+    target = "/var/lib/postgresql"
+  }
+
+  mounts {
+    type   = "volume"
+    source = docker_volume.instance.name
+    target = "/etc/tracewake"
   }
 
   mounts {
