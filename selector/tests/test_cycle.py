@@ -235,72 +235,6 @@ def test_attempts_before_the_current_handover_are_not_the_only_ones_counted(
     assert skips(db)[645] == "attempts-exhausted"
 
 
-# --- Caps -------------------------------------------------------------------
-
-
-def test_an_issue_dispatched_again_after_an_outcome_is_in_flight(db, fakes, dispatch):
-    """In flight is counted per attempt. An issue with a finished Run and a
-    running retry has an outcome on record and is still in flight."""
-    dispatch(db, 640, outcome="agent-failed")
-    dispatch(db, 640, outcome=None)
-    fakes.run(db, [issue(645)])
-    assert finished(db)["halted"] == "run-in-flight"
-
-
-def test_a_run_in_flight_stops_the_pick(db, fakes, dispatch):
-    dispatch(db, 640, outcome=None)
-    fakes.run(db, [issue(645)])
-    assert picked(db) is None
-    summary = finished(db)
-    assert summary["halted"] == "run-in-flight"
-    assert summary["eligible"] == [645], "eligibility is still reasoned and journaled"
-
-
-def test_a_dispatch_with_no_outcome_stops_holding_the_lock_once_stale(
-    db, fakes, dispatch
-):
-    """A Run cannot outlive the 90-minute run clock, so a dispatch this old
-    with no outcome is a cycle that died before recording one. Without an
-    expiry that single death wedges every later cycle forever."""
-    dispatch(db, 640, outcome=None, hours_ago=9)
-    fakes.run(db, [issue(645)])
-    assert picked(db)["number"] == 645
-
-
-def test_a_recent_dispatch_with_no_outcome_still_holds_the_lock(db, fakes, dispatch):
-    dispatch(db, 640, outcome=None, hours_ago=1)
-    fakes.run(db, [issue(645)])
-    assert finished(db)["halted"] == "run-in-flight"
-
-
-def test_the_review_cap_stops_the_pick(db, fakes):
-    review_issues = [issue(600 + i) for i in range(20)]
-    fakes.run(db, [issue(645)], review_issues=review_issues)
-    assert picked(db) is None
-    fin = finished(db)
-    assert fin["halted"] == "review-cap-reached"
-    assert fin["awaiting_review"] == 20
-    assert fin["review_cap"] == 20
-
-
-def test_the_review_cap_is_configurable(db, fakes):
-    fakes.run(
-        db, [issue(645)], review_issues=[issue(640)],
-        targets=[{"review_cap": 1}],
-    )
-    assert picked(db) is None
-    fin = finished(db)
-    assert fin["halted"] == "review-cap-reached"
-    assert fin["awaiting_review"] == 1
-    assert fin["review_cap"] == 1
-
-
-def test_dispatch_resumes_when_awaiting_review_drops_below_cap(db, fakes):
-    review_issues = [issue(600 + i) for i in range(19)]
-    fakes.run(db, [issue(645)], review_issues=review_issues)
-    assert picked(db)["number"] == 645
-
-
 # --- The cycle as a whole ---------------------------------------------------
 
 
@@ -323,37 +257,6 @@ def test_every_event_of_one_cycle_shares_its_cycle_id(db, fakes):
     assert len(start) == 1
     cycle_id = start[0]["id"]
     assert {r["payload"].get("cycle") for r in rows[1:]} == {cycle_id}
-
-
-def test_an_empty_queue_still_journals_a_finished_cycle(db, fakes):
-    result = fakes.run(db, [])
-    assert result.returncode == 0
-    summary = finished(db)
-    assert summary["considered"] == 0
-    assert summary["picked"] is None
-    assert summary["halted"] == "queue-empty"
-
-
-def test_a_queue_with_nothing_eligible_journals_why(db, fakes):
-    fakes.run(db, [issue(646, blockedBy=1)])
-    summary = finished(db)
-    assert summary["halted"] == "none-eligible"
-    assert summary["skipped"] == {"blocked-by-open-dependency": 1}
-
-
-def test_an_archived_repository_is_not_operated_on(db, fakes):
-    """An archived Target is read-only. The Cycle must not pick, Loud Skip,
-    or otherwise treat its labeled issues as work, even if the tracker
-    payload still lists them."""
-    result = fakes.run(db, [issue(645), issue(646, blockedBy=1)], archived=True)
-    assert result.returncode == 0, result.stderr
-    assert picked(db) is None
-    assert skips(db) == {}
-    summary = finished(db)
-    assert summary["halted"] == "repository-archived"
-    assert summary["eligible"] == []
-    assert summary["considered"] == 0
-    assert summary["picked"] is None
 
 
 def test_a_dead_tracker_fails_the_cycle_loudly(db, fakes, tmp_path):

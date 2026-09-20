@@ -18,10 +18,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import psycopg
-
-import events as journal_events
-import journal
 from conftest import BOX_FACTS, CYCLE, events, issue, last, one
 
 
@@ -86,56 +82,6 @@ def test_the_lock_is_released_when_the_cycle_ends(db, box, tmp_path):
     box.run(db, [issue(645)], dry_run=True)
     assert events(db, "cycle.skipped") == []
     assert len(events(db, "cycle.started")) == 2
-
-
-# --- The review cap, across cycles -------------------------------------------
-
-
-def test_a_paused_cycle_dispatches_nothing_and_journals_why(db, box):
-    """The flag stops the next Run, but not the cycle's explanation of what
-    it found. The timer keeps running while paused, so the Journal must say
-    why an otherwise Eligible issue stayed put."""
-    with psycopg.connect(db, autocommit=True) as conn:
-        conn.execute("UPDATE selector.control SET paused = true")
-
-    result = box.run(db, [issue(645)])
-
-    assert result.returncode == 0, result.stderr
-    assert events(db, "run.dispatched") == []
-    assert "seed " not in box.commands()
-    assert "box " not in box.commands()
-    finished = last(db, "cycle.finished")
-    assert finished["halted"] == "paused"
-    assert finished["eligible"] == [645]
-
-
-def test_resuming_allows_the_next_cycle_to_dispatch_again(db, box):
-    with psycopg.connect(db, autocommit=True) as conn:
-        conn.execute("UPDATE selector.control SET paused = true")
-    box.run(db, [issue(645)])
-
-    with psycopg.connect(db, autocommit=True) as conn:
-        conn.execute("UPDATE selector.control SET paused = false")
-    result = box.run(db, [issue(645)])
-
-    assert result.returncode == 0, result.stderr
-    assert len(events(db, "run.dispatched")) == 1
-    assert "box loop/645-the-nightly-sync-script" in box.commands()
-
-
-def test_dispatch_is_refused_and_journaled_when_review_cap_is_reached(db, box):
-    """The review cap stops dispatch before the box is reached, and journals
-    the reason and the count read."""
-    review_issues = [issue(600 + i) for i in range(20)]
-    result = box.run(db, [issue(645)], review_issues=review_issues)
-    assert result.returncode == 0, result.stderr
-    assert len(events(db, "run.dispatched")) == 0, "a Run was started"
-    assert "box " not in box.commands()
-    finished = last(db, "cycle.finished")
-    assert finished["halted"] == "review-cap-reached"
-    assert finished["awaiting_review"] == 20
-    assert finished["review_cap"] == 20
-    assert finished["eligible"] == [645]
 
 
 # --- The box card's facts ---------------------------------------------------
@@ -490,38 +436,6 @@ def _run_kinds(dsn):
         for e in events(dsn)
         if e["kind"] in ("run.dispatched", "run.outcome")
     ]
-
-
-def test_a_leftover_in_flight_on_one_target_does_not_block_another(db, box):
-    """K>1: a leftover Run on widgets does not halt gadgets; widgets itself
-    still refuses a second Dispatch."""
-    gadgets_work = box.extra_work("work-gadgets")
-    with journal.connect(db) as conn:
-        journal.append(
-            conn,
-            *journal_events.run_dispatched(
-                cycle=None, issue=639, title=None, url=None,
-                task_ref="acme/widgets#639", attempt=1, branch=None,
-                area=None, check=None, kept_progress=None,
-            ),
-        )
-    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
-    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
-
-    result = box.run(
-        db, [],
-        targets=[{}, _gadget_target(gadgets_work)],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.2",
-    )
-    assert result.returncode == 0, result.stderr
-    assert sorted(
-        e["payload"]["issue"] for e in events(db, "run.dispatched")
-    ) == [639, 700]
-    assert any(
-        row["payload"]["halted"] == "run-in-flight"
-        for row in events(db, "cycle.finished")
-    )
 
 
 def test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2(db, box):

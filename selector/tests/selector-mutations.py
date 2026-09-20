@@ -27,6 +27,7 @@ DISPATCH = "dispatch.py"
 WATCHER = "watcher.py"
 BOARD = "board.py"
 CYCLE_SUITE = "tests/test_cycle.py"
+HALTS_SUITE = "tests/test_drain_halts.py"
 DISPATCH_SUITE = "tests/test_dispatch.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
@@ -178,18 +179,18 @@ MUTATIONS = {
     # In flight is counted per issue rather than per attempt, so a retry of an
     # issue that already has an outcome does not hold the lock and a second
     # Run is dispatched underneath it.
-    "in-flight-counted-per-issue": (DRAIN, CYCLE_SUITE,
+    "in-flight-counted-per-issue": (DRAIN, HALTS_SUITE,
         "key for key, n in started.items() if n > ended.get(key, 0)",
         "key for key, n in started.items() if key[1] not in {i for _, i in ended}",
     ),
     # Concurrency arrives by accident: a second Run is dispatched while one is
     # still in flight.
-    "in-flight-cap-ignored": (DRAIN, CYCLE_SUITE,
+    "in-flight-cap-ignored": (DRAIN, HALTS_SUITE,
         "elif config.drain_concurrency == 1 and cycle_spend.in_flight:",
         "elif False:",
     ),
     # The review cap stops bounding the review pile.
-    "review-cap-ignored": (DRAIN, CYCLE_SUITE,
+    "review-cap-ignored": (DRAIN, HALTS_SUITE,
         'elif budget["remaining"] == 0:',
         "elif False:",
     ),
@@ -225,7 +226,7 @@ MUTATIONS = {
     ),
     # The in-flight lock never expires, so one cycle killed between
     # dispatching and recording the outcome wedges every later cycle forever.
-    "in-flight-lock-never-expires": (DRAIN, CYCLE_SUITE,
+    "in-flight-lock-never-expires": (DRAIN, HALTS_SUITE,
         "IN_FLIGHT_STALE_HOURS = 8",
         "IN_FLIGHT_STALE_HOURS = 99999",
     ),
@@ -246,7 +247,7 @@ MUTATIONS = {
     ),
     # An archived Target is still picked, so the Selector tries to write a
     # repository GitHub has made read-only.
-    "archived-repo-still-picked": (DRAIN, CYCLE_SUITE,
+    "archived-repo-still-picked": (DRAIN, HALTS_SUITE,
         "            if tracked.archived:",
         "            if False:",
     ),
@@ -595,11 +596,33 @@ MUTATIONS = {
     ),
     # The page says dispatch is paused, but the next cycle ignores the flag
     # and starts a Run anyway.
-    "the-pause-flag-is-ignored": (DRAIN, UNATTENDED_SUITE,
-        "        if control.is_paused(conn):\n"
-        "            # The timer keeps running while paused.",
-        "        if False:\n"
-        "            # The timer keeps running while paused.",
+    "the-pause-flag-is-ignored": (DRAIN, HALTS_SUITE,
+        "            if control.is_paused(conn):\n"
+        "                # The timer keeps running while paused.",
+        "            if False:\n"
+        "                # The timer keeps running while paused.",
+    ),
+    # A paused Selector with an empty queue reports paused, not queue-empty.
+    # Swapping the two `if`s is the mutation the precedence test exists to catch.
+    "paused-vs-queue-empty": (DRAIN, HALTS_SUITE,
+        "            if control.is_paused(conn):\n"
+        "                # The timer keeps running while paused. It still reads the queue and\n"
+        "                # journals Eligibility so the page remains an explanation of what\n"
+        "                # would have happened; only the Dispatch is stopped.\n"
+        "                halted = \"paused\"\n"
+        "                break\n"
+        "            elif not queue:\n"
+        "                halted = \"queue-empty\"\n"
+        "                break",
+        "            if not queue:\n"
+        "                halted = \"queue-empty\"\n"
+        "                break\n"
+        "            elif control.is_paused(conn):\n"
+        "                # The timer keeps running while paused. It still reads the queue and\n"
+        "                # journals Eligibility so the page remains an explanation of what\n"
+        "                # would have happened; only the Dispatch is stopped.\n"
+        "                halted = \"paused\"\n"
+        "                break",
     ),
     # A Cycle stops after one dispatch rather than draining the queue.
     "cycle-stops-after-one-dispatch": (DRAIN, UNATTENDED_SUITE,
@@ -618,7 +641,7 @@ MUTATIONS = {
         "    if False:",
     ),
     # Per-Target leftover no longer halts, so two Runs start on one Target.
-    "per-target-in-flight-ignored": (DRAIN, UNATTENDED_SUITE,
+    "per-target-in-flight-ignored": (DRAIN, HALTS_SUITE,
         "        elif config.drain_concurrency > 1 and cycle_spend.in_flight_on(config.task_repo):",
         "        elif False:",
     ),
