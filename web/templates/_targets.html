@@ -5,9 +5,9 @@
     may enroll or unenroll here: success reloads the page so the board
     matches; a failure swaps this fragment so the list can say why. -#}
 {#- Closed on a first visit so the queue is the page; open when the
-    add form has something to say. loop-ui.js still honours a stored
-    choice after paint. -#}
-<details class="fold targets" data-fold="targets"{% if target_error %} open data-fold-force="open"{% endif %}>
+    add form has something to say, or when the visitor last left it
+    open (#123). -#}
+<details class="fold targets" data-fold="targets"{% if folds.targets or target_error %} open{% endif %}>
   <summary><h2>Targets</h2></summary>
   <p>The repositories this instance reads issues from. A Cycle works
      them in this order.</p>

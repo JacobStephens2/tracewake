@@ -311,7 +311,7 @@ form.sign-out button {
    an overview with the long sections shut. The default marker is replaced
    with one the terminal identity would draw, and the heading stays a heading
    - the <summary> wraps it rather than replacing it. State is kept per
-   section in localStorage by loop-ui.js, because the live region is
+   section in a cookie loop-ui.js writes, because the live region is
    re-rendered whole on every Journal row (#159) and a fold that reopened on
    each swap would not be a fold. */
 details.fold > summary {

@@ -18,9 +18,7 @@
        are on the <a href="{{ history_url }}">history</a>, which needs no
        tracker to render.</p>
     {#- Wrapper so a failed Remove or Add swaps the list without replacing
-        the fold element itself: loop-ui.js re-applies stored open/shut on
-        the swap target's descendants, and would miss a details that was
-        the target. -#}
+        the fold element itself. -#}
     <div id="targets">
 {% include "_targets.html" %}
     </div>

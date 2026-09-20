@@ -98,6 +98,39 @@ def _path(request: Request, route: str) -> str:
     return request.scope.get("root_path", "").rstrip("/") + route
 
 
+# Headed sections on `/`. True is the markup default (`open` on the
+# details). Cycles starts shut as the deep history; Targets starts shut
+# so the queue is the page (#122).
+FOLD_DEFAULTS = {
+    "targets": False,
+    "strip": True,
+    "host": True,
+    "microvms": True,
+    "queue": True,
+    "runs": True,
+    "cycles": False,
+    "events": True,
+}
+FOLD_COOKIE = "fold"
+
+
+def _folds(request: Request) -> dict[str, bool]:
+    """The visitor's last open/shut per headed section (#123).
+
+    A JS-writable cookie, not localStorage: the server never sees
+    localStorage, so a reload and an hx-get would both come back with
+    the markup defaults. Unknown keys and values are ignored so a
+    hand-edited cookie cannot invent a section or inject markup.
+    """
+    chosen = dict(FOLD_DEFAULTS)
+    raw = request.cookies.get(FOLD_COOKIE) or ""
+    for part in raw.split("|"):
+        key, sep, value = part.partition(":")
+        if sep and key in FOLD_DEFAULTS and value in ("open", "closed"):
+            chosen[key] = value == "open"
+    return chosen
+
+
 def _page(request: Request, name: str, context: dict, **kwargs):
     """Render a page with whatever every page needs.
 
@@ -1238,6 +1271,7 @@ def _loop_context(request: Request) -> dict:
         "timer_error": None,
         "target_error": None,
         **_target_form(configs),
+        "folds": _folds(request),
     }
 
 
