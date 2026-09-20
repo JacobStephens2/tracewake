@@ -268,7 +268,8 @@ class Config:
                 "SELECTOR_TRACKER_COMMAND", str(HERE / "tracker-sources" / "github.sh")
             ),
             box_facts_command=env(
-                "SELECTOR_BOX_FACTS_COMMAND", str(HERE / "box-sources" / "facts.sh")
+                "SELECTOR_BOX_FACTS_COMMAND",
+                str(HERE / "box-sources" / "facts-local.sh"),
             ),
             # Short on purpose. This is a status read, and a status read that
             # can hold a cycle open is worse than one that goes missing: the

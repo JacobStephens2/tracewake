@@ -16,11 +16,12 @@
 #   3. Re-applies selector/schema.sql, which is idempotent by contract
 #      (see its header) and is what deploy/ansible's tracewake_controller
 #      role already runs on every apply.
-#   4. Writes the window's timer sudoers drop-in (visudo-validated) and
-#      clears NoNewPrivileges on the installed window unit, so Start/Stop
-#      can sudo. Ansible does this on provision; CD does it too because a
-#      Host stood up before the rule existed would otherwise keep a dead
-#      toggle after every merge.
+#   4. Writes the window's timer sudoers drop-in and the conductor-loop
+#      sudoers drop-in (both visudo-validated) and clears NoNewPrivileges
+#      on the installed window unit. Ansible does this on provision; CD
+#      does it too because a Host stood up before the rules existed would
+#      otherwise keep a dead Start/Stop toggle, or a box card that SSHes
+#      to hostname `local`, after every merge.
 #   5. Reloads systemd and restarts the long-lived units (the window and
 #      the notifier). The cycle unit is a oneshot behind a timer, so the
 #      next trigger picks the new tree up on its own.
@@ -82,6 +83,27 @@ EOF
 visudo -cf "$TIMER_SUDOERS_TMP" || { rm -f "$TIMER_SUDOERS_TMP"; exit 1; }
 install -m 0440 -o root -g root "$TIMER_SUDOERS_TMP" "$TIMER_SUDOERS"
 rm -f "$TIMER_SUDOERS_TMP"
+
+# Dispatch and the local box reads become the Run account. Ansible writes
+# /etc/sudoers.d/conductor-loop on provision; CD keeps the two status-read
+# commands there too, because a Host that only had local.sh would keep
+# `ssh: Could not resolve hostname local` on the box card after every merge.
+LOOP_SUDOERS=/etc/sudoers.d/conductor-loop
+LOOP_SUDOERS_TMP=$(mktemp)
+cat > "$LOOP_SUDOERS_TMP" <<EOF
+# Single-Host: the Cycle runs as the instance user; a Run and the local
+# box reads execute as loop. Only these three commands, only as loop:loop,
+# no SETENV.
+Defaults:$TRACEWAKE_USER env_keep += "LOOP_*"
+Defaults:$TRACEWAKE_USER env_keep += "SELECTOR_*"
+Defaults:$TRACEWAKE_USER env_keep += "TRACEWAKE_*"
+$TRACEWAKE_USER ALL=(loop:loop) NOPASSWD: $TRACEWAKE_DIR/selector/box-sources/local.sh *
+$TRACEWAKE_USER ALL=(loop:loop) NOPASSWD: $TRACEWAKE_DIR/selector/box-sources/facts-local.sh
+$TRACEWAKE_USER ALL=(loop:loop) NOPASSWD: $TRACEWAKE_DIR/selector/box-sources/progress-local.sh *
+EOF
+visudo -cf "$LOOP_SUDOERS_TMP" || { rm -f "$LOOP_SUDOERS_TMP"; exit 1; }
+install -m 0440 -o root -g root "$LOOP_SUDOERS_TMP" "$LOOP_SUDOERS"
+rm -f "$LOOP_SUDOERS_TMP"
 
 # The shipped window unit no longer sets NoNewPrivileges (sudo cannot
 # become root through that flag). Hosts that already have the old unit

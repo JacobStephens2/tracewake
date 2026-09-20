@@ -4,7 +4,7 @@
 #
 #   progress-local.sh <branch>
 #
-# The Single-Host SELECTOR_BOX_PROGRESS_COMMAND (ADR 0019). Sibling to
+# The product-default SELECTOR_BOX_PROGRESS_COMMAND (ADR 0029). Sibling to
 # box-sources/progress.sh for the instance whose box is the controller
 # itself (ADR 0004): the same contract - print the box checkout's Progress
 # Log on stdout, exit non-zero when it could not be read - with no SSH hop,
