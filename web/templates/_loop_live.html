@@ -182,19 +182,20 @@
 {% include "_host.html" %}
     {#- The queue board (#158). Every other panel here is the Journal
         replayed; this one is the tracker as it is right now, columned by the
-        same Eligibility predicate the Selector picks with. The columns are
-        the tracker's own labels, so what the board says and what the operator
-        sees on his issue list are the same thing.
+        same Eligibility predicate the Selector picks with, for every Target.
+        Each card names its repository. The columns are the tracker's own
+        labels, so what the board says and what the operator sees on his
+        issue list are the same thing.
 
         The whole section folds at its heading, so the page can be skimmed
         with it shut. Open by default; loop-ui.js re-applies the stored choice
         here after every live swap, since this fragment is what gets swapped. -#}
     <details class="fold" data-fold="queue" open>
     <summary><h2>The queue</h2></summary>
-    <p>The whole labeled queue, read from the tracker when this page was
+    <p>The whole labeled queue, read from every Target when this page was
        requested and columned by the Selector's Eligibility. Not the Journal:
        these are the issues as they stand now, not as the last cycle found
-       them.</p>
+       them. Each card names the repository it was read from.</p>
     {% if board.blind %}
     <p class="detail">The Journal could not be read, so the retry budget and
        the in-flight lock are unknown here: an issue that has spent its
@@ -219,6 +220,9 @@
           <a href="{{ card.url }}">#{{ card.number }}</a> {{ card.title }}
           {% if card.conflicting %}
           <span class="badge badge-conflicting">conflicting</span>
+          {% endif %}
+          {% if card.repo %}
+          <p class="detail">repo <code>{{ card.repo }}</code></p>
           {% endif %}
           {% if card.reason %}
           <p class="detail"><code>{{ card.reason }}</code> &middot; {{ card.detail }}</p>
