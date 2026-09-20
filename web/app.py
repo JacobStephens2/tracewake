@@ -103,6 +103,7 @@ def _path(request: Request, route: str) -> str:
 # so the queue is the page (#122).
 FOLD_DEFAULTS = {
     "targets": False,
+    "strip": True,
     "host": True,
     "microvms": True,
     "queue": True,

@@ -52,6 +52,7 @@ def test_each_headed_section_on_home_folds_like_the_queue(db, dispatch):
 
     expected = {
         "targets": "Targets",
+        "strip": "The status strip",
         "host": "The host",
         "microvms": "MicroVMs",
         "queue": "The queue",
@@ -92,9 +93,12 @@ def test_a_stored_fold_choice_is_the_markup_on_the_next_load(db, dispatch):
     dispatch(db, 646, outcome="complete")
 
     browser = TestClient(app)
-    browser.cookies.set(FOLD_COOKIE, "targets:open|queue:closed|cycles:open")
+    browser.cookies.set(
+        FOLD_COOKIE, "targets:open|strip:closed|queue:closed|cycles:open"
+    )
     home = fold_open(browser.get("/").text)
     assert home["targets"] is True
+    assert home["strip"] is False
     assert home["queue"] is False
     assert home["cycles"] is True
     # Unmentioned sections keep the markup default.
@@ -105,6 +109,7 @@ def test_a_stored_fold_choice_is_the_markup_on_the_next_load(db, dispatch):
 
     live = fold_open(browser.get("/loop/live").text)
     assert "targets" not in live
+    assert live["strip"] is False
     assert live["queue"] is False
     assert live["cycles"] is True
 

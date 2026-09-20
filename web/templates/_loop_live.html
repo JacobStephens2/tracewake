@@ -50,7 +50,11 @@
     {#- The status strip (#156). Unattended operation is a claim, and these four
         cells are where it is proved: what the Selector is doing, when the timer
         fires next, what is left of today's budget, and what the box it
-        dispatches to is holding. Nothing here is computed in the template. -#}
+        dispatches to is holding. Nothing here is computed in the template.
+        Same fold as the queue: open by default, stored choice on the cookie
+        this fragment reads. -#}
+    <details class="fold" data-fold="strip"{% if folds.strip %} open{% endif %}>
+    <summary><h2>The status strip</h2></summary>
     <section class="strip">
       <div class="cell">
         <span class="cell-label">selector</span>
@@ -176,6 +180,7 @@
         {% endif %}
       </div>
     </section>
+    </details>
     {#- Host telemetry (#42). Beside the queue, riding this live region so
         the figures refresh when a Journal row does - the same machinery,
         not a second timer. -#}
