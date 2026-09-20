@@ -7,7 +7,6 @@ gone: the Cycle decides here.
 from dataclasses import replace
 
 import control
-import drain
 import events as journal_events
 import journal
 import testdb
@@ -15,28 +14,13 @@ from conftest import (
     CannedTracker,
     RecordingDoing,
     TARGET_REPO,
+    _cycle_kinds,
+    _run,
     a_config,
-    a_dispatch_config,
     a_target,
     events,
     issue,
 )
-
-
-def _run(dsn, tracker, doing, *, config=None, dry_run=False):
-    with journal.connect(dsn) as conn:
-        return drain.run_cycle(
-            conn,
-            config or a_config(),
-            a_dispatch_config(),
-            tracker=tracker,
-            doing=doing,
-            dry_run=dry_run,
-        )
-
-
-def _cycle_kinds(dsn):
-    return [e["kind"] for e in events(dsn) if e["kind"].startswith("cycle.")]
 
 
 def _ops(doing):

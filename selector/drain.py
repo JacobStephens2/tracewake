@@ -1,6 +1,7 @@
-"""The Cycle: Eligibility, Spend, the review budget, and draining the queue.
+"""The Cycle: Eligibility, Spend, the review budget, and `run_cycle`.
 
-A Cycle drains the queue (ADR 0021). This module is the deciding half: which
+This file is the Cycle. It is named drain.py because cycle.py is the systemd
+entry point. A Cycle drains the queue (ADR 0021). This module decides: which
 issues are Eligible, what has already been spent, how much review capacity
 remains, and the loop that applies those. The doing lives in doing.py; the
 process that starts a Cycle lives in cycle.py.
@@ -136,7 +137,7 @@ def _area(record: dict, body_sections: dict[str, str]) -> str:
     return named or str(record.get("title") or "").strip() or f"issue #{record['number']}"
 
 
-def _check_command(text: str) -> str:
+def check_command(text: str) -> str:
     """The `Check` section's command: a fenced block if it has one, else the
     first line. Both spellings appear in the tracker."""
     fenced = re.search(r"^ {0,3}(?:`{3,}|~{3,}).*?\n(.*?)^ {0,3}(?:`{3,}|~{3,})",
@@ -749,7 +750,7 @@ def run_cycle(
                     "title": picked_record.get("title"),
                     "url": picked_record.get("url"),
                     "area": _area(picked_record, body_sections),
-                    "check": _check_command(check) or None,
+                    "check": check_command(check) or None,
                 }
                 journal.append(conn, *events.cycle_picked(**pick))
                 if first_pick is None:

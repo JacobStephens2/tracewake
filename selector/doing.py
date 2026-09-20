@@ -25,7 +25,7 @@ import events  # noqa: E402
 import journal  # noqa: E402
 import targets  # noqa: E402
 import watcher  # noqa: E402
-from drain import CycleFailed, spend, sections, _check_command  # noqa: E402
+from drain import CycleFailed, spend, sections, check_command  # noqa: E402
 from events import (  # noqa: E402
     MAX_ATTEMPTS,
     NO_PROPOSAL,
@@ -362,7 +362,7 @@ def reconcile_conflicting_proposals(
             ):
                 continue
         body_sections = sections(issue_record.get("body") or "")
-        check = _check_command(body_sections.get("check", "")) or None
+        check = check_command(body_sections.get("check", "")) or None
         # The queue the owning issue came from is the label the escalation
         # removes: a Handover issue goes from `ready`, a review issue from
         # the review label, and either way it lands on `ready-for-human`.

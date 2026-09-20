@@ -13,7 +13,7 @@ What makes it a board rather than a second opinion is that the columning is
 `drain.eligibility` - imported, not reimplemented. A page that decided for
 itself which issues were Eligible would be a second Selector, and the first
 disagreement between them would be a bug in whichever one you did not read
-(ADR 0015: the page is a window and a scribe).
+(ADR 0015: the page is a Dashboard and a scribe).
 
 Everything it reaches is the same substitutable tracker command the cycle
 reads (`SELECTOR_TRACKER_COMMAND`), asked once per label per Target. Each
@@ -127,7 +127,7 @@ def _column(key: str, name: str, label: str | None, note: str, cards: list,
 # The five columns, named once. `unconfigured` renders the same board with an
 # error in every column, so an instance with no targets file gets the page it
 # always gets and one sentence saying what is missing - rather than a 500,
-# which is what an unconfigured window used to be.
+# which is what an unconfigured Dashboard used to be.
 _COLUMN_KEYS = (
     "eligible", "blocked", "in-flight", "awaiting-review", "ready-for-human",
 )

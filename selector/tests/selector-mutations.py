@@ -11,10 +11,12 @@ Kept beside the suite so that adding a guard means adding its mutation, and a
 guard nobody mutated is visible as an absence. Same shape as the Loop's
 mutation files (loop/tests/*-mutations.py).
 
-Each entry names the file it breaks and the suite that must notice, because
-the Selector is now two modules with two suites: a mutation checked against
-the wrong suite would be reported as caught by tests that never exercised
-it.
+Each entry names the file it breaks and the suite that must notice. The
+Selector is several modules with several suites: cycle.py is the systemd
+entry point (`test_cycle.py`); drain.py is the Cycle (`test_drain_*.py`);
+doing.py acts; and the Dashboard, tracker, box, and journal each have their
+own. A mutation checked against the wrong suite would be reported as caught
+by tests that never exercised it.
 """
 import pathlib
 import sys
@@ -223,7 +225,7 @@ MUTATIONS = {
     ),
     # Skips stop being journaled under the name the window reads, so "why not
     # #646 yesterday?" has no recorded answer.
-    "skips-not-journaled": (EVENTS, CYCLE_SUITE,
+    "skips-not-journaled": (EVENTS, ELIGIBILITY_SUITE,
         'ISSUE_SKIPPED = "issue.skipped"', 'ISSUE_SKIPPED = "issue.considered"',
     ),
     # The in-flight lock never expires, so one cycle killed between
@@ -686,7 +688,7 @@ MUTATIONS = {
         "                    \"title\": picked_record.get(\"title\"),\n"
         "                    \"url\": picked_record.get(\"url\"),\n"
         "                    \"area\": _area(picked_record, body_sections),\n"
-        "                    \"check\": _check_command(check) or None,\n"
+        "                    \"check\": check_command(check) or None,\n"
         "                }\n"
         "                journal.append(conn, *events.cycle_picked(**pick))",
         "                picked_record = eligible[0]\n"
@@ -698,7 +700,7 @@ MUTATIONS = {
         "                    \"title\": picked_record.get(\"title\"),\n"
         "                    \"url\": picked_record.get(\"url\"),\n"
         "                    \"area\": _area(picked_record, body_sections),\n"
-        "                    \"check\": _check_command(check) or None,\n"
+        "                    \"check\": check_command(check) or None,\n"
         "                }\n"
         "                journal.append(conn, *events.cycle_picked(**pick))\n"
         "                if slots is not None:\n"

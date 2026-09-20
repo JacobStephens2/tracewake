@@ -391,13 +391,6 @@ def test_a_third_dispatch_is_refused_even_if_the_give_up_swap_failed(
     assert "box " not in box.commands()
 
 
-def test_the_exhausted_issue_is_skipped_with_its_reason(db, box, dispatch):
-    dispatch(db, 645, outcome="agent-failed")
-    dispatch(db, 645, outcome="agent-failed")
-    box.run(db, [issue(645)])
-    assert one(db, "issue.skipped")["reason"] == "attempts-exhausted"
-
-
 # --- A Run that proposed nothing ---------------------------------------------
 
 

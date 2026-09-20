@@ -25,9 +25,8 @@ The two modes share every line of the deciding, so a dry-run is the cycle that
 would have happened and not a separate approximation of one.
 
 Everything the cycle reaches is a substitutable command (the Loop's *_COMMAND
-convention, ADR 0004), which is also the seam the offline suite drives:
-tests script canned queue states through SELECTOR_TRACKER_COMMAND and read the
-Journal back.
+convention, ADR 0004). Entry-point tests fork this process; Cycle decisions
+are tested in-process via tracker and doing adapters.
 
 Usage:
 

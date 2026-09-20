@@ -9,27 +9,11 @@ from conftest import (
     BODY,
     CannedTracker,
     RecordingDoing,
-    a_config,
-    a_dispatch_config,
+    _run,
     events,
     hours_ago_iso,
     issue,
 )
-
-import drain
-import journal
-
-
-def _run(dsn, tracker, doing_adapter, *, dry_run=False):
-    with journal.connect(dsn) as conn:
-        return drain.run_cycle(
-            conn,
-            a_config(),
-            a_dispatch_config(),
-            tracker=tracker,
-            doing=doing_adapter,
-            dry_run=dry_run,
-        )
 
 
 def skips(dsn):

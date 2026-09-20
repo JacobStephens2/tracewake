@@ -3,7 +3,8 @@
 The runner edits files in place. These tests drive it for real: a name that
 is not in the table must not touch those files, and a named entry must
 restore them. The full table is hours; two notices-suite entries are the
-stand-in.
+stand-in. With no `--only`, the selected set is `selector-mutations.py
+--list` - proven on a two-entry table, not by walking all 223.
 """
 from __future__ import annotations
 
@@ -107,6 +108,89 @@ def test_two_names_run_two_and_not_the_rest():
     assert "REACHED" not in done.stderr
     assert "highest-picked-first" not in done.stdout
     assert "leak-not-tracked" not in done.stdout
+
+
+def listed_names() -> list[str]:
+    listed = subprocess.check_output(
+        [sys.executable, str(MUTATIONS), "--list"], text=True,
+    )
+    return [line.split("\t")[0] for line in listed.splitlines() if line]
+
+
+# Two real notices entries, enough to run the no --only path without the
+# 223-entry table. main() is the production one: --list prints name, file,
+# suite; applying a name rewrites the file.
+_TINY_TABLE = """\
+import pathlib
+import sys
+
+NOTICES = "notices.py"
+NOTICES_SUITE = "tests/test_notices.py"
+
+MUTATIONS = {
+    "a-failed-run-is-mailed-as-green": (NOTICES, NOTICES_SUITE,
+        "if is_failure(ended_by, proposal):",
+        "if False:",
+    ),
+    "stale-rows-are-mailed": (NOTICES, NOTICES_SUITE,
+        "    return at is not None and _hours_between(at, now) > config.max_age_hours",
+        "    return False",
+    ),
+}
+
+
+def main(argv):
+    if len(argv) == 2 and argv[1] == "--list":
+        for name, (target, suite, _, _) in MUTATIONS.items():
+            print(f"{name}\\t{target}\\t{suite}")
+        return 0
+    if len(argv) != 3:
+        print("usage: selector-mutations.py (--list | <name> <file>)", file=sys.stderr)
+        return 2
+    name, target = argv[1], pathlib.Path(argv[2])
+    _, _, old, new = MUTATIONS[name]
+    text = target.read_text()
+    if text.count(old) != 1:
+        print(
+            f"selector-mutations.py: {name} matches {text.count(old)} times in "
+            f"{target.name}, expected exactly 1",
+            file=sys.stderr,
+        )
+        return 1
+    target.write_text(text.replace(old, new))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+"""
+
+
+def test_empty_only_uses_the_full_list():
+    """No `--only` is the table `--list` prints, not a skip. Unknown names
+    are still refused before a file is edited (see the tests above)."""
+    script = SCRIPT.read_text()
+    assert 'mapfile -t listed < <(python3 "${mutations}" --list)' in script
+    assert 'if ((${#only_names[@]} > 0)); then' in script
+    assert 'rows=("${listed[@]}")' in script
+    assert 'else\n    rows=("${listed[@]}")\nfi' in script
+
+
+def test_with_no_only_the_selected_set_equals_list():
+    original = MUTATIONS.read_bytes()
+    try:
+        MUTATIONS.write_text(_TINY_TABLE)
+        names = listed_names()
+        assert names == [CHEAP, CHEAP2]
+        done = run_check()
+        assert done.returncode == 0, done.stdout + done.stderr
+        for name in names:
+            assert name in done.stdout
+        assert f"All {len(names)} mutations caught." in done.stdout
+        assert "highest-picked-first" not in done.stdout
+    finally:
+        MUTATIONS.write_bytes(original)
+    assert listed_names()[0] == "highest-picked-first"
 
 
 def test_a_second_run_is_refused_while_the_lock_is_held():

@@ -17,24 +17,11 @@ import journal
 from conftest import (
     CannedTracker,
     RecordingDoing,
+    _run,
     a_config,
-    a_dispatch_config,
     events,
     issue,
 )
-
-
-def _run(dsn, tracker, doing, *, dry_run=False, slots=None, config=None):
-    with journal.connect(dsn) as conn:
-        return drain.run_cycle(
-            conn,
-            config or a_config(),
-            a_dispatch_config(),
-            tracker=tracker,
-            doing=doing,
-            dry_run=dry_run,
-            slots=slots,
-        )
 
 
 def _parallel_config():

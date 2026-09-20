@@ -851,3 +851,21 @@ class RecordingDoing(doing_mod.Doing):
             outcome={"ended_by": "iteration-cap", "issue": pick["number"]},
             route="awaiting-review",
         )
+
+
+def _run(dsn, tracker, doing, *, dry_run=False, slots=None, config=None):
+    """One in-process Cycle against a canned tracker and a doing adapter."""
+    with journal.connect(dsn) as conn:
+        return drain.run_cycle(
+            conn,
+            config or a_config(),
+            a_dispatch_config(),
+            tracker=tracker,
+            doing=doing,
+            dry_run=dry_run,
+            slots=slots,
+        )
+
+
+def _cycle_kinds(dsn):
+    return [e["kind"] for e in events(dsn) if e["kind"].startswith("cycle.")]

@@ -3,58 +3,22 @@
 No forked interpreter, no fake command on disk, no environment variables.
 The Cycle is handed a tracker and a doing; these tests assert on what it
 decided and what it journaled, not on private helpers.
+
+Pick ordering and queue-empty live in the specialized files. This file keeps
+the tracers those files do not: two-dispatch re-pick, a doing that fails,
+and a tracker that fails.
 """
 import pytest
 
 import drain
-import journal
 from conftest import (
     CannedTracker,
     RecordingDoing,
-    a_config,
-    a_dispatch_config,
+    _cycle_kinds,
+    _run,
     events,
     issue,
 )
-
-
-def _run(dsn, tracker, doing, *, dry_run=False):
-    with journal.connect(dsn) as conn:
-        return drain.run_cycle(
-            conn,
-            a_config(),
-            a_dispatch_config(),
-            tracker=tracker,
-            doing=doing,
-            dry_run=dry_run,
-        )
-
-
-def _cycle_kinds(dsn):
-    return [e["kind"] for e in events(dsn) if e["kind"].startswith("cycle.")]
-
-
-def test_lowest_eligible_issue_is_picked(db):
-    doing = RecordingDoing()
-    summary = _run(
-        db,
-        CannedTracker([issue(651), issue(645), issue(648)]),
-        doing,
-    )
-    assert summary.picked == 645
-    assert doing.picks[0] == 645
-    assert events(db, "cycle.picked")[0]["payload"]["number"] == 645
-    assert _cycle_kinds(db)[0] == "cycle.started"
-    assert "cycle.picked" in _cycle_kinds(db)
-    assert _cycle_kinds(db)[-1] == "cycle.finished"
-
-
-def test_an_empty_queue_halts_queue_empty(db):
-    summary = _run(db, CannedTracker([]), RecordingDoing())
-    assert summary.halted == "queue-empty"
-    assert summary.picked is None
-    assert summary.considered == 0
-    assert _cycle_kinds(db) == ["cycle.started", "cycle.finished"]
 
 
 def test_a_dispatched_issue_is_not_picked_again(db):
