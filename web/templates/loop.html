@@ -2,8 +2,8 @@
 
    Everything a Journal row can change lives in _loop_live.html, which this
    page renders inline and then re-fetches whole whenever a row lands (#159).
-   What is left here is the shell's own content: the heading, and the link to
-   the history. #}
+   What is left here is the shell's own content: the heading, the Targets
+   list, and the link to the history. #}
 {% extends "terminal_base.html" %}
 {% block title %}The Loop{% endblock %}
 {% block logo %}THE LOOP // SELECTOR JOURNAL{% endblock %}
@@ -17,5 +17,23 @@
        re-rendered the moment a row lands. The Runs that have already ended
        are on the <a href="{{ history_url }}">history</a>, which needs no
        tracker to render.</p>
+    {#- The instance's Targets. Not the queue: the board still columns the
+        first stanza, and a Cycle reads every stanza in this file's order.
+        Shown here rather than in the live region because it is
+        configuration, not a Journal replay. -#}
+    <aside class="targets">
+      <h2>Targets</h2>
+      <p>The repositories this instance reads issues from. A Cycle works
+         them in this order.</p>
+      {% if targets %}
+      <ul>
+        {% for repo in targets %}
+        <li><code>{{ repo }}</code></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="detail">{{ unconfigured }}</p>
+      {% endif %}
+    </aside>
 {% include "_loop_live.html" %}
 {% endblock %}
