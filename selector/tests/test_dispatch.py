@@ -429,18 +429,6 @@ def test_keeping_a_progress_log_is_journaled(db, box):
 # --- The loud skip ----------------------------------------------------------
 
 
-def test_a_missing_section_issue_is_commented_on_and_swapped_to_needs_info(db, box):
-    body = "## Owning area\n\nThe nightly sync script\n"
-    result = box.run(db, [issue(645, body=body)])
-    assert result.returncode == 0, result.stderr
-    log = box.commands()
-    assert "issue acme/widgets comment 645" in log
-    assert "issue acme/widgets relabel 645 needs-info ready-for-agent" in log
-    assert log.index("comment 645") < log.index("relabel 645"), (
-        "a swap with no comment takes the issue out of the queue silently"
-    )
-
-
 def test_the_comment_names_the_gap_and_the_way_back(db, box):
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)])
@@ -462,36 +450,11 @@ def test_the_return_is_journaled(db, box):
     assert one(db, "cycle.finished")["returned"] == [645]
 
 
-def test_a_return_the_tracker_refused_is_journaled_and_pages(db, box):
-    """Story 31, applied to the loud skip: an issue the Selector could not
-    hand back is still sitting in the queue with nothing on it saying why, and
-    a cycle that exited 0 for that would leave the operator with a silence
-    that looks exactly like an empty queue."""
-    body = "## Owning area\n\nThe nightly sync script\n"
-    result = box.run(db, [issue(645, body=body)], ISSUE_EXIT=1)
-
-    assert result.returncode == 1, result.stdout
-    failed = one(db, "issue.return-failed")
-    assert failed["number"] == 645
-    assert "error" in failed
-    assert events(db, "issue.returned") == []
-
-
 def test_a_returned_issue_does_not_stop_a_later_one_being_dispatched(db, box):
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body), issue(648)])
     assert one(db, "issue.returned")["number"] == 645
     assert one(db, "run.dispatched")["issue"] == 648
-
-
-def test_an_issue_is_returned_even_when_a_cap_halts_the_cycle(db, box, dispatch):
-    """Handing work back is not spending a Run. An issue the Selector will
-    never seed should not wait for a free budget to be told so."""
-    dispatch(db, 640, outcome=None)
-    body = "## Owning area\n\nThe nightly sync script\n"
-    box.run(db, [issue(645, body=body)])
-    assert one(db, "issue.returned")["number"] == 645
-    assert one(db, "cycle.finished")["halted"] == "run-in-flight"
 
 
 def test_a_dry_run_hands_nothing_back(db, box):
@@ -512,25 +475,6 @@ def test_a_dry_run_dispatches_nothing(db, box):
     assert "box " not in log
     assert box.remote_branches() == ["master"]
     assert not events(db, "run.dispatched")
-
-
-def test_a_return_github_refuses_is_journaled_and_pages(db, box):
-    """Story 31: the Selector's own failures reach the operator. An issue
-    still sitting in the queue with nothing on it saying why is exactly the
-    silence the loud skip exists to prevent."""
-    body = "## Owning area\n\nThe nightly sync script\n"
-    result = box.run(db, [issue(645, body=body)], ISSUE_EXIT=1)
-    assert result.returncode != 0
-    assert not events(db, "issue.returned")
-    assert one(db, "issue.return-failed")["number"] == 645
-
-
-def test_only_a_missing_section_is_shouted_at(db, box):
-    """Every other skip is quiet. A blocked issue commented on every half hour
-    is a queue nobody reads."""
-    box.run(db, [issue(646, blockedBy=1), issue(635, openSubIssues=2)])
-    assert "issue " not in box.commands()
-    assert not events(db, "issue.returned")
 
 
 # --- The Seeding command, unfaked -------------------------------------------

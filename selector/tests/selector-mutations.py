@@ -29,6 +29,7 @@ BOARD = "board.py"
 CYCLE_SUITE = "tests/test_cycle.py"
 HALTS_SUITE = "tests/test_drain_halts.py"
 DISPATCH_SUITE = "tests/test_dispatch.py"
+ELIGIBILITY_SUITE = "tests/test_drain_eligibility.py"
 OUTCOMES_SUITE = "tests/test_outcomes.py"
 UNATTENDED_SUITE = "tests/test_unattended.py"
 RECONCILE_SUITE = "tests/test_reconcile.py"
@@ -135,31 +136,31 @@ BOX_SOURCE_SUITE = "tests/test_box_source.py"
 MUTATIONS = {
     # Selection stops being lowest-first, so which issue gets worked depends
     # on tracker ordering rather than on a rule the operator can predict.
-    "highest-picked-first": (DRAIN, CYCLE_SUITE, "record = eligible[0]", "record = eligible[-1]"),
+    "highest-picked-first": (DRAIN, ELIGIBILITY_SUITE, "picked_record = eligible[0]", "picked_record = eligible[-1]"),
     # Anyone who can apply the label spends the operator's Runs - the whole of
     # ADR 0014's trust argument, deleted.
-    "labeler-not-checked": (DRAIN, CYCLE_SUITE,
+    "labeler-not-checked": (DRAIN, ELIGIBILITY_SUITE,
         'if record.get("labeledBy") not in config.allowlist:',
         "if False:",
     ),
     # A chain gets worked top-down: an issue with open blocking edges is
     # started before the work it depends on exists.
-    "blockers-ignored": (DRAIN, CYCLE_SUITE, "if blocked:", "if False:"),
+    "blockers-ignored": (DRAIN, ELIGIBILITY_SUITE, "if blocked:", "if False:"),
     # A parent spec is mistaken for a unit of work and seeded whole.
-    "sub-issues-ignored": (DRAIN, CYCLE_SUITE, "if sub_issues:", "if False:"),
+    "sub-issues-ignored": (DRAIN, ELIGIBILITY_SUITE, "if sub_issues:", "if False:"),
     # An issue already in flight is picked again, so the same work is started
     # twice on two branches.
-    "open-proposal-ignored": (DRAIN, CYCLE_SUITE,
+    "open-proposal-ignored": (DRAIN, ELIGIBILITY_SUITE,
         "if open_proposals and not last_failed:",
         "if False:"),
     # A leftover draft from a failed attempt is treated as in flight, so the
     # budgeted retry never dispatches while that draft stays open (#102).
-    "leftover-draft-blocks-retry": (DRAIN, OUTCOMES_SUITE,
+    "leftover-draft-blocks-retry": (DRAIN, ELIGIBILITY_SUITE,
         "if open_proposals and not last_failed:",
         "if open_proposals:"),
     # The Journal half of that exception never runs, so a leftover draft is
     # always in flight even when Eligibility would have allowed the retry.
-    "last-attempt-never-failed": (DRAIN, OUTCOMES_SUITE,
+    "last-attempt-never-failed": (DRAIN, ELIGIBILITY_SUITE,
         "return is_failure(last.ended_by, last.proposal)",
         "return False"),
     # A leftover failed-attempt draft is reconciled instead of retried, so a
@@ -169,10 +170,10 @@ MUTATIONS = {
         "        if False:"),
     # The retry budget never runs out, so a task that cannot be done is
     # re-dispatched forever instead of reaching the operator.
-    "retry-budget-unbounded": (EVENTS, CYCLE_SUITE, "MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 9999"),
+    "retry-budget-unbounded": (EVENTS, ELIGIBILITY_SUITE, "MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 9999"),
     # The budget stops being scoped to the current Handover, so re-labeling a
     # given-up issue - the operator saying "try that again" - does nothing.
-    "budget-ignores-the-handover": (DRAIN, CYCLE_SUITE,
+    "budget-ignores-the-handover": (DRAIN, ELIGIBILITY_SUITE,
         "and (after is None or d.at > after)",
         "and True",
     ),
@@ -198,18 +199,18 @@ MUTATIONS = {
     # says must be returned to the operator rather than guessed at.
     # Anchored with its indentation: `guardrail_verdict` has an `if missing:`
     # of its own, and an anchor that matches twice is one the harness refuses.
-    "sections-not-required": (DRAIN, CYCLE_SUITE,
+    "sections-not-required": (DRAIN, ELIGIBILITY_SUITE,
         "\n    if missing:", "\n    if False:",
     ),
     # A section heading with nothing under it satisfies the requirement, so an
     # empty `## Owning area` seeds a Run scoped to the empty string.
-    "empty-section-counts-as-present": (DRAIN, CYCLE_SUITE,
+    "empty-section-counts-as-present": (DRAIN, ELIGIBILITY_SUITE,
         'if not _first_line(present.get(name.lower(), ""))',
         "if name.lower() not in present",
     ),
     # Headings inside fenced blocks count, so an issue quoting another
     # issue's template passes the section check on the quote.
-    "fenced-headings-count": (DRAIN, CYCLE_SUITE,
+    "fenced-headings-count": (DRAIN, ELIGIBILITY_SUITE,
         "heading = None if fence else _HEADING.match(line)",
         "heading = _HEADING.match(line)",
     ),
@@ -260,7 +261,7 @@ MUTATIONS = {
 
     # An underspecified issue is passed over in silence every half hour
     # forever, which is the case ADR 0014 says must be handed back.
-    "loud-skip-goes-quiet": (DRAIN, DISPATCH_SUITE,
+    "loud-skip-goes-quiet": (DRAIN, ELIGIBILITY_SUITE,
         'if reason == "missing-section":',
         "if False:",
     ),
@@ -481,7 +482,7 @@ MUTATIONS = {
     # The owning area stops falling back to the issue title, so every issue
     # without the section - which is most of them, and is why the requirement
     # was dropped - reaches Seeding with an empty `--area` and is refused.
-    "area-is-not-defaulted": (DRAIN, CYCLE_SUITE,
+    "area-is-not-defaulted": (DRAIN, ELIGIBILITY_SUITE,
         '    return named or str(record.get("title") or "").strip()'
         ' or f"issue #{record[\'number\']}"',
         "    return named",
