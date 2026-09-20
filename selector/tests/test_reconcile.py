@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cycle
-from conftest import events, issue, last, one
+from conftest import FAILED_RUN, events, issue, last, one
 
 
 def conflicting(number, **over):
@@ -60,6 +60,21 @@ make verify
 
 
 # --- Dispatch ---------------------------------------------------------------
+
+
+def test_a_leftover_failed_attempt_draft_is_not_reconciled(db, box, dispatch):
+    """#102. Reconcile is for a conflicting review artifact, not for the
+    leftover draft of a failed attempt the retry will continue. A reconcile
+    failure would escalate to the human and spend the retry."""
+    leftover = conflicting(13)
+    dispatch(db, 630, outcome="agent-failed")
+    box.run_summary(FAILED_RUN)
+    result = box.run(db, [issue(630, proposals=[leftover])], BOX_EXIT=4)
+    assert result.returncode == 0, result.stderr
+    assert "box reconcile" not in box.commands()
+    assert events(db, "proposal.reconciled") == []
+    assert events(db, "proposal.reconcile-failed") == []
+    assert last(db, "run.dispatched")["issue"] == 630
 
 
 def test_a_conflicting_proposal_dispatches_a_reconcile_run(db, box):

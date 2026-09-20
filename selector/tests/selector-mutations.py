@@ -143,7 +143,24 @@ MUTATIONS = {
     "sub-issues-ignored": (CYCLE, CYCLE_SUITE, "if sub_issues:", "if False:"),
     # An issue already in flight is picked again, so the same work is started
     # twice on two branches.
-    "open-proposal-ignored": (CYCLE, CYCLE_SUITE, "if open_proposals:", "if False:"),
+    "open-proposal-ignored": (CYCLE, CYCLE_SUITE,
+        "if open_proposals and not last_failed:",
+        "if False:"),
+    # A leftover draft from a failed attempt is treated as in flight, so the
+    # budgeted retry never dispatches while that draft stays open (#102).
+    "leftover-draft-blocks-retry": (CYCLE, OUTCOMES_SUITE,
+        "if open_proposals and not last_failed:",
+        "if open_proposals:"),
+    # The Journal half of that exception never runs, so a leftover draft is
+    # always in flight even when Eligibility would have allowed the retry.
+    "last-attempt-never-failed": (CYCLE, OUTCOMES_SUITE,
+        "return is_failure(last.ended_by, last.proposal)",
+        "return False"),
+    # A leftover failed-attempt draft is reconciled instead of retried, so a
+    # conflict on that head escalates and spends the budgeted retry (#102).
+    "leftover-draft-is-reconciled": (CYCLE, RECONCILE_SUITE,
+        "        if issue_number in handover_numbers:",
+        "        if False:"),
     # The retry budget never runs out, so a task that cannot be done is
     # re-dispatched forever instead of reaching the operator.
     "retry-budget-unbounded": (EVENTS, CYCLE_SUITE, "MAX_ATTEMPTS = 2", "MAX_ATTEMPTS = 9999"),
@@ -632,7 +649,7 @@ MUTATIONS = {
     # eligible, so a blocked chain and an underspecified issue are shown as
     # the next thing that will be worked.
     "the-board-invents-its-own-eligibility": (BOARD, BOARD_SUITE,
-        "        reason = cycle.eligibility(record, config, attempts)",
+        "        reason = cycle.eligibility(record, config, attempts, last_failed)",
         "        reason = None",
     ),
     # A blocked card names no blockers, which is the count again: "blocked by

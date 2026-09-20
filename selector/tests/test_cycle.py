@@ -108,6 +108,32 @@ def test_issue_with_an_open_proposal_is_skipped_as_in_flight(db, fakes):
     assert picked(db)["number"] == 648
 
 
+def test_a_leftover_failed_attempt_draft_is_not_in_flight(db, fakes, dispatch):
+    """#102. An open Proposal left by a failed attempt is the retry's
+    branch, not a lock. A draft with no failed attempt under this Handover
+    still skips, in the test above."""
+    leftover = {"number": 13, "url": "https://example.invalid/pull/13",
+                "state": "OPEN", "isDraft": True}
+    dispatch(db, 645, outcome="agent-failed")
+    fakes.run(db, [issue(645, proposals=[leftover])])
+    assert skips(db) == {}
+    assert picked(db)["number"] == 645
+
+
+def test_a_spent_budget_with_a_leftover_draft_is_attempts_exhausted(
+    db, fakes, dispatch
+):
+    """#102. The leftover-draft exception is only for a retry that is still
+    inside the budget. A spent Handover with the draft still open is
+    attempts-exhausted, not in flight."""
+    leftover = {"number": 13, "url": "https://example.invalid/pull/13",
+                "state": "OPEN", "isDraft": True}
+    dispatch(db, 645, outcome="agent-failed")
+    dispatch(db, 645, outcome="agent-failed")
+    fakes.run(db, [issue(645, proposals=[leftover])])
+    assert skips(db)[645] == "attempts-exhausted"
+
+
 def test_an_issue_with_no_owning_area_is_worked_anyway(db, fakes):
     """Amendment to #151, 2026-08-27: the section was required and is not.
     Requiring it made the Handover two steps, and the measurement was that

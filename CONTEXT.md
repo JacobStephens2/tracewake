@@ -211,7 +211,8 @@ _Avoid_: rebase bot, auto-merge
 The predicate a labeled task passes before the Selector may seed it: labeled by
 an allowlisted operator, no open blocking dependency - native tracker edges
 only - no open sub-issues (a parent spec is not a unit of work), no open
-Proposal, retry budget unspent.
+Proposal except the leftover draft of a failed attempt still inside the retry
+budget, retry budget unspent.
 _Avoid_: unblocked, ready (the labels already own that word)
 
 **Selector Journal**:

@@ -30,7 +30,9 @@ The Selector seeds a task only when all of these hold:
   (`issueDependenciesSummary.blockedBy == 0`). Native edges are the single
   blocking signal; a prose "Blocked by" section no longer counts;
 - no open sub-issues - a parent spec is not a unit of work;
-- no open Proposal for it - an open Proposal means in flight;
+- no open Proposal for it - an open Proposal means in flight, except when it
+  is the leftover draft of a failed attempt still inside the retry budget
+  (#102): that draft is the branch the retry continues, not a lock;
 - retry budget unspent - one automatic retry, then the give-up swap.
 
 ## What the label now promises
@@ -43,6 +45,12 @@ missing it is skipped loudly - a comment naming the gap and a swap to
 
 Two sections are optional: `Owning area` supplies `--area`, and `Check`
 supplies `--check`.
+
+**Amended 2026-09-20 (issue #102).** "No open Proposal" had been read as
+every open pull request meaning in flight. A failed Run still proposes, and
+that leftover draft is the branch the retry continues - Eligibility must not
+skip it as `proposal-open` while retry budget remains. An open Proposal with
+no failed attempt under this Handover is still in flight.
 
 **Amended 2026-08-27 (issue #156).** `Owning area` was required here as well,
 and is no longer. The requirement was sound on its own terms - `--area` is the

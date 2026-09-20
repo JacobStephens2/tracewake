@@ -314,6 +314,29 @@ def test_a_first_failure_with_a_proposal_is_retried_without_review(
     assert one(db, "issue.retrying")["outcome"] == "agent-failed"
 
 
+def test_a_failed_runs_open_draft_does_not_block_its_retry(db, box):
+    """#102. A failed Run still proposes. The leftover draft is the branch
+    the retry continues, not an in-flight lock: the next Cycle dispatches
+    without anyone closing that draft."""
+    leftover = {
+        "number": 13,
+        "url": "https://github.invalid/acme/widgets/pull/13",
+        "state": "OPEN",
+        "isDraft": True,
+    }
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)], BOX_EXIT=4)
+    result = box.run(db, [issue(645, proposals=[leftover])], BOX_EXIT=4)
+    assert result.returncode == 0, result.stderr
+    assert last(db, "run.outcome")["attempt"] == 2
+    assert last(db, "run.outcome")["ended_by"] == "agent-failed"
+    skipped = [
+        e["payload"] for e in events(db, "issue.skipped")
+        if e["payload"]["number"] == 645
+    ]
+    assert skipped == []
+
+
 def test_the_give_up_is_journaled(db, box, dispatch):
     dispatch(db, 645, outcome="agent-failed")
     box.run_summary(FAILED_RUN)
@@ -450,6 +473,32 @@ def test_a_route_github_refuses_is_journaled_and_pages(db, box):
     assert failed["issue"] == 645
     assert failed["label"] == "awaiting-review"
     assert "error" in failed
+
+
+def test_a_successful_proposal_left_on_the_handover_queue_is_not_retried(
+    db, box
+):
+    """#102. A leftover draft is only the retry's branch when the attempt
+    failed. A Proposal that finished and whose label swap failed is still
+    in flight: retrying it would dispatch a second Run on work already
+    proposed for review."""
+    leftover = {
+        "number": 12,
+        "url": "https://github.invalid/acme/widgets/pull/12",
+        "state": "OPEN",
+        "isDraft": True,
+    }
+    box.run_summary(CLEAN_RUN)
+    box.checks(GREEN_CHECKS)
+    box.run(db, [issue(645)], ISSUE_EXIT=1)
+    result = box.run(db, [issue(645, proposals=[leftover])])
+    assert result.returncode == 0, result.stderr
+    assert last(db, "run.outcome")["attempt"] == 1
+    skipped = {
+        e["payload"]["number"]: e["payload"]["reason"]
+        for e in events(db, "issue.skipped")
+    }
+    assert skipped[645] == "proposal-open"
 
 
 def test_a_route_that_failed_still_recorded_the_run(db, box):
