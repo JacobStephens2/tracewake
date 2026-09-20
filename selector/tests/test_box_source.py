@@ -31,7 +31,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import cycle  # noqa: E402
 import dispatch  # noqa: E402
 import targets  # noqa: E402
 import watcher  # noqa: E402
@@ -315,7 +314,7 @@ def test_the_product_default_box_facts_command_is_local(monkeypatch) -> None:
     the ssh-based facts.sh is the `Could not resolve hostname local` the
     window shows; facts-local.sh is what that combination is missing."""
     monkeypatch.delenv("SELECTOR_BOX_FACTS_COMMAND", raising=False)
-    config = cycle.Config.for_target(_a_target())
+    config = targets.Config.for_target(_a_target())
     assert Path(config.box_facts_command) == FACTS_LOCAL
 
 

@@ -427,6 +427,162 @@ class Instance:
         )
 
 
+HERE = Path(__file__).resolve().parent
+
+# How many Dispatches one Cycle may hold at once (issue #37). Serial is the
+# established behavior, so the default is 1; zero or negative is not a drain
+# and is refused at preflight. Review Cap, not this number, remains the
+# throughput bound (ADR 0021 as amended).
+DRAIN_CONCURRENCY_VAR = "SELECTOR_DRAIN_CONCURRENCY"
+DEFAULT_DRAIN_CONCURRENCY = 1
+
+
+@dataclass(frozen=True)
+class Config:
+    """One cycle's configuration: the target it works, and the instance it
+    works it from.
+
+    The two halves are deliberately one object. Everything below `target` is
+    the instance - the same for every repository this controller works - and
+    the target carries what differs: its labels, who may hand work over on
+    it, its checkouts, its token, its guest image, its review cap and what a
+    finished Run does with its work. A second target is a second `Config`
+    around the same instance values, which is what makes it a stanza rather
+    than a second controller (issue #3).
+
+    The target's own fields are read through properties rather than copied,
+    so there is one spelling of "the review label" and a Config cannot be
+    built that disagrees with the stanza it came from.
+    """
+
+    target: Target
+    tracker_command: str
+    box_facts_command: str
+    box_facts_timeout_seconds: int
+    guardrail_command: str
+    guardrail_timeout_seconds: int
+    board_timeout_seconds: int
+    guardrail_trees: tuple[GuardrailTree, ...]
+    drain_concurrency: int
+
+    @property
+    def task_repo(self) -> str:
+        return self.target.repo
+
+    @property
+    def label(self) -> str:
+        return self.target.labels.ready
+
+    @property
+    def needs_info_label(self) -> str:
+        return self.target.labels.needs_info
+
+    @property
+    def review_label(self) -> str:
+        return self.target.labels.review
+
+    @property
+    def human_label(self) -> str:
+        return self.target.labels.human
+
+    @property
+    def allowlist(self) -> tuple[str, ...]:
+        return self.target.labeler_allowlist
+
+    @property
+    def review_cap(self) -> int:
+        return self.target.review_cap
+
+    @classmethod
+    def for_target(cls, target: Target) -> "Config":
+        env = os.environ.get
+        return cls(
+            target=target,
+            tracker_command=env(
+                "SELECTOR_TRACKER_COMMAND", str(HERE / "tracker-sources" / "github.sh")
+            ),
+            box_facts_command=env(
+                "SELECTOR_BOX_FACTS_COMMAND",
+                str(HERE / "box-sources" / "facts-local.sh"),
+            ),
+            # Short on purpose. This is a status read, and a status read that
+            # can hold a cycle open is worse than one that goes missing: the
+            # dispatch behind it is what the cycle is for.
+            box_facts_timeout_seconds=int(
+                env("SELECTOR_BOX_FACTS_TIMEOUT_SECONDS", "60")
+            ),
+            guardrail_command=env(
+                "SELECTOR_GUARDRAIL_COMMAND",
+                str(HERE / "guardrail-sources" / "protection.sh"),
+            ),
+            # One `gh api` call and one walk of the deployed tree, on a cycle
+            # that has work to do: the same reasoning as the box read above.
+            guardrail_timeout_seconds=int(
+                env("SELECTOR_GUARDRAIL_TIMEOUT_SECONDS", "30")
+            ),
+            # Shorter still, and for a sharper version of the same reason: the
+            # queue board's tracker reads happen inside a page request. Three
+            # of them against a live GitHub queue took about three seconds when
+            # this was measured, so ten seconds is a tracker that is broken
+            # rather than slow - and a column saying so beats a page that
+            # hangs.
+            board_timeout_seconds=int(
+                env("SELECTOR_BOARD_TIMEOUT_SECONDS", "10")
+            ),
+            guardrail_trees=load_guardrail_trees(),
+            drain_concurrency=_drain_concurrency(),
+        )
+
+
+    @classmethod
+    def load(cls, repo: str | None = None) -> tuple["Config", ...]:
+        """Every target this cycle is to work, configured.
+
+        The preflight (issue #3): it raises `NotConfigured` naming the
+        missing value, and it is called before the tracker command is run, so
+        a half-configured instance stops without having read or written
+        anything.
+
+        Both halves, and the instance first. An instance value that is absent
+        is not caught by the script that reads it until the cycle has already
+        read the queue, seeded a branch and pushed it - `observe_box` treats a
+        box it cannot read as a status failure and carries on, by design - so
+        checking it here is what makes "before any tracker read" true of the
+        instance and not only of the targets.
+        """
+        Instance.from_env()
+        _drain_concurrency()
+        return tuple(
+            cls.for_target(target)
+            for target in select(load(), repo)
+        )
+
+
+def _drain_concurrency() -> int:
+    """How many Dispatches this Cycle may hold at once.
+
+    Unset defaults to 1, which is today's serial drain. Zero or negative is
+    a configuration error: a cap of nothing is a paused instance, and pausing
+    has its own control. Named at preflight like every other instance value.
+    """
+    raw = os.environ.get(DRAIN_CONCURRENCY_VAR, str(DEFAULT_DRAIN_CONCURRENCY))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise NotConfigured(
+            f"{DRAIN_CONCURRENCY_VAR} is {raw!r}, which is not a positive"
+            " whole number. It names how many Dispatches a Cycle may hold"
+            " at once."
+        ) from None
+    if value < 1:
+        raise NotConfigured(
+            f"{DRAIN_CONCURRENCY_VAR} is {value}, and a concurrency of less"
+            f" than 1 is not a drain: {DRAIN_CONCURRENCY_VAR} names how many"
+            " Dispatches a Cycle may hold at once."
+        )
+    return value
+
+
 def overlaid(overlay: dict[str, str] | None) -> dict[str, str] | None:
     """This process's environment with a target's values laid over it.
 

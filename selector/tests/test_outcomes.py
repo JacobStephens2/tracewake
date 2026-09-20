@@ -1,5 +1,8 @@
 """What the Selector does to the issue once the Run has ended (issue #155).
 
+These still fork because production doing is ADR 0004's substitutable-command
+seam - Cycle decisions live in-process.
+
 Dispatch (#154) ends the moment the box hands back a summary. This is the half
 after that: the Run's ending bound and the Proposal's checks decide which
 queue the issue lands in, and the operator finds out by reading the issue
@@ -386,13 +389,6 @@ def test_a_third_dispatch_is_refused_even_if_the_give_up_swap_failed(
     dispatch(db, 645, outcome="agent-failed")
     box.run(db, [issue(645)], ISSUE_EXIT=1)
     assert "box " not in box.commands()
-
-
-def test_the_exhausted_issue_is_skipped_with_its_reason(db, box, dispatch):
-    dispatch(db, 645, outcome="agent-failed")
-    dispatch(db, 645, outcome="agent-failed")
-    box.run(db, [issue(645)])
-    assert one(db, "issue.skipped")["reason"] == "attempts-exhausted"
 
 
 # --- A Run that proposed nothing ---------------------------------------------

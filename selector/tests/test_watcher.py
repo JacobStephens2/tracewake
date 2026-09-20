@@ -1,5 +1,9 @@
 """The Iteration watcher at two boundaries (issue #157).
 
+The second half still forks because a growing Progress Log is a fact about
+the box while a Run holds the process - production doing, not a Cycle
+decision. The parser half is in-process.
+
 The first half is the parser, driven with Progress Log snapshots exactly as
 `run.sh` writes them: what an Iteration record is, which Run's records count,
 and which half-written record does not count yet.
