@@ -1189,9 +1189,11 @@ def _loop_context(request: Request) -> dict:
         "resume_url": _path(request, "/loop/resume"),
         "timer_start_url": _path(request, "/loop/timer/start"),
         "timer_stop_url": _path(request, "/loop/timer/stop"),
+        "target_remove_url": _path(request, "/loop/targets/remove"),
         # Set by the toggle below when the control fails; the cell says it.
         # None on every other render, so the template needs no default.
         "timer_error": None,
+        "target_error": None,
     }
 
 
@@ -1307,6 +1309,34 @@ def start_timer(request: Request):
 @controls.post("/loop/timer/stop", response_class=HTMLResponse)
 def stop_timer(request: Request):
     return _set_timer(request, "stop")
+
+
+@controls.post("/loop/targets/remove", response_class=HTMLResponse)
+def remove_target(request: Request, repo: str = Form("")):
+    """Unenroll one Target.
+
+    The stanza is dropped from the targets file; Host checkouts and token
+    files stay put. Success reloads the home page so the queue board
+    columns whatever is now first (or the unconfigured state). A failure
+    is a sentence on the section, not a 500: an instance whose file
+    cannot be written is exactly when somebody is looking at this list.
+    """
+    repo = repo.strip()
+    if not repo:
+        error = "No Target was named."
+    else:
+        try:
+            targets.remove(repo)
+            error = None
+        except targets.NotConfigured as exc:
+            error = str(exc)
+    if error is None:
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = _path(request, "/")
+        return response
+    context = _loop_context(request)
+    context["target_error"] = error
+    return _page(request, "_targets.html", context)
 
 
 app.include_router(controls)

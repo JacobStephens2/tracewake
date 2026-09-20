@@ -1154,6 +1154,29 @@ MUTATIONS = {
         "        os.environ.get(TARGETS_FILE_VAR)\n"
         '        or "/etc/tracewake/targets.toml"\n        or missing(',
     ),
+    # Remove drops the first stanza instead of the named one, so the
+    # window's control reports success and a Cycle still works the repo
+    # the operator asked to unenroll.
+    "remove-leaves-the-stanza": (TARGETS, TARGETS_SUITE,
+        "    remaining = tuple(target for target in current if target.repo != repo)\n",
+        "    remaining = current[1:] if current else current\n",
+    ),
+    # An undeclared name is written through as "removed", so a typo empties
+    # nothing and the operator thinks the Target is gone.
+    "remove-undeclared-is-silent": (TARGETS, TARGETS_SUITE,
+        "    if len(remaining) == len(current):\n",
+        "    if False and len(remaining) == len(current):\n",
+    ),
+    # Unenrolling the last Target deletes the file, so the next load names
+    # a missing path instead of an instance with nothing to work.
+    "remove-last-deletes-the-file": (TARGETS, TARGETS_SUITE,
+        "    _write(where, remaining)\n    return remaining\n",
+        "    if remaining:\n"
+        "        _write(where, remaining)\n"
+        "    else:\n"
+        "        where.unlink()\n"
+        "    return remaining\n",
+    ),
     # The local box's checkout stops being required, so an instance that
     # configured none runs against whatever directory happens to be empty or current.
     "local-box-repo-not-required": (LOCAL_SOURCE, BOX_SOURCE_SUITE,

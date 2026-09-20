@@ -209,6 +209,22 @@ OnFailure=notify-unit-failure@%n.service
         assert bad_val == "", f"Expected systemd to ignore OnFailure in [Service], got {bad_val!r}"
 
 
+def test_window_unit_can_rewrite_the_targets_file():
+    """Remove on `/` rewrites the instance's targets file.
+
+    ProtectSystem=full mounts /etc read-only, which is where INSTALL.md
+    puts that file. ReadWritePaths has to punch a hole for the directory
+    the env file lives in - templated, not a hardcoded instance path.
+    """
+    content = (SYSTEMD_DIR / "tracewake-web.service").read_text()
+    assert "ProtectSystem=full" in content
+    assert re.search(
+        r"^ReadWritePaths=\{\{\s*tracewake_env_file\s*\|\s*dirname\s*\}\}\s*$",
+        content,
+        re.M,
+    ), content
+
+
 def test_window_unit_allows_the_timer_sudo():
     """The Start/Stop buttons run `sudo -n systemctl`. systemd's
     NoNewPrivileges flag makes sudo refuse before sudoers is consulted,

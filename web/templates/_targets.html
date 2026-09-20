@@ -1,0 +1,33 @@
+{#- The instance's Targets. Not the queue: the board still columns the
+    first stanza, and a Cycle reads every stanza in this file's order.
+    Shown on the shell rather than in the live region because it is
+    configuration, not a Journal replay. An admin may unenroll one
+    here: success reloads the page so the board matches; a failure
+    swaps this fragment so the list can say why. -#}
+<details class="fold targets" data-fold="targets" open>
+  <summary><h2>Targets</h2></summary>
+  <p>The repositories this instance reads issues from. A Cycle works
+     them in this order.</p>
+  {% if target_error %}
+  <p class="detail alarm">{{ target_error }}</p>
+  {% endif %}
+  {% if targets %}
+  <ul>
+    {% for repo in targets %}
+    <li>
+      <code>{{ repo }}</code>
+      {% if can_control %}
+      <button type="button" class="btn btn-error btn-ghost btn-small"
+              hx-post="{{ target_remove_url }}"
+              hx-vals='{"repo": {{ repo | tojson }}}'
+              hx-target="#targets"
+              hx-swap="innerHTML"
+              hx-confirm="Remove {{ repo }} from this instance? A Cycle will no longer read issues from it.">Remove</button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="detail">{{ unconfigured }}</p>
+  {% endif %}
+</details>

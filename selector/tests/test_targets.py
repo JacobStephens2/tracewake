@@ -181,6 +181,99 @@ def test_selecting_a_target_that_is_not_declared_lists_the_ones_that_are(
     assert "acme/widgets" in str(raised.value)
 
 
+# --- Removing a target -------------------------------------------------------
+#
+# The window's Remove control unenrolls a stanza. The file is the instance's
+# list, so the public seam is here: drop the named repo, leave the rest in
+# file order, and load() is what a Cycle reads next.
+
+
+def test_removing_a_target_leaves_the_others_in_file_order(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {"repo": "acme/alpha"},
+        {"repo": "acme/beta"},
+        {"repo": "acme/gamma"},
+    )
+    remaining = targets.remove("acme/beta", path)
+    assert [t.repo for t in remaining] == ["acme/alpha", "acme/gamma"]
+    assert [t.repo for t in targets.load(path)] == ["acme/alpha", "acme/gamma"]
+
+
+def test_the_remaining_target_keeps_the_values_it_declared(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {"repo": "acme/alpha"},
+        {
+            "repo": "acme/beta",
+            "review_cap": 3,
+            "labels": {"review": "second-look"},
+            "labeler_allowlist": ["beta-operator"],
+        },
+    )
+    targets.remove("acme/alpha", path)
+    (beta,) = targets.load(path)
+    assert beta.repo == "acme/beta"
+    assert beta.review_cap == 3
+    assert beta.labels.review == "second-look"
+    assert beta.labeler_allowlist == ("beta-operator",)
+
+
+def test_removing_the_last_target_leaves_a_file_with_no_stanza(tmp_path):
+    """An empty instance is still a file the variable names.
+
+    Deleting the file would make the next load say it could not be read,
+    which is the wrong diagnosis: the operator just unenrolled the last
+    Target, and a Cycle should refuse for having nothing to work.
+    """
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    remaining = targets.remove("acme/alpha", path)
+    assert remaining == ()
+    assert path.is_file()
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.load(path)
+    assert "[[target]]" in str(raised.value)
+
+
+def test_removing_a_repository_that_is_not_declared_is_refused(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.remove("acme/nothing", path)
+    assert "acme/nothing" in str(raised.value)
+    assert "acme/alpha" in str(raised.value)
+    (still,) = targets.load(path)
+    assert still.repo == "acme/alpha"
+
+
+def test_removing_a_target_does_not_delete_its_host_files(tmp_path):
+    """Unenroll, do not clean the machine.
+
+    The stanza is what a Cycle reads. The checkout and token file are the
+    Host's, and a Remove from the window must not take them with it.
+    """
+    work = tmp_path / "work"
+    token = tmp_path / "token"
+    work.mkdir()
+    token.write_text("secret\n")
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {"repo": "acme/alpha"},
+        {
+            "repo": "acme/beta",
+            "work_repo": str(work),
+            "token_file": str(token),
+        },
+    )
+    targets.remove("acme/beta", path)
+    assert work.is_dir()
+    assert token.read_text() == "secret\n"
+
+
 def test_a_single_stanza_may_be_written_as_a_table(tmp_path):
     """`[target]` and `[[target]]` mean the same thing to a reader, and a
     single-target instance is the common case."""

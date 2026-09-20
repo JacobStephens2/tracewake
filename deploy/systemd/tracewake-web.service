@@ -23,6 +23,10 @@ RestartSec=3
 # containers.
 ProtectSystem=full
 PrivateTmp=true
+# Remove on `/` rewrites the instance's targets file. ProtectSystem=full
+# mounts /etc read-only; this is the hole for the directory that holds it
+# (the same directory as the env file).
+ReadWritePaths={{ tracewake_env_file | dirname }}
 
 [Install]
 WantedBy=multi-user.target
