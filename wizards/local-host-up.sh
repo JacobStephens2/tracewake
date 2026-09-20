@@ -422,6 +422,7 @@ SELECTOR_BOX_HOST=local
 SELECTOR_BOX_COMMAND=box-sources/local.sh
 SELECTOR_BOX_FACTS_COMMAND=box-sources/facts-local.sh
 SELECTOR_BOX_PROGRESS_COMMAND=box-sources/progress-local.sh
+SELECTOR_BOX_MICROVMS_COMMAND=box-sources/microvms-local.sh
 SELECTOR_BOX_LOOP=/srv/tracewake/loop
 SELECTOR_LOOP_URL=$HTTP_URL
 SELECTOR_NOTIFY_COMMAND=/bin/true

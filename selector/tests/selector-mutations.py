@@ -65,6 +65,9 @@ ROLES_SUITE = "../web/tests/test_roles.py"
 HOST = "../web/host.py"
 HOST_WIDGET = "../web/templates/_host.html"
 HOST_SUITE = "../web/tests/test_host_telemetry.py"
+MICROVMS = "../web/microvms.py"
+MICROVMS_WIDGET = "../web/templates/_microvms.html"
+MICROVMS_SUITE = "../web/tests/test_microvms.py"
 
 # The push (#159). The stream is Journal SQL and lives with the Journal; the
 # region it re-fetches is a template, which is a mutation target like any
@@ -1218,6 +1221,18 @@ MUTATIONS = {
         "    if incoming.repo in {target.repo for target in current}:\n",
         "    if False and incoming.repo in {target.repo for target in current}:\n",
     ),
+    # Drafting a sibling reuses the source checkout, so two Targets
+    # share a work directory and the operator thinks enrollment was free.
+    "draft-reuses-source-paths": (TARGETS, TARGETS_SUITE,
+        '        "work_repo": _rename_path(str(source.work_repo), old, new),\n',
+        '        "work_repo": str(source.work_repo),\n',
+    ),
+    # add() no longer fills blanks from the last Target, so the window's
+    # repo-only enrollment is a refusal even when the layout is known.
+    "add-does-not-fill-from-last": (TARGETS, TARGETS_SUITE,
+        "        _fill_from_last(stanza, current),\n",
+        "        stanza,\n",
+    ),
     # The local box's checkout stops being required, so an instance that
     # configured none runs against whatever directory happens to be empty or current.
     "local-box-repo-not-required": (LOCAL_SOURCE, BOX_SOURCE_SUITE,
@@ -1673,6 +1688,42 @@ MUTATIONS = {
     "host-cpu-is-hardcoded-in-the-template": (HOST_WIDGET, HOST_SUITE,
         '      <span class="cell-value">{{ host.cpu }}</span>\n',
         '      <span class="cell-value">0%</span>\n',
+    ),
+
+    # --- MicroVMs on the dashboard (#97) -----------------------------------
+    #
+    # The widget is the operator's view of the Execution Boundary. Every
+    # mutation here leaves a board that still draws while quietly ceasing
+    # to show what the box is running.
+
+    # An `sbx ls` that failed takes the queue with it, so the page the
+    # operator opened to see the queue is a 500 instead.
+    "a-microvms-sampler-failure-takes-the-board-down": (WINDOW, MICROVMS_SUITE,
+        "    try:\n"
+        "        facts = microvms.sample()\n"
+        "    except Exception as exc:\n"
+        "        return {**unknown, \"error\": str(exc)}\n",
+        "    facts = microvms.sample()\n",
+    ),
+    # The widget leaves the live region, so a Journal row landing does not
+    # refresh the list and a reload is required.
+    "microvms-widget-not-in-the-live-region": (LIVE_REGION, MICROVMS_SUITE,
+        '{% include "_microvms.html" %}\n',
+        "",
+    ),
+    # The template ignores the sampler's name and prints a constant.
+    "microvms-name-is-hardcoded-in-the-template": (MICROVMS_WIDGET, MICROVMS_SUITE,
+        '      <span class="cell-label"><code>{{ vm.name }}</code></span>\n',
+        '      <span class="cell-label"><code>loop-0</code></span>\n',
+    ),
+    # The default adapter stops reading the box, so production is a
+    # permanently empty widget.
+    "the-microvms-sampler-does-not-read-the-box": (MICROVMS, MICROVMS_SUITE,
+        "    try:\n"
+        "        payload = json.loads(text)\n",
+        "    return ()\n"
+        "    try:\n"
+        "        payload = json.loads(text)\n",
     ),
 
     # --- Forgot password (#43) ---------------------------------------------

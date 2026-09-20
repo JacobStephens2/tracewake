@@ -53,6 +53,7 @@ def test_each_headed_section_on_home_folds_like_the_queue(db, dispatch):
     expected = {
         "targets": "Targets",
         "host": "The host",
+        "microvms": "MicroVMs",
         "queue": "The queue",
         "runs": "Runs",
         "cycles": "Cycles",
@@ -69,6 +70,19 @@ def test_each_headed_section_on_home_folds_like_the_queue(db, dispatch):
     assert live == {k: v for k, v in expected.items() if k != "targets"}
 
 
+def test_the_targets_section_starts_closed(db):
+    """Configuration, not the reason the page is open.
+
+    The queue, the Host, and the Runs start open so the overview is
+    the page. Targets is a list the operator changes occasionally;
+    starting it open pushes the queue down by a form. Closed on a
+    first visit; a stored choice is the markup on the next load (#123).
+    """
+    home = fold_open(client.get("/").text)
+    assert home["targets"] is False
+    assert home["queue"] is True
+
+
 def test_a_stored_fold_choice_is_the_markup_on_the_next_load(db, dispatch):
     """localStorage cannot do this: the server never sees it, so a reload
     and an hx-get both come back with the markup defaults (#123).
@@ -78,13 +92,14 @@ def test_a_stored_fold_choice_is_the_markup_on_the_next_load(db, dispatch):
     dispatch(db, 646, outcome="complete")
 
     browser = TestClient(app)
-    browser.cookies.set(FOLD_COOKIE, "targets:closed|queue:closed|cycles:open")
+    browser.cookies.set(FOLD_COOKIE, "targets:open|queue:closed|cycles:open")
     home = fold_open(browser.get("/").text)
-    assert home["targets"] is False
+    assert home["targets"] is True
     assert home["queue"] is False
     assert home["cycles"] is True
     # Unmentioned sections keep the markup default.
     assert home["host"] is True
+    assert home["microvms"] is True
     assert home["runs"] is True
     assert home["events"] is True
 

@@ -171,6 +171,8 @@ address or a command have no default at all:
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
 | `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts-local.sh` | the box, read for the status card. `box-sources/facts.sh` is the remote-Box substitute |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
+| `SELECTOR_BOX_MICROVMS_COMMAND` | `box-sources/microvms-local.sh` | the box's microVMs, listed for the dashboard. `box-sources/microvms.sh` is the remote-Box substitute |
+| `SELECTOR_BOX_MICROVMS_TIMEOUT_SECONDS` | `10` | how long that list may take |
 | `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
 | `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
 | `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |

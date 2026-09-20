@@ -50,6 +50,7 @@ import targets  # noqa: E402
 import preview  # noqa: E402
 import auth  # noqa: E402
 import host  # noqa: E402
+import microvms  # noqa: E402
 import mail  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
@@ -98,10 +99,12 @@ def _path(request: Request, route: str) -> str:
 
 
 # Headed sections on `/`. True is the markup default (`open` on the
-# details) except Cycles, which starts shut as the deep history.
+# details). Cycles starts shut as the deep history; Targets starts shut
+# so the queue is the page (#122).
 FOLD_DEFAULTS = {
-    "targets": True,
+    "targets": False,
     "host": True,
+    "microvms": True,
     "queue": True,
     "runs": True,
     "cycles": False,
@@ -1150,6 +1153,32 @@ def _host(spend: "cycle.Spend | None") -> dict:
     }
 
 
+def _microvms() -> dict:
+    """The Box's currently running microVMs.
+
+    Sampler failure is a degraded widget, never a missing board: the queue
+    is the page, and an `sbx ls` that failed is not a reason to hide it.
+    """
+    unknown: dict = {"ok": False, "vms": (), "error": None}
+    try:
+        facts = microvms.sample()
+    except Exception as exc:
+        return {**unknown, "error": str(exc)}
+    return {
+        "ok": True,
+        "error": None,
+        "vms": [
+            {
+                "name": vm.name,
+                "agent": vm.agent,
+                "status": vm.status,
+                "workspace": vm.workspace,
+            }
+            for vm in facts.vms
+        ],
+    }
+
+
 def _loop_context(request: Request) -> dict:
     """Everything the home page renders, read now.
 
@@ -1185,6 +1214,7 @@ def _loop_context(request: Request) -> dict:
         else queue_board.unconfigured(unconfigured)
     )
     host_view = _host(spend)
+    microvms_view = _microvms()
     # Review capacity is per Target. The strip reports the first stanza,
     # snapshotted before later Targets were merged in: a second Target's
     # review queue must not spend the first's cap, and a later Target's
@@ -1213,6 +1243,7 @@ def _loop_context(request: Request) -> dict:
         "guardrail": _guardrail(events),
         "board": board_view,
         "host": host_view,
+        "microvms": microvms_view,
         "targets": tuple(c.task_repo for c in configs) if configs else (),
         "unconfigured": unconfigured,
         "paused": paused if error is None else None,
@@ -1238,7 +1269,7 @@ def _loop_context(request: Request) -> dict:
         # None on every other render, so the template needs no default.
         "timer_error": None,
         "target_error": None,
-        "target_draft": {},
+        **_target_form(configs),
         "folds": _folds(request),
     }
 
@@ -1357,6 +1388,32 @@ def stop_timer(request: Request):
     return _set_timer(request, "stop")
 
 
+def _target_form(configs: tuple["cycle.Config", ...] | None) -> dict:
+    """The Add form's pre-fill and path hints, from the last declared Target.
+
+    A second Target is a repository name. guest_template and the
+    allowlist are instance facts and arrive filled. Path placeholders
+    show the last Target's layout with `name` standing in for the
+    short name the operator is about to type. Nothing is invented:
+    a layout the instance has never declared stays blank.
+    """
+    last = configs[-1].target if configs else None
+    if last is None:
+        return {"target_draft": {}, "target_hints": {}}
+    hinted = targets.draft("owner/name", last)
+    return {
+        "target_draft": {
+            "guest_template": last.guest_template,
+            "labeler_allowlist": ", ".join(last.labeler_allowlist),
+        },
+        "target_hints": {
+            "work_repo": hinted["work_repo"],
+            "box_repo": hinted["box_repo"],
+            "token_file": hinted["token_file"],
+        },
+    }
+
+
 def _targets_changed(
     request: Request,
     error: str | None,
@@ -1369,7 +1426,12 @@ def _targets_changed(
         return response
     context = _loop_context(request)
     context["target_error"] = error
-    context["target_draft"] = draft or {}
+    shown = dict(context.get("target_draft") or {})
+    incoming = draft or {}
+    for key, value in incoming.items():
+        if value or key == "repo":
+            shown[key] = value
+    context["target_draft"] = shown
     return _page(request, "_targets.html", context)
 
 
@@ -1436,9 +1498,10 @@ def add_target(
     """Enroll one Target.
 
     The stanza is appended to the targets file; Host checkouts and token
-    files are not created. Success reloads the home page so the queue
-    board matches the list. A failure is a sentence on the section, with
-    the submitted values still in the form.
+    files are not created. Blank fields are filled from the last declared
+    Target, so a second enrollment is a repository name. Success reloads
+    the home page so the queue board matches the list. A failure is a
+    sentence on the section, with the submitted values still in the form.
     """
     draft = {
         "repo": repo,

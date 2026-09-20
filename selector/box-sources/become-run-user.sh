@@ -30,6 +30,7 @@
 #   Defaults:conductor env_keep += "TRACEWAKE_*"
 #   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/facts-local.sh
 #   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/progress-local.sh *
+#   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/microvms-local.sh
 #
 # What it does NOT do, on purpose - the same three refusals as box-as-loop.sh:
 # no SETENV, no fallback to reading as the invoker, no mail involvement.

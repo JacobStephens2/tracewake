@@ -327,10 +327,12 @@ export SELECTOR_JOURNAL_DSN="dbname=selector"
 #
 #   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/facts-local.sh
 #   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/progress-local.sh *
+#   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/microvms-local.sh
 export SELECTOR_BOX_HOST="local"
 export SELECTOR_BOX_COMMAND="box-sources/local.sh"
 export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts-local.sh"
 export SELECTOR_BOX_PROGRESS_COMMAND="box-sources/progress-local.sh"
+export SELECTOR_BOX_MICROVMS_COMMAND="box-sources/microvms-local.sh"
 export SELECTOR_BOX_LOOP="/srv/tracewake/loop"
 
 # Dashboard URL & Mail Surface

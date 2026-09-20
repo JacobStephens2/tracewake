@@ -1,9 +1,10 @@
 """The box surface, read locally: status reads for Single-Host instances.
 
-`box-sources/facts-local.sh` and `box-sources/progress-local.sh` are the
-Single-Host siblings of `facts.sh` and `progress.sh` (ADR 0019): the same
-contract - the same `LOOP_BOX_*` lines, the same Progress Log semantics -
-with no SSH hop. An instance that sets `SELECTOR_BOX_HOST=local` and keeps
+`box-sources/facts-local.sh`, `box-sources/progress-local.sh` and
+`box-sources/microvms-local.sh` are the Single-Host siblings of `facts.sh`,
+`progress.sh` and `microvms.sh` (ADR 0019): the same contracts - the same
+`LOOP_BOX_*` lines, the same Progress Log semantics, the same `sbx ls --json`
+- with no SSH hop. An instance that sets `SELECTOR_BOX_HOST=local` and keeps
 the ssh-based reads gets `ssh: Could not resolve hostname local` on the box
 card; these are what that combination is missing.
 
@@ -24,6 +25,7 @@ import pytest
 BOX_SOURCES = Path(__file__).resolve().parents[1] / "box-sources"
 FACTS_LOCAL = BOX_SOURCES / "facts-local.sh"
 PROGRESS_LOCAL = BOX_SOURCES / "progress-local.sh"
+MICROVMS_LOCAL = BOX_SOURCES / "microvms-local.sh"
 
 ADAPTER = """#!/usr/bin/env bash
 if [[ "${1:-}" == "--guest-template" ]]; then
@@ -225,3 +227,72 @@ def test_local_progress_refuses_without_a_checkout() -> None:
     )
     assert result.returncode != 0
     assert "SELECTOR_BOX_REPO" in result.stderr
+
+
+def _fake_sbx(tmp_path: Path, listing: str) -> Path:
+    payload = tmp_path / "sbx-ls.json"
+    payload.write_text(listing)
+    sbx = tmp_path / "sbx"
+    sbx.write_text(
+        "#!/usr/bin/env bash\n"
+        '[[ "$1" == ls && "$2" == --json ]] || exit 2\n'
+        f"cat {payload}\n"
+    )
+    sbx.chmod(0o755)
+    return sbx
+
+
+def test_local_microvms_print_what_sbx_lists(tmp_path: Path) -> None:
+    """No SELECTOR_BOX_HOST, no ssh: the list is local or it is nothing."""
+    listing = (
+        '{"sandboxes":[{"name":"loop-1","agent":"claude",'
+        '"status":"running","workspace":"/work"}]}\n'
+    )
+    sbx = _fake_sbx(tmp_path, listing)
+    result = run(
+        MICROVMS_LOCAL,
+        LOOP_SBX_COMMAND=str(sbx),
+        SELECTOR_BOX_USER=getpass.getuser(),
+        HOME=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == listing
+
+
+def test_local_microvms_fail_when_sbx_is_missing(tmp_path: Path) -> None:
+    result = run(
+        MICROVMS_LOCAL,
+        LOOP_SBX_COMMAND=str(tmp_path / "no-such-sbx"),
+        SELECTOR_BOX_USER=getpass.getuser(),
+        HOME=str(tmp_path),
+    )
+    assert result.returncode != 0
+    assert "sbx" in result.stderr.lower() or "no-such-sbx" in result.stderr
+
+
+def test_local_microvms_become_the_run_account(tmp_path: Path) -> None:
+    """Listed as someone else, the script reaches them through sudo."""
+    calls = tmp_path / "sudo-calls"
+    sudo = tmp_path / "sudo"
+    sudo.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$@\" >> \"{calls}\"\n"
+        "exit 0\n"
+    )
+    sudo.chmod(0o755)
+    environ = dict(os.environ)
+    environ["PATH"] = f"{tmp_path}{os.pathsep}{environ['PATH']}"
+    environ.pop("SELECTOR_BOX_HOST", None)
+    environ.update({
+        "SELECTOR_BOX_USER": "loop",
+        "HOME": str(tmp_path),
+    })
+    result = subprocess.run(
+        [str(MICROVMS_LOCAL)], capture_output=True, text=True,
+        env=environ, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert getpass.getuser() != "loop", "this test needs a non-loop invoker"
+    recorded = calls.read_text().split()
+    assert recorded[:3] == ["-u", "loop", "-g"] or recorded[:2] == ["-u", "loop"]
+    assert recorded[-1] == str(MICROVMS_LOCAL)

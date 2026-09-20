@@ -47,6 +47,10 @@ STATES = [
     # The guardrail chip (#165), journaled by the same part of the cycle as
     # the box card and invisible in a preview without a row of its own.
     "the executed paths are review-gated",
+    # MicroVMs (#97). Request-time, not Journal: the idle sample is the
+    # ordinary page, and a preview without this string would not prove the
+    # widget rendered.
+    "none running",
     # The watcher's rows (#157): the in-flight card's Iteration table (a
     # no-op Iteration is its most distinctive cell), and the one-row failure
     # a Run whose Progress Log could not be read carries instead.

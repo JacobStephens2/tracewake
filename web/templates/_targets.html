@@ -4,7 +4,10 @@
     region because it is configuration, not a Journal replay. An admin
     may enroll or unenroll here: success reloads the page so the board
     matches; a failure swaps this fragment so the list can say why. -#}
-<details class="fold targets" data-fold="targets"{% if folds.targets %} open{% endif %}>
+{#- Closed on a first visit so the queue is the page; open when the
+    add form has something to say, or when the visitor last left it
+    open (#123). -#}
+<details class="fold targets" data-fold="targets"{% if folds.targets or target_error %} open{% endif %}>
   <summary><h2>Targets</h2></summary>
   <p>The repositories this instance reads issues from. A Cycle works
      them in this order.</p>
@@ -35,41 +38,57 @@
         hx-post="{{ target_add_url }}"
         hx-target="#targets"
         hx-swap="innerHTML">
+    {% if targets %}
+    <p>Name the repository. Checkout and token paths follow the last
+       Target when they are left blank; those files must already exist
+       on the Host.</p>
+    {% else %}
     <p>Declare a Target. The checkout and token file must already exist
        on the Host; this writes the stanza a Cycle reads.</p>
+    {% endif %}
     <p>
       <label for="target-repo">repo</label>
       <input type="text" id="target-repo" name="repo"
              value="{{ target_draft.repo | default('') }}"
              placeholder="owner/name" required>
     </p>
-    <p>
-      <label for="target-work-repo">work_repo</label>
-      <input type="text" id="target-work-repo" name="work_repo"
-             value="{{ target_draft.work_repo | default('') }}" required>
-    </p>
-    <p>
-      <label for="target-box-repo">box_repo</label>
-      <input type="text" id="target-box-repo" name="box_repo"
-             value="{{ target_draft.box_repo | default('') }}" required>
-    </p>
-    <p>
-      <label for="target-token-file">token_file</label>
-      <input type="text" id="target-token-file" name="token_file"
-             value="{{ target_draft.token_file | default('') }}" required>
-    </p>
-    <p>
-      <label for="target-guest-template">guest_template</label>
-      <input type="text" id="target-guest-template" name="guest_template"
-             value="{{ target_draft.guest_template | default('') }}" required>
-    </p>
-    <p>
-      <label for="target-labeler-allowlist">labeler_allowlist</label>
-      <input type="text" id="target-labeler-allowlist" name="labeler_allowlist"
-             value="{{ target_draft.labeler_allowlist | default('') }}"
-             placeholder="accounts that may apply the Handover label"
-             required>
-    </p>
+    <details class="target-add-more"{% if target_error or not targets %} open{% endif %}>
+      <summary>Checkout, token, guest, allowlist</summary>
+      <p>
+        <label for="target-work-repo">work_repo</label>
+        <input type="text" id="target-work-repo" name="work_repo"
+               value="{{ target_draft.work_repo | default('') }}"
+               placeholder="{{ target_hints.work_repo | default('') }}"
+               {% if not targets %}required{% endif %}>
+      </p>
+      <p>
+        <label for="target-box-repo">box_repo</label>
+        <input type="text" id="target-box-repo" name="box_repo"
+               value="{{ target_draft.box_repo | default('') }}"
+               placeholder="{{ target_hints.box_repo | default('') }}"
+               {% if not targets %}required{% endif %}>
+      </p>
+      <p>
+        <label for="target-token-file">token_file</label>
+        <input type="text" id="target-token-file" name="token_file"
+               value="{{ target_draft.token_file | default('') }}"
+               placeholder="{{ target_hints.token_file | default('') }}"
+               {% if not targets %}required{% endif %}>
+      </p>
+      <p>
+        <label for="target-guest-template">guest_template</label>
+        <input type="text" id="target-guest-template" name="guest_template"
+               value="{{ target_draft.guest_template | default('') }}"
+               {% if not targets %}required{% endif %}>
+      </p>
+      <p>
+        <label for="target-labeler-allowlist">labeler_allowlist</label>
+        <input type="text" id="target-labeler-allowlist" name="labeler_allowlist"
+               value="{{ target_draft.labeler_allowlist | default('') }}"
+               placeholder="accounts that may apply the Handover label"
+               {% if not targets %}required{% endif %}>
+      </p>
+    </details>
     <p><button type="submit" class="btn btn-primary">Add Target</button></p>
   </form>
   {% endif %}

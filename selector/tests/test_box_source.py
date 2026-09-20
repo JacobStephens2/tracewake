@@ -41,6 +41,8 @@ LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "local.sh"
 FACTS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "facts.sh"
 FACTS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "facts-local.sh"
 PROGRESS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "progress-local.sh"
+MICROVMS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "microvms.sh"
+MICROVMS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "microvms-local.sh"
 
 BOX_SOURCES = [SSH_SOURCE, LOCAL_SOURCE]
 
@@ -325,6 +327,17 @@ def test_the_product_default_box_progress_command_is_local(monkeypatch) -> None:
     assert Path(config.progress_command) == PROGRESS_LOCAL
 
 
+def test_the_product_default_microvms_command_is_local(monkeypatch) -> None:
+    """The window's microVM list has the same default as the other box
+    reads. HOST=local with the ssh-based microvms.sh is hostname `local`."""
+    monkeypatch.delenv("SELECTOR_BOX_MICROVMS_COMMAND", raising=False)
+    import sys
+    web = Path(__file__).resolve().parents[2] / "web"
+    sys.path.insert(0, str(web))
+    import microvms
+    assert Path(microvms.DEFAULT_COMMAND) == MICROVMS_LOCAL
+
+
 @pytest.mark.parametrize("source", BOX_SOURCES)
 def test_the_targets_checkout_token_and_image_reach_the_run(box_runner: Runner, source: Path) -> None:
     """The contract: a target's checkout, token and guest image reach the Run
@@ -453,6 +466,22 @@ def test_the_status_read_reports_the_targets_image(box_runner: Runner) -> None:
 
 def test_the_status_read_refuses_without_a_box(box_runner: Runner) -> None:
     result = box_runner.run(FACTS_SOURCE, SELECTOR_BOX_HOST="")
+
+    assert result.returncode != 0
+    assert "SELECTOR_BOX_HOST" in result.stderr
+
+
+def test_the_microvms_read_lists_over_ssh(box_runner: Runner) -> None:
+    result = box_runner.run(MICROVMS_SOURCE, **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    sent = box_runner.sent().replace("\\n", "\n")
+    assert "ls --json" in sent
+    assert "root@box.invalid" in box_runner.sent()
+
+
+def test_the_microvms_read_refuses_without_a_box(box_runner: Runner) -> None:
+    result = box_runner.run(MICROVMS_SOURCE, SELECTOR_BOX_HOST="")
 
     assert result.returncode != 0
     assert "SELECTOR_BOX_HOST" in result.stderr
