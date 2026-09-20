@@ -16,7 +16,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}{% endblock %} // Tracewake</title>
+{# Home is the product name alone. Other pages fill `title` and the base
+   appends " // Tracewake"; `full_title` lets home skip that suffix. #}
+<title>{% block full_title %}{% block title %}{% endblock %} // Tracewake{% endblock %}</title>
 <link rel="stylesheet" href="{{ static_base }}/terminal.css">
 <link rel="stylesheet" href="{{ static_base }}/loop.css">
 {# HTMX does the swapping. Not deferred: the live region below is processed
