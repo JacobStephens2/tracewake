@@ -78,7 +78,7 @@ import dispatch  # noqa: E402
 import events  # noqa: E402
 import journal  # noqa: E402
 import targets  # noqa: E402
-from drain import CycleFailed, run_cycle  # noqa: E402
+from drain import CycleFailed, CycleResult, run_cycle  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
@@ -249,7 +249,7 @@ def _run_targets(
     configs: tuple[targets.Config, ...],
     *,
     dry_run: bool,
-) -> tuple[list[dict | None], CycleFailed | None]:
+) -> tuple[list[CycleResult | None], CycleFailed | None]:
     """Work every target. Sequential when K is 1; concurrent otherwise.
 
     One Cycle per target, each with its own `cycle.started` / `cycle.finished`
@@ -286,7 +286,7 @@ def _run_targets(
         ], None
 
     slots = threading.BoundedSemaphore(concurrency)
-    summaries: list[dict | None] = [None] * len(configs)
+    summaries: list[CycleResult | None] = [None] * len(configs)
     errors: list[CycleFailed] = []
 
     def run_one(index: int, config: targets.Config) -> None:
@@ -314,29 +314,29 @@ def _run_targets(
     return summaries, (errors[0] if errors else None)
 
 
-def _report(summary: dict) -> None:
-    print(f"considered   {summary['considered']}")
-    print(f"eligible     {summary['eligible'] or 'none'}")
-    for reason, count in sorted(summary["skipped"].items()):
+def _report(summary: CycleResult) -> None:
+    print(f"considered   {summary.considered}")
+    print(f"eligible     {summary.eligible or 'none'}")
+    for reason, count in sorted(summary.skipped.items()):
         print(f"  skipped    {count} x {reason}")
-    if summary["returned"]:
-        print(f"returned     {summary['returned']} (commented, swapped to needs-info)")
-    if summary.get("return_failures"):
-        print(f"  FAILED     {summary['return_failures']} issue(s) could not be returned")
-    if summary.get("updated_proposals"):
-        print(f"proposals    {', '.join(str(p) for p in summary['updated_proposals'])} updated")
-    if summary.get("reconciled_proposals"):
-        print(f"reconciled   {', '.join(str(p) for p in summary['reconciled_proposals'])} reconciled")
-    if summary.get("reconcile_failures"):
-        print(f"  FAILED     {', '.join(str(p) for p in summary['reconcile_failures'])} proposal(s) could not be reconciled")
-    if summary.get("dispatches"):
-        print(f"dispatches   {', '.join(f'#{n}' for n in summary['dispatches'])}")
-    elif summary["picked"]:
-        suffix = " (dry run - not dispatched)" if summary["dry_run"] else ""
-        print(f"pick         #{summary['picked']}{suffix}")
+    if summary.returned:
+        print(f"returned     {summary.returned} (commented, swapped to needs-info)")
+    if summary.return_failures:
+        print(f"  FAILED     {summary.return_failures} issue(s) could not be returned")
+    if summary.updated_proposals:
+        print(f"proposals    {', '.join(str(p) for p in summary.updated_proposals)} updated")
+    if summary.reconciled_proposals:
+        print(f"reconciled   {', '.join(str(p) for p in summary.reconciled_proposals)} reconciled")
+    if summary.reconcile_failures:
+        print(f"  FAILED     {', '.join(str(p) for p in summary.reconcile_failures)} proposal(s) could not be reconciled")
+    if summary.dispatches:
+        print(f"dispatches   {', '.join(f'#{n}' for n in summary.dispatches)}")
+    elif summary.picked:
+        suffix = " (dry run - not dispatched)" if summary.dry_run else ""
+        print(f"pick         #{summary.picked}{suffix}")
     else:
-        print(f"pick         none ({summary['halted']})")
-    outcome = summary.get("outcome")
+        print(f"pick         none ({summary.halted})")
+    outcome = summary.outcome
     if outcome:
         print(f"branch       {outcome['branch']}")
         print(
@@ -346,10 +346,10 @@ def _report(summary: dict) -> None:
             f" faults {outcome.get('faults', '?')})"
         )
         print(f"proposal     {outcome.get('proposal') or 'none'}")
-    if summary.get("route"):
-        print(f"routed       {summary['route']}")
+    if summary.route:
+        print(f"routed       {summary.route}")
     print(
-        f"budget       {summary['awaiting_review']}/{summary['review_cap']}"
+        f"budget       {summary.awaiting_review}/{summary.review_cap}"
         f" awaiting review"
     )
 
@@ -430,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
                 if len(configs) > 1:
                     print(f"target       {config.task_repo}")
                 _report(summary)
-                failures += summary.get("return_failures") or 0
+                failures += summary.return_failures
             if target_error is not None:
                 raise target_error
     except CycleFailed as exc:

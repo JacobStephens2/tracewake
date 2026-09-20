@@ -502,6 +502,36 @@ def review_budget(
     }
 
 
+@dataclass(frozen=True)
+class CycleResult:
+    """What one Cycle did, as one value.
+
+    Twelve facts are journaled as `cycle.finished`. The other six are not:
+    they exist so the printed report and the firing's exit code can name a
+    refused hand-back, the last Run, the last Route, and which Proposals
+    were updated or reconciled, without changing the Journal's shape.
+    """
+
+    cycle: int
+    considered: int
+    eligible: list[int]
+    skipped: dict[str, int]
+    picked: int | None
+    dispatches: list[int]
+    halted: str | None
+    in_flight: list[int] | None
+    awaiting_review: int
+    review_cap: int
+    returned: list[int]
+    dry_run: bool
+    return_failures: int
+    outcome: dict | None
+    route: str | None
+    updated_proposals: list[str]
+    reconciled_proposals: list[str]
+    reconcile_failures: list[str]
+
+
 def run_cycle(
     conn: psycopg.Connection,
     config: Config,
@@ -509,7 +539,7 @@ def run_cycle(
     *,
     dry_run: bool,
     slots: threading.Semaphore | None = None,
-) -> dict:
+) -> CycleResult:
     """One cycle. Returns the summary it journaled, plus what it then did.
 
     `slots` is the instance-wide cap on concurrent Dispatches (issue #37).
@@ -752,31 +782,47 @@ def run_cycle(
         if dry_run or not pick:
             break
 
-    summary = {
-        "cycle": cycle_id,
-        "considered": first_considered if first_considered is not None else 0,
-        "eligible": last_eligible,
-        "skipped": skipped,
-        "picked": dispatches[0] if dispatches else (first_pick["number"] if first_pick else None),
-        "dispatches": dispatches,
-        "halted": halted,
-        "in_flight": last_spend.in_flight if last_spend else None,
-        "awaiting_review": (
+    result = CycleResult(
+        cycle=cycle_id,
+        considered=first_considered if first_considered is not None else 0,
+        eligible=last_eligible,
+        skipped=skipped,
+        picked=dispatches[0] if dispatches else (first_pick["number"] if first_pick else None),
+        dispatches=dispatches,
+        halted=halted,
+        in_flight=last_spend.in_flight if last_spend else None,
+        awaiting_review=(
             last_budget["count"]
             if last_budget and last_budget["count"] is not None
             else 0
         ),
-        "review_cap": config.review_cap,
-        "returned": returned,
-        "dry_run": dry_run,
-    }
+        review_cap=config.review_cap,
+        returned=returned,
+        dry_run=dry_run,
+        return_failures=return_failures,
+        outcome=outcomes[-1] if outcomes else None,
+        route=routes[-1] if routes else None,
+        updated_proposals=sorted(str(p) for p in updated_proposals),
+        reconciled_proposals=sorted(str(p) for p in reconciled_proposals),
+        reconcile_failures=sorted(str(p) for p in reconcile_failed_proposals),
+    )
     # One cycle summary per drain names every dispatch and the reason it stopped.
-    journal.append(conn, *events.cycle_finished(**summary))
-
-    summary["return_failures"] = return_failures
-    summary["outcome"] = outcomes[-1] if outcomes else None
-    summary["route"] = routes[-1] if routes else None
-    summary["updated_proposals"] = sorted(str(p) for p in updated_proposals)
-    summary["reconciled_proposals"] = sorted(str(p) for p in reconciled_proposals)
-    summary["reconcile_failures"] = sorted(str(p) for p in reconcile_failed_proposals)
-    return summary
+    # The six extra fields stay on the value; extra kwargs would TypeError.
+    journal.append(
+        conn,
+        *events.cycle_finished(
+            cycle=result.cycle,
+            considered=result.considered,
+            eligible=result.eligible,
+            skipped=result.skipped,
+            picked=result.picked,
+            dispatches=result.dispatches,
+            halted=result.halted,
+            in_flight=result.in_flight,
+            awaiting_review=result.awaiting_review,
+            review_cap=result.review_cap,
+            returned=result.returned,
+            dry_run=result.dry_run,
+        ),
+    )
+    return result
