@@ -157,7 +157,7 @@ address or a command have no default at all:
 | `SELECTOR_BOX_COMMAND` | `box-sources/local.sh` | the box, and the Run on it. `box-sources/ssh.sh` is the remote-Box substitute |
 | `SELECTOR_ISSUE_COMMAND` | `issue-sources/github.sh` | comments and label swaps |
 | `SELECTOR_COMMAND_TIMEOUT_SECONDS` | `300` | git, Seeding, tracker writes |
-| `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
+| `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `23400` | backstop for a wedged Run |
 | `SELECTOR_CHECKS_TIMEOUT_SECONDS` | `900` | how long a Proposal's checks may stay pending |
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
 | `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card. Single-Host instances use `box-sources/facts-local.sh` |

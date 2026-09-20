@@ -28,7 +28,7 @@
 
 # How long one Iteration may run before it is killed. A hung agent process
 # stalling the whole Run is the failure mode both published sources leave open.
-: "${LOOP_ITERATION_TIMEOUT_SECONDS:=900}"   # 15 minutes
+: "${LOOP_ITERATION_TIMEOUT_SECONDS:=7200}"  # 2 hours
 
 # How many turns the agent may take inside one Iteration. Cuts off an agent that
 # starts thrashing *inside* the Iteration rather than at its edge.
@@ -36,16 +36,18 @@
 # Was 40, which the first Run found too small (#83): Iteration 1 spent all forty
 # reading a 128-occurrence classification task, wrote a file, and ran out before
 # it could commit - so a whole Iteration's work landed as an uncommitted diff and
-# a No-op. 100 is the wall clock's answer rather than a guess: forty turns took
-# about four and a half minutes, so a hundred is roughly eleven, which leaves
-# headroom under the fifteen-minute Iteration timeout. The two bounds should not
-# fire at the same moment; whichever bites first should bite alone, or a Run
-# cannot say which one it was.
+# a No-op. 100 stands: the wall-clock kills on record are the clock firing, not
+# the turns running out, and under a two-hour Iteration timeout the turn bound
+# bites long before the clock does. The two bounds should not fire at the same
+# moment; whichever bites first should bite alone, or a Run cannot say which
+# one it was.
 : "${LOOP_MAX_TURNS:=100}"
 
 # How long the whole Run may last. Ends a Run where every Iteration runs long
-# before the iteration cap would.
-: "${LOOP_RUN_TIMEOUT_SECONDS:=5400}"        # 90 minutes
+# before the iteration cap would. Six hours admits three full-length Iterations
+# plus the checkout, the proposal and the notification; longer than that and
+# the Run is thrashing, not working.
+: "${LOOP_RUN_TIMEOUT_SECONDS:=21600}"       # 6 hours
 
 # How many consecutive No-op Iterations abort the Run. A No-op Iteration is one
 # after which the repository head is unchanged. Huntley names an agent stuck
