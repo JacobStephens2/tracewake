@@ -1190,10 +1190,12 @@ def _loop_context(request: Request) -> dict:
         "timer_start_url": _path(request, "/loop/timer/start"),
         "timer_stop_url": _path(request, "/loop/timer/stop"),
         "target_remove_url": _path(request, "/loop/targets/remove"),
+        "target_add_url": _path(request, "/loop/targets/add"),
         # Set by the toggle below when the control fails; the cell says it.
         # None on every other render, so the template needs no default.
         "timer_error": None,
         "target_error": None,
+        "target_draft": {},
     }
 
 
@@ -1311,6 +1313,22 @@ def stop_timer(request: Request):
     return _set_timer(request, "stop")
 
 
+def _targets_changed(
+    request: Request,
+    error: str | None,
+    draft: dict[str, str] | None = None,
+):
+    """Reload `/` after a Target list change, or return the section with why not."""
+    if error is None:
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = _path(request, "/")
+        return response
+    context = _loop_context(request)
+    context["target_error"] = error
+    context["target_draft"] = draft or {}
+    return _page(request, "_targets.html", context)
+
+
 @controls.post("/loop/targets/remove", response_class=HTMLResponse)
 def remove_target(request: Request, repo: str = Form("")):
     """Unenroll one Target.
@@ -1330,13 +1348,72 @@ def remove_target(request: Request, repo: str = Form("")):
             error = None
         except targets.NotConfigured as exc:
             error = str(exc)
-    if error is None:
-        response = HTMLResponse("")
-        response.headers["HX-Redirect"] = _path(request, "/")
-        return response
-    context = _loop_context(request)
-    context["target_error"] = error
-    return _page(request, "_targets.html", context)
+    return _targets_changed(request, error)
+
+
+def _stanza_from_form(
+    repo: str,
+    work_repo: str,
+    box_repo: str,
+    token_file: str,
+    guest_template: str,
+    labeler_allowlist: str,
+) -> dict:
+    """The submitted fields as a stanza `Target.load` will validate.
+
+    `labeler_allowlist` is typed as names separated by commas or newlines,
+    because a bare string is the dangerous TOML spelling and this form
+    must not reproduce it.
+    """
+    return {
+        "repo": repo.strip(),
+        "work_repo": work_repo.strip(),
+        "box_repo": box_repo.strip(),
+        "token_file": token_file.strip(),
+        "guest_template": guest_template.strip(),
+        "labeler_allowlist": [
+            name.strip()
+            for name in labeler_allowlist.replace("\n", ",").split(",")
+            if name.strip()
+        ],
+    }
+
+
+@controls.post("/loop/targets/add", response_class=HTMLResponse)
+def add_target(
+    request: Request,
+    repo: str = Form(""),
+    work_repo: str = Form(""),
+    box_repo: str = Form(""),
+    token_file: str = Form(""),
+    guest_template: str = Form(""),
+    labeler_allowlist: str = Form(""),
+):
+    """Enroll one Target.
+
+    The stanza is appended to the targets file; Host checkouts and token
+    files are not created. Success reloads the home page so the queue
+    board matches the list (the first stanza, or this one if it is the
+    first). A failure is a sentence on the section, with the submitted
+    values still in the form.
+    """
+    draft = {
+        "repo": repo,
+        "work_repo": work_repo,
+        "box_repo": box_repo,
+        "token_file": token_file,
+        "guest_template": guest_template,
+        "labeler_allowlist": labeler_allowlist,
+    }
+    try:
+        targets.add(_stanza_from_form(
+            repo, work_repo, box_repo, token_file,
+            guest_template, labeler_allowlist,
+        ))
+        error = None
+    except targets.NotConfigured as exc:
+        error = str(exc)
+    return _targets_changed(request, error, draft if error else None)
 
 
 app.include_router(controls)

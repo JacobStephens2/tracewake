@@ -554,6 +554,8 @@ def _write(path: Path, remaining: tuple[Target, ...]) -> None:
         tmp.write_text(text, encoding="utf-8")
         if path.exists():
             tmp.chmod(path.stat().st_mode)
+        else:
+            tmp.chmod(0o600)
         os.replace(tmp, path)
     except OSError as exc:
         try:
@@ -563,6 +565,48 @@ def _write(path: Path, remaining: tuple[Target, ...]) -> None:
         raise NotConfigured(
             f"{TARGETS_FILE_VAR} names {path}, which could not be written: {exc}"
         ) from exc
+
+
+def _existing(where: Path) -> tuple[Target, ...]:
+    """The targets already declared, or none.
+
+    A missing file or a file with no `[[target]]` is an empty instance,
+    which is what add() writes into. A file that exists and is malformed
+    is not: overwriting it would hide the diagnosis.
+    """
+    if not where.exists():
+        return ()
+    try:
+        return load(where)
+    except NotConfigured as exc:
+        try:
+            document = tomllib.loads(where.read_bytes().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+            raise exc
+        if document.get("target"):
+            raise exc
+        return ()
+
+
+def add(stanza: dict[str, Any], path: Path | None = None) -> tuple[Target, ...]:
+    """Enroll one Target: append its stanza, leave the rest in file order.
+
+    The Host's checkouts and token files are not created. Adding a Target
+    is putting it on the Cycle's list, not provisioning the machine it
+    will run on.
+    """
+    where = path or targets_file()
+    current = _existing(where)
+    incoming = Target.load(stanza, where=str(where), index=len(current) + 1)
+    if incoming.repo in {target.repo for target in current}:
+        raise NotConfigured(
+            f"{where} already declares {incoming.repo}. Two stanzas for one"
+            " repository would be two review caps and two work checkouts for"
+            " one queue."
+        )
+    remaining = current + (incoming,)
+    _write(where, remaining)
+    return remaining
 
 
 def remove(repo: str, path: Path | None = None) -> tuple[Target, ...]:

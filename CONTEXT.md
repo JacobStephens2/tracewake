@@ -96,8 +96,8 @@ _Avoid_: user, login, viewer (the role is reader), operator
 
 **Admin**:
 The Window Account role that may change the Instance from the window - today,
-pause and resume. Any number of accounts may carry it; none of them is the
-Operator.
+pause and resume, the Selector timer, and the Target list. Any number of
+accounts may carry it; none of them is the Operator.
 _Avoid_: operator, owner, superuser
 
 **Reader**:

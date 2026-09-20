@@ -274,6 +274,103 @@ def test_removing_a_target_does_not_delete_its_host_files(tmp_path):
     assert token.read_text() == "secret\n"
 
 
+# --- Adding a target ---------------------------------------------------------
+#
+# The window's Add form writes a stanza. Same seam as remove: the file is
+# what a Cycle reads next, in file order, with every required value named
+# by the operator and none invented.
+
+
+def _stanza(**over):
+    stanza = {
+        "repo": "acme/gamma",
+        "work_repo": "/nonexistent/work/gamma",
+        "box_repo": "/nonexistent/box/gamma",
+        "token_file": "/nonexistent/token/gamma",
+        "guest_template": "gamma-guest:1",
+        "labeler_allowlist": ["an-operator"],
+    }
+    stanza.update(over)
+    return stanza
+
+
+def test_adding_a_target_appends_it_in_file_order(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"}, {"repo": "acme/beta"})
+    remaining = targets.add(_stanza(), path)
+    assert [t.repo for t in remaining] == [
+        "acme/alpha", "acme/beta", "acme/gamma",
+    ]
+    assert [t.repo for t in targets.load(path)] == [
+        "acme/alpha", "acme/beta", "acme/gamma",
+    ]
+
+
+def test_adding_a_target_keeps_the_values_already_declared(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {
+            "repo": "acme/alpha",
+            "review_cap": 3,
+            "labels": {"review": "second-look"},
+        },
+    )
+    targets.add(_stanza(), path)
+    alpha, gamma = targets.load(path)
+    assert alpha.review_cap == 3
+    assert alpha.labels.review == "second-look"
+    assert gamma.repo == "acme/gamma"
+    assert gamma.labeler_allowlist == ("an-operator",)
+
+
+def test_adding_the_first_target_to_an_empty_file_enrolls_it(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    targets.remove("acme/alpha", path)
+    remaining = targets.add(_stanza(), path)
+    assert [t.repo for t in remaining] == ["acme/gamma"]
+    (loaded,) = targets.load(path)
+    assert loaded.repo == "acme/gamma"
+
+
+def test_adding_the_first_target_creates_a_missing_file(tmp_path):
+    path = tmp_path / "targets.toml"
+    assert path.exists() is False
+    remaining = targets.add(_stanza(), path)
+    assert [t.repo for t in remaining] == ["acme/gamma"]
+    (loaded,) = targets.load(path)
+    assert loaded.repo == "acme/gamma"
+
+
+def test_adding_a_repository_already_declared_is_refused(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.add(_stanza(repo="acme/alpha"), path)
+    assert "acme/alpha" in str(raised.value)
+    (still,) = targets.load(path)
+    assert still.repo == "acme/alpha"
+
+
+def test_adding_does_not_overwrite_a_malformed_file(tmp_path):
+    path = tmp_path / "targets.toml"
+    path.write_text("this is not toml {\n")
+    with pytest.raises(targets.NotConfigured):
+        targets.add(_stanza(), path)
+    assert path.read_text() == "this is not toml {\n"
+
+
+def test_adding_a_stanza_short_of_a_required_value_is_refused(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.add(_stanza(token_file=""), path)
+    assert "token_file" in str(raised.value)
+    (still,) = targets.load(path)
+    assert still.repo == "acme/alpha"
+
+
 def test_a_single_stanza_may_be_written_as_a_table(tmp_path):
     """`[target]` and `[[target]]` mean the same thing to a reader, and a
     single-target instance is the common case."""

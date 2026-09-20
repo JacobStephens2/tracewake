@@ -1177,6 +1177,18 @@ MUTATIONS = {
         "        where.unlink()\n"
         "    return remaining\n",
     ),
+    # Add drops the incoming stanza on the floor, so the window reports
+    # success and a Cycle never sees the Target the operator enrolled.
+    "add-does-not-append": (TARGETS, TARGETS_SUITE,
+        "    remaining = current + (incoming,)\n",
+        "    remaining = current\n",
+    ),
+    # A second stanza for the same repository is written, so two review
+    # caps and two work checkouts share one queue.
+    "add-duplicate-is-silent": (TARGETS, TARGETS_SUITE,
+        "    if incoming.repo in {target.repo for target in current}:\n",
+        "    if False and incoming.repo in {target.repo for target in current}:\n",
+    ),
     # The local box's checkout stops being required, so an instance that
     # configured none runs against whatever directory happens to be empty or current.
     "local-box-repo-not-required": (LOCAL_SOURCE, BOX_SOURCE_SUITE,

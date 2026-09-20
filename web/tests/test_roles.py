@@ -147,6 +147,8 @@ def test_the_readers_board_carries_no_control_affordances(db):
     assert "/loop/resume" not in body
     assert ">Remove</button>" not in body
     assert "/loop/targets/remove" not in body
+    assert "Add Target" not in body
+    assert "/loop/targets/add" not in body
     with journal.connect() as conn:
         control.set_paused(conn, True)
     paused = client.get("/").text
