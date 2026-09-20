@@ -21,11 +21,13 @@
 #      (see its header) and is what deploy/ansible's tracewake_controller
 #      role already runs on every apply.
 #   5. Writes the window's timer sudoers drop-in and the conductor-loop
-#      sudoers drop-in (both visudo-validated) and clears NoNewPrivileges
-#      on the installed window unit. Ansible does this on provision; CD
-#      does it too because a Host stood up before the rules existed would
-#      otherwise keep a dead Start/Stop toggle, or a box card that SSHes
-#      to hostname `local`, after every merge.
+#      sudoers drop-in (both visudo-validated), clears NoNewPrivileges on
+#      the installed window unit, and opens ReadWritePaths on the config
+#      directory so Remove can rewrite the targets file under
+#      ProtectSystem=full. Ansible does this on provision; CD does it too
+#      because a Host stood up before the rules existed would otherwise
+#      keep a dead Start/Stop toggle, a box card that SSHes to hostname
+#      `local`, or a Remove that cannot write, after every merge.
 #   6. Reloads systemd and restarts the long-lived units (the window and
 #      the notifier). The cycle unit is a oneshot behind a timer, so the
 #      next trigger picks the new tree up on its own.
@@ -118,6 +120,17 @@ rm -f "$LOOP_SUDOERS_TMP"
 WEB_UNIT=/etc/systemd/system/tracewake-web.service
 if [ -f "$WEB_UNIT" ] && grep -q '^NoNewPrivileges=true' "$WEB_UNIT"; then
   sed -i '/^NoNewPrivileges=true$/d' "$WEB_UNIT"
+fi
+
+# Remove on `/` rewrites the targets file. ProtectSystem=full mounts /etc
+# read-only; punch a hole for the config directory. Ansible templates this
+# into a new unit; CD keeps it on a Host that already has one, or the
+# button reports the file could not be written after every merge.
+CONFIG_DIR="${TRACEWAKE_CONFIG_DIR:-/etc/tracewake}"
+if [ -f "$WEB_UNIT" ] && grep -q '^ProtectSystem=full' "$WEB_UNIT"; then
+  if ! grep -q '^ReadWritePaths=' "$WEB_UNIT"; then
+    sed -i "/^ProtectSystem=full\$/a ReadWritePaths=${CONFIG_DIR}" "$WEB_UNIT"
+  fi
 fi
 
 systemctl daemon-reload

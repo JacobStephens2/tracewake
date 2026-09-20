@@ -207,6 +207,16 @@ def test_single_host_box_reads_have_a_scoped_sudoers_rule():
         assert "ALL" not in rule.replace("ALL=(loop:loop)", "")
 
 
+def test_cd_update_lets_the_window_rewrite_the_targets_file():
+    """Ansible templates ReadWritePaths into a new unit. CD must keep the
+    hole on a Host that already has ProtectSystem=full, or Remove reports
+    the file could not be written after every merge.
+    """
+    script = (ROOT / "deploy" / "cd-update.sh").read_text()
+    assert "ReadWritePaths=" in script
+    assert "ProtectSystem=full" in script
+
+
 def test_cd_update_installs_the_conductor_loop_sudoers():
     """Ansible writes /etc/sudoers.d/conductor-loop on provision. CD must
     keep the local status reads there too: a Host that only had local.sh

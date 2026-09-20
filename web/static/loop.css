@@ -121,12 +121,30 @@ form.sign-out button {
   list-style: none;
   margin: 0;
 }
-.targets li { padding: 0.15rem 0; }
+.targets li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+}
+.targets li .btn { flex: 0 0 auto; }
 .targets .detail { color: var(--secondary-color); }
+.targets .alarm { color: var(--error-color); }
+.targets form.target-add {
+  margin-top: 1rem;
+  max-width: 36rem;
+}
+.targets form.target-add p { margin: 0 0 0.6rem; }
+.targets form.target-add label {
+  display: block;
+  color: var(--secondary-color);
+  font-size: 0.85em;
+}
+.targets form.target-add input { width: 100%; }
 
-/* The page's only control (#161). Paused is a page-wide operating state, so
-   its banner sits above the strip rather than pretending to be one status
-   cell among four. */
+/* Pause (#161) is a page-wide operating state, so its banner sits above
+   the strip rather than pretending to be one status cell among four. */
 .pause-control {
   display: flex;
   justify-content: flex-end;

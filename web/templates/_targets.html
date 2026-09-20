@@ -1,0 +1,76 @@
+{#- The instance's Targets. The queue columns every stanza, each card
+    naming its repository; this list is the same file, in the same
+    order a Cycle reads. Shown on the shell rather than in the live
+    region because it is configuration, not a Journal replay. An admin
+    may enroll or unenroll here: success reloads the page so the board
+    matches; a failure swaps this fragment so the list can say why. -#}
+<details class="fold targets" data-fold="targets" open>
+  <summary><h2>Targets</h2></summary>
+  <p>The repositories this instance reads issues from. A Cycle works
+     them in this order.</p>
+  {% if target_error %}
+  <p class="detail alarm">{{ target_error }}</p>
+  {% endif %}
+  {% if targets %}
+  <ul>
+    {% for repo in targets %}
+    <li>
+      <code>{{ repo }}</code>
+      {% if can_control %}
+      <button type="button" class="btn btn-error btn-ghost btn-small"
+              hx-post="{{ target_remove_url }}"
+              hx-vals='{"repo": {{ repo | tojson }}}'
+              hx-target="#targets"
+              hx-swap="innerHTML"
+              hx-confirm="Remove {{ repo }} from this instance? A Cycle will no longer read issues from it.">Remove</button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="detail">{{ unconfigured }}</p>
+  {% endif %}
+  {% if can_control %}
+  <form class="target-add"
+        hx-post="{{ target_add_url }}"
+        hx-target="#targets"
+        hx-swap="innerHTML">
+    <p>Declare a Target. The checkout and token file must already exist
+       on the Host; this writes the stanza a Cycle reads.</p>
+    <p>
+      <label for="target-repo">repo</label>
+      <input type="text" id="target-repo" name="repo"
+             value="{{ target_draft.repo | default('') }}"
+             placeholder="owner/name" required>
+    </p>
+    <p>
+      <label for="target-work-repo">work_repo</label>
+      <input type="text" id="target-work-repo" name="work_repo"
+             value="{{ target_draft.work_repo | default('') }}" required>
+    </p>
+    <p>
+      <label for="target-box-repo">box_repo</label>
+      <input type="text" id="target-box-repo" name="box_repo"
+             value="{{ target_draft.box_repo | default('') }}" required>
+    </p>
+    <p>
+      <label for="target-token-file">token_file</label>
+      <input type="text" id="target-token-file" name="token_file"
+             value="{{ target_draft.token_file | default('') }}" required>
+    </p>
+    <p>
+      <label for="target-guest-template">guest_template</label>
+      <input type="text" id="target-guest-template" name="guest_template"
+             value="{{ target_draft.guest_template | default('') }}" required>
+    </p>
+    <p>
+      <label for="target-labeler-allowlist">labeler_allowlist</label>
+      <input type="text" id="target-labeler-allowlist" name="labeler_allowlist"
+             value="{{ target_draft.labeler_allowlist | default('') }}"
+             placeholder="accounts that may apply the Handover label"
+             required>
+    </p>
+    <p><button type="submit" class="btn btn-primary">Add Target</button></p>
+  </form>
+  {% endif %}
+</details>

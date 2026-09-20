@@ -495,6 +495,135 @@ def load(path: Path | None = None) -> tuple[Target, ...]:
     return targets
 
 
+def _literal(value: Any) -> str:
+    """One TOML value, quoted the way a stanza is written by hand."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_literal(item) for item in value) + "]"
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _dump(remaining: tuple[Target, ...]) -> str:
+    """The remaining stanzas as TOML, or a comment when there are none.
+
+    An empty instance is a file with no `[[target]]`, not a deleted file:
+    the variable still names something readable, and the next load is the
+    same refusal a Cycle already journals at preflight.
+    """
+    if not remaining:
+        return (
+            "# No [[target]] stanzas. A Cycle refuses at preflight until one"
+            " is declared.\n"
+        )
+    chunks = []
+    for target in remaining:
+        lines = [
+            "[[target]]",
+            f"repo = {_literal(target.repo)}",
+            f"work_repo = {_literal(str(target.work_repo))}",
+            f"box_repo = {_literal(target.box_repo)}",
+            f"token_file = {_literal(target.token_file)}",
+            f"guest_template = {_literal(target.guest_template)}",
+            f"labeler_allowlist = {_literal(target.labeler_allowlist)}",
+        ]
+        if target.review_cap != DEFAULT_REVIEW_CAP:
+            lines.append(f"review_cap = {_literal(target.review_cap)}")
+        if target.landing != LANDING_MODES[0]:
+            lines.append(f"landing = {_literal(target.landing)}")
+        renamed = {
+            key: getattr(target.labels, key)
+            for key in DEFAULT_LABELS
+            if getattr(target.labels, key) != DEFAULT_LABELS[key]
+        }
+        if renamed:
+            lines.append("")
+            lines.append("[target.labels]")
+            lines += [f"{key} = {_literal(value)}" for key, value in renamed.items()]
+        chunks.append("\n".join(lines) + "\n")
+    return "\n".join(chunks)
+
+
+def _write(path: Path, remaining: tuple[Target, ...]) -> None:
+    """Replace the targets file atomically with the remaining stanzas."""
+    text = _dump(remaining)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        if path.exists():
+            tmp.chmod(path.stat().st_mode)
+        else:
+            tmp.chmod(0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise NotConfigured(
+            f"{TARGETS_FILE_VAR} names {path}, which could not be written: {exc}"
+        ) from exc
+
+
+def _existing(where: Path) -> tuple[Target, ...]:
+    """The targets already declared, or none.
+
+    A missing file or a file with no `[[target]]` is an empty instance,
+    which is what add() writes into. A file that exists and is malformed
+    is not: overwriting it would hide the diagnosis.
+    """
+    if not where.exists():
+        return ()
+    try:
+        return load(where)
+    except NotConfigured as exc:
+        try:
+            document = tomllib.loads(where.read_bytes().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+            raise exc
+        if document.get("target"):
+            raise exc
+        return ()
+
+
+def add(stanza: dict[str, Any], path: Path | None = None) -> tuple[Target, ...]:
+    """Enroll one Target: append its stanza, leave the rest in file order.
+
+    The Host's checkouts and token files are not created. Adding a Target
+    is putting it on the Cycle's list, not provisioning the machine it
+    will run on.
+    """
+    where = path or targets_file()
+    current = _existing(where)
+    incoming = Target.load(stanza, where=str(where), index=len(current) + 1)
+    if incoming.repo in {target.repo for target in current}:
+        raise NotConfigured(
+            f"{where} already declares {incoming.repo}. Two stanzas for one"
+            " repository would be two review caps and two work checkouts for"
+            " one queue."
+        )
+    remaining = current + (incoming,)
+    _write(where, remaining)
+    return remaining
+
+
+def remove(repo: str, path: Path | None = None) -> tuple[Target, ...]:
+    """Unenroll one Target: drop its stanza, leave the rest in file order.
+
+    The Host's checkouts and token files stay put. Removing a Target is
+    taking it off the Cycle's list, not cleaning the machine it ran on.
+    """
+    where = path or targets_file()
+    current = load(where)
+    remaining = tuple(target for target in current if target.repo != repo)
+    if len(remaining) == len(current):
+        raise _unknown_repo(repo, current)
+    _write(where, remaining)
+    return remaining
+
+
 def select(targets: tuple[Target, ...], repo: str | None) -> tuple[Target, ...]:
     """The targets a cycle is to work: all of them, or the one named.
 
@@ -507,7 +636,11 @@ def select(targets: tuple[Target, ...], repo: str | None) -> tuple[Target, ...]:
     for target in targets:
         if target.repo == repo:
             return (target,)
-    raise NotConfigured(
+    raise _unknown_repo(repo, targets)
+
+
+def _unknown_repo(repo: str, declared: tuple[Target, ...]) -> NotConfigured:
+    return NotConfigured(
         f"no target declares repo = {repo!r}. Declared: "
-        + ", ".join(target.repo for target in targets)
+        + ", ".join(target.repo for target in declared)
     )
