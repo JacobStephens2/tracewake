@@ -4,9 +4,10 @@
 #
 #   facts.sh
 #
-# The default SELECTOR_BOX_FACTS_COMMAND. Prints `LOOP_BOX_*=value` lines - the
-# same key=value shape run.sh ends a Run with, so nothing here needs a second
-# parser - and exits 0 when the box answered.
+# The remote-Box SELECTOR_BOX_FACTS_COMMAND. An instance substitutes this
+# for facts-local.sh. Prints `LOOP_BOX_*=value` lines - the same key=value
+# shape run.sh ends a Run with, so nothing here needs a second parser - and
+# exits 0 when the box answered.
 #
 # Four facts, and each is on the card for a reason (#156, #260):
 #

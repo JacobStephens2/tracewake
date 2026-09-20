@@ -253,3 +253,16 @@
     mode: "0440"
     validate: visudo -cf %s
   when: not ansible_check_mode or 'tracewake-selector-cycle.timer' in tracewake_units_on_box
+
+# The Cycle runs as the instance user; dispatch and the local box reads
+# execute as loop. Without these two read commands, a Single-Host instance
+# that sets SELECTOR_BOX_HOST=local keeps the ssh-based facts.sh and the
+# box card shows `ssh: Could not resolve hostname local`.
+- name: Let the Cycle become the Run account for dispatch and local box reads
+  ansible.builtin.template:
+    src: conductor-loop-sudoers.j2
+    dest: /etc/sudoers.d/conductor-loop
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s

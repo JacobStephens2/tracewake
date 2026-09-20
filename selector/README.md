@@ -160,7 +160,7 @@ address or a command have no default at all:
 | `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `23400` | backstop for a wedged Run |
 | `SELECTOR_CHECKS_TIMEOUT_SECONDS` | `900` | how long a Proposal's checks may stay pending |
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
-| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card. Single-Host instances use `box-sources/facts-local.sh` |
+| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts-local.sh` | the box, read for the status card. `box-sources/facts.sh` is the remote-Box substitute |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
 | `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
 | `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
@@ -272,7 +272,7 @@ Configuration:
 
 | variable | default | what it is |
 | --- | --- | --- |
-| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress.sh` | the box's Progress Log, read. Single-Host instances use `box-sources/progress-local.sh` |
+| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress-local.sh` | the box's Progress Log, read. `box-sources/progress.sh` is the remote-Box substitute |
 | `SELECTOR_WATCH_INTERVAL_SECONDS` | `60` | how often |
 | `SELECTOR_WATCH_TIMEOUT_SECONDS` | `30` | how long one read may take |
 | `SELECTOR_WATCH_CLOCK_SKEW_SECONDS` | `300` | how far the box's clock may sit behind this one |
@@ -542,8 +542,9 @@ of it and journaled the lot - so its record is the cycle summary, with
 and has no summary to carry the reason, so it needs a row of its own.
 
 **The box card.** Once per cycle - not in a dry run, which still reaches the
-tracker and nothing else - `box-sources/facts.sh` reads four facts off the
-box over SSH and they are journaled as `box.observed`:
+tracker and nothing else - `box-sources/facts-local.sh` reads four facts off
+the box (or `facts.sh` over SSH, when an instance substitutes it) and they
+are journaled as `box.observed`:
 
 | fact | why it is on the card |
 | --- | --- |
@@ -960,11 +961,12 @@ Detection precedes notification, or the mail is a guess.
   operator. This is the half of the work
   the box deliberately cannot do - its token holds no Issues permission at
   all - so every write to the tracker happens here.
-- `box-sources/facts.sh` - the default `SELECTOR_BOX_FACTS_COMMAND`: one SSH
+- `box-sources/facts.sh` - the remote-Box `SELECTOR_BOX_FACTS_COMMAND`: one SSH
   hop that reads what the box is holding - the Loop scripts' hash, the guest
   template its adapter would build, the installed agent version - and prints
   them as `LOOP_BOX_*=value` lines. Read-only, holds no credential, starts
-  nothing.
+  nothing. An instance substitutes this; INSTALL does not describe that
+  topology.
 - `guardrail-sources/protection.sh` - the default
   `SELECTOR_GUARDRAIL_COMMAND`: one `gh api` read of the rules on the ref the
   executed paths are deployed from, and one `git` comparison of the deployed
@@ -977,14 +979,16 @@ Detection precedes notification, or the mail is a guess.
   thread that polls the box for the length of a Run. It journals
   `run.iteration`, `run.contract` and `run.watch-failed` and nothing else, and
   it never raises into the dispatch it is watching.
-- `box-sources/progress.sh` - the default `SELECTOR_BOX_PROGRESS_COMMAND`: one
+- `box-sources/progress.sh` - the remote-Box `SELECTOR_BOX_PROGRESS_COMMAND`: one
   SSH hop that `cat`s the box checkout's Progress Log. Read-only, holds no
-  credential, touches no working tree.
-- `box-sources/facts-local.sh` - the Single-Host `SELECTOR_BOX_FACTS_COMMAND`
-  (ADR 0019): the same `LOOP_BOX_*` lines as `facts.sh` with no hop, becoming
-  the Run account through sudo before reading.
-- `box-sources/progress-local.sh` - the Single-Host
-  `SELECTOR_BOX_PROGRESS_COMMAND` (ADR 0019): the same Progress Log read with
+  credential, touches no working tree. An instance substitutes this.
+- `box-sources/facts-local.sh` - the default `SELECTOR_BOX_FACTS_COMMAND`
+  (ADR 0029): the same `LOOP_BOX_*` lines as `facts.sh` with no hop, becoming
+  the Run account through sudo before reading. Keeping `facts.sh` while the
+  host is `local` is the `ssh: Could not resolve hostname local` on the box
+  card.
+- `box-sources/progress-local.sh` - the default
+  `SELECTOR_BOX_PROGRESS_COMMAND` (ADR 0029): the same Progress Log read with
   no hop, under the same transition.
 - `box-sources/local.sh` - the default `SELECTOR_BOX_COMMAND` (ADR 0029):
   executes a Run on this Host without an SSH hop, gated by

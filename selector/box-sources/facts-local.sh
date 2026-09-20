@@ -4,10 +4,10 @@
 #
 #   facts-local.sh
 #
-# The Single-Host SELECTOR_BOX_FACTS_COMMAND (ADR 0019). Sibling to
+# The product-default SELECTOR_BOX_FACTS_COMMAND (ADR 0029). Sibling to
 # box-sources/facts.sh for the instance whose box is the controller itself
-# (ADR 0004): the same `LOOP_BOX_*=value` lines and the same rule - a fact
-# the box cannot answer is simply not printed, never guessed at. And no SSH
+# (ADR 0004, ADR 0019): the same `LOOP_BOX_*=value` lines and the same rule -
+# a fact the box cannot answer is simply not printed, never guessed at. And no SSH
 # hop, so no SELECTOR_BOX_HOST: keeping the ssh-based read while setting
 # that host to `local` is the `ssh: Could not resolve hostname local` the
 # box card carries.

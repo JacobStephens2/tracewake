@@ -1,0 +1,13 @@
+# Single-Host: the Cycle runs as the instance user; a Run and the local
+# box reads execute as loop. Only these three commands, only as loop:loop,
+# no SETENV.
+#
+# local.sh is dispatch (issue #62). facts-local.sh and progress-local.sh
+# are the status reads; without them HOST=local keeps facts.sh and the
+# box card shows `ssh: Could not resolve hostname local`.
+Defaults:{{ tracewake_user }} env_keep += "LOOP_*"
+Defaults:{{ tracewake_user }} env_keep += "SELECTOR_*"
+Defaults:{{ tracewake_user }} env_keep += "TRACEWAKE_*"
+{{ tracewake_user }} ALL=(loop:loop) NOPASSWD: {{ tracewake_dir }}/selector/box-sources/local.sh *
+{{ tracewake_user }} ALL=(loop:loop) NOPASSWD: {{ tracewake_dir }}/selector/box-sources/facts-local.sh
+{{ tracewake_user }} ALL=(loop:loop) NOPASSWD: {{ tracewake_dir }}/selector/box-sources/progress-local.sh *

@@ -31,12 +31,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import cycle  # noqa: E402
 import dispatch  # noqa: E402
 import targets  # noqa: E402
+import watcher  # noqa: E402
 
 SSH_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "ssh.sh"
 LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "local.sh"
 FACTS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "facts.sh"
+FACTS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "facts-local.sh"
+PROGRESS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "progress-local.sh"
 
 BOX_SOURCES = [SSH_SOURCE, LOCAL_SOURCE]
 
@@ -277,11 +281,8 @@ def test_the_ssh_box_command_remains_in_the_tree_and_tested() -> None:
     assert SSH_SOURCE in BOX_SOURCES
 
 
-def test_the_product_default_box_command_is_local(monkeypatch) -> None:
-    """Single-Host is the product default. ssh.sh is the substitute an
-    instance opts into, not the fallback an unset instance gets."""
-    monkeypatch.delenv("SELECTOR_BOX_COMMAND", raising=False)
-    target = targets.Target(
+def _a_target() -> targets.Target:
+    return targets.Target(
         repo="acme/widgets",
         labels=targets.Labels(
             ready="ready-for-agent",
@@ -297,8 +298,31 @@ def test_the_product_default_box_command_is_local(monkeypatch) -> None:
         landing="propose",
         review_cap=20,
     )
-    config = dispatch.DispatchConfig.for_target(target)
+
+
+def test_the_product_default_box_command_is_local(monkeypatch) -> None:
+    """Single-Host is the product default. ssh.sh is the substitute an
+    instance opts into, not the fallback an unset instance gets."""
+    monkeypatch.delenv("SELECTOR_BOX_COMMAND", raising=False)
+    config = dispatch.DispatchConfig.for_target(_a_target())
     assert Path(config.box_command) == LOCAL_SOURCE
+
+
+def test_the_product_default_box_facts_command_is_local(monkeypatch) -> None:
+    """The box card's read has the same default as dispatch. HOST=local with
+    the ssh-based facts.sh is the `Could not resolve hostname local` the
+    window shows; facts-local.sh is what that combination is missing."""
+    monkeypatch.delenv("SELECTOR_BOX_FACTS_COMMAND", raising=False)
+    config = cycle.Config.for_target(_a_target())
+    assert Path(config.box_facts_command) == FACTS_LOCAL
+
+
+def test_the_product_default_box_progress_command_is_local(monkeypatch) -> None:
+    """The watcher's read follows the same default: progress.sh SSHes to
+    SELECTOR_BOX_HOST, so an unset instance with HOST=local cannot watch."""
+    monkeypatch.delenv("SELECTOR_BOX_PROGRESS_COMMAND", raising=False)
+    config = watcher.WatchConfig.for_target(_a_target())
+    assert Path(config.progress_command) == PROGRESS_LOCAL
 
 
 @pytest.mark.parametrize("source", BOX_SOURCES)
