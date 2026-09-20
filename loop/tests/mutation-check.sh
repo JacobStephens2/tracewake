@@ -4,6 +4,10 @@
 #
 #   tests/mutation-check.sh [--only <script>] [bats-command]
 #
+# `--only` names a subject script (run.sh, agents/grok.sh), not a mutation.
+# Named-entry filtering is a Selector-table concern; this grain is already
+# one script, one suite, one mutations file.
+#
 # Deliberately breaks one thing at a time - a bound of the Termination Contract
 # in run.sh, a guard in the credential inventory - runs that script's suite
 # against the broken copy, and reports how many tests went red. Anything whose

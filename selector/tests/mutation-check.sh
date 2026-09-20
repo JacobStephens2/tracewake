@@ -2,7 +2,7 @@
 #
 # Mutation-check the Selector's offline suites.
 #
-#   tests/mutation-check.sh [python]
+#   tests/mutation-check.sh [--only <name>]... [python]
 #
 # Breaks one guard at a time - in cycle.py, dispatch.py, watcher.py, board.py,
 # guardrail-sources/protection.sh or the window's app.py - runs the suite
@@ -11,6 +11,11 @@
 # the suite does not actually verify. Same contract as the Loop's
 # tests/mutation-check.sh; pytest rather than bats because the Selector is
 # Python.
+#
+# `--only <name>` runs that table entry and no others, against the suite the
+# entry names. Repeat `--only` for each name so the optional python stays a
+# positional. A name that is not in the table is a refusal, before anything
+# is mutated. With no `--only` this is a full run, as it was.
 #
 # Each mutation names its own file AND its own suite (tests/selector-
 # mutations.py), because the Selector is several modules with several suites
@@ -55,7 +60,27 @@ if [[ -z ${SELECTOR_MUTATION_LOCK_HELD:-} ]]; then
     fi
     exit "${rc}"
 fi
-python_cmd="${1:-${selector_dir}/.venv/bin/python}"
+
+# Repeatable `--only NAME` so the optional python interpreter stays a
+# positional: `tests/mutation-check.sh --only a --only b /path/to/python`.
+only_names=()
+python_cmd="${selector_dir}/.venv/bin/python"
+while (($# > 0)); do
+    case "$1" in
+        --only)
+            if (($# < 2)); then
+                printf 'mutation-check.sh: --only needs a mutation name\n' >&2
+                exit 2
+            fi
+            only_names+=("$2")
+            shift 2
+            ;;
+        *)
+            python_cmd="$1"
+            shift
+            ;;
+    esac
+done
 mutations="${selector_dir}/tests/selector-mutations.py"
 
 # Paths relative to the Selector, so a target may live outside it: the status
@@ -72,7 +97,50 @@ mutations="${selector_dir}/tests/selector-mutations.py"
 # goes red for a reason that has nothing to do with the mutation under test
 # and is reported as caught. A runner that reports false passes is worse than
 # no runner, and the only way to keep the two lists in step is to have one.
-mapfile -t targets < <(python3 "${mutations}" --list | cut -f2 | LC_ALL=C sort -u)
+mapfile -t listed < <(python3 "${mutations}" --list)
+((${#listed[@]} > 0)) || {
+    printf 'mutation-check.sh: %s named no targets\n' "${mutations}" >&2
+    exit 2
+}
+
+# Every `--only` name is checked against the table before a backup is taken
+# or a file is edited. Reporting them all at once is what makes two typos
+# one refusal rather than a second run to find the second.
+if ((${#only_names[@]} > 0)); then
+    missing=()
+    for name in "${only_names[@]}"; do
+        found=0
+        for row in "${listed[@]}"; do
+            if [[ ${row%%$'\t'*} == "$name" ]]; then
+                found=1
+                break
+            fi
+        done
+        if ((found == 0)); then
+            missing+=("$name")
+        fi
+    done
+    if ((${#missing[@]} > 0)); then
+        for name in "${missing[@]}"; do
+            printf 'mutation-check.sh: not a mutation: %s\n' "$name" >&2
+        done
+        exit 2
+    fi
+    rows=()
+    for row in "${listed[@]}"; do
+        name="${row%%$'\t'*}"
+        for want in "${only_names[@]}"; do
+            if [[ $name == "$want" ]]; then
+                rows+=("$row")
+                break
+            fi
+        done
+    done
+else
+    rows=("${listed[@]}")
+fi
+
+mapfile -t targets < <(printf '%s\n' "${rows[@]}" | cut -f2 | LC_ALL=C sort -u)
 ((${#targets[@]} > 0)) || {
     printf 'mutation-check.sh: %s named no targets\n' "${mutations}" >&2
     exit 2
@@ -110,7 +178,9 @@ trap restore EXIT INT TERM
 survivors=0
 applied=0
 stale=0
-declared="$(python3 "${mutations}" --list | grep -c '')"
+# Against the selected set, not the full table: otherwise `--only` of two
+# entries reports a truncated list of 223 and the guard fires on a clean run.
+declared=${#rows[@]}
 
 while IFS=$'\t' read -r mutation target suite; do
     for name in "${targets[@]}"; do
@@ -169,7 +239,7 @@ while IFS=$'\t' read -r mutation target suite; do
         printf '  %-36s SURVIVED - the suite does not verify this\n' "${mutation}"
         survivors=$((survivors + 1))
     fi
-done < <(python3 "${mutations}" --list)
+done < <(printf '%s\n' "${rows[@]}")
 
 # The list is read through a pipe, so a truncated read would otherwise look
 # like a clean run of however many lines arrived. Stale mutations are already

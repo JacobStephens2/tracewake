@@ -439,7 +439,10 @@ whole for #110; the rest were caught when they were written, and each
 subject's set can be re-run on its own. It names
 exact lines, so a reorganisation will make a mutation stop applying; it says so
 and fails rather than reporting a false pass. `--only run.sh` runs
-one subject's set. The evidence is in
+one subject's set. It names a subject script, not a mutation: named-entry
+filtering belongs to the Selector's mixed table
+(`selector/tests/mutation-check.sh --only <name>`), not here, where each row
+is already one script. The evidence is in
 `../notes/loop-termination-contract-evidence.md`,
 `../notes/loop-credentials-evidence.md` and `../notes/loop-seed-evidence.md`.
 

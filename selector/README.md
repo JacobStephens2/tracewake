@@ -1284,16 +1284,22 @@ Then the mutation check, which is the suite's own grade:
 
 ```bash
 tests/mutation-check.sh          # one suite run per mutation
+tests/mutation-check.sh --only highest-picked-first --only blockers-ignored
+tests/mutation-check.sh --only labeler-not-checked /path/to/python
 ```
 
-**Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
-mutations and the suites ran in seconds. There are now 119 entries in
-`tests/selector-mutations.py`, and the suite each
-one re-runs takes one to two minutes, so a whole run is measured in hours -
-long enough that a build usually runs the entries it added and their
-neighbours by hand, and the whole set is a thing to start and walk away from.
-Doing that by hand means copying the loop out of this script, which is a gap
-worth closing (a `--only <name>...` argument) and one nobody has closed yet.
+**Budget hours, not minutes.** A full run re-runs each entry's suite (one to
+two minutes each, hundreds of entries) and is measured in hours. `--only
+<name>` runs exactly those table entries, each against the suite the entry
+names, with the same restore-on-exit and one-run-at-a-time (flock) guarantees.
+Repeat `--only` for each name so the optional python interpreter stays the
+last positional. A name that is not in the table is refused, named on stderr,
+and nothing is mutated.
+
+The Loop's `tests/mutation-check.sh --only` names a **subject script**
+(`run.sh`, `agents/grok.sh`), not a mutation. That grain is already one file,
+one suite, one mutations list; named-entry filtering is a Selector-table
+concern because this table mixes many files and suites in one run.
 
 It breaks one guard at a time - the allowlist, each Eligibility clause, each
 cap, the fence-aware section reader, the tracker's failure path, and now each
