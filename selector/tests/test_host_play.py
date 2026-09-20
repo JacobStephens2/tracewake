@@ -111,12 +111,21 @@ def test_host_play_can_leave_a_bind_mounted_checkout_alone():
 
 def test_web_unit_can_reload_on_a_bind_mounted_tree():
     """Issue #107: iterating on the window is a file save, not a re-apply.
-    The unit must be able to pass --reload when inventory asks."""
+    The unit must be able to pass --reload when inventory asks.
+
+    Issue #114: a live /loop/events stream holds the worker across a
+    reload, and systemd's default stop timeout leaves /healthz hung.
+    Reload must also shorten TimeoutStopSec."""
     unit = (ROOT / "deploy/systemd/tracewake-web.service").read_text()
     assert "tracewake_web_reload" in unit, (
         "tracewake-web.service must honour tracewake_web_reload so a local "
         "Host restarts the window when the bind-mounted tree changes "
         "(issue #107)."
+    )
+    assert "TimeoutStopSec" in unit, (
+        "tracewake-web.service must set TimeoutStopSec when reload is on "
+        "so a live stream cannot hold the window through systemd's default "
+        "stop timeout (issue #114)."
     )
 
 

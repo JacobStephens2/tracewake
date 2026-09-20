@@ -72,6 +72,11 @@ if [[ -f "{dir}/fail" ]]; then
     exit 1
 fi
 printf '%s\\n' "$2" >> "{dir}/labels-asked"
+repo="${{1//\\//_}}"
+queue="{dir}/queue-$repo-$2.json"
+if [[ -f "${{queue}}" ]]; then
+    exec cat "${{queue}}"
+fi
 queue="{dir}/queue-$2.json"
 if [[ -f "${{queue}}" ]]; then
     exec cat "${{queue}}"
@@ -110,6 +115,12 @@ def tracker(tmp_path, monkeypatch):
 
         def queue(self, label, issues):
             (directory / f"queue-{label}.json").write_text(
+                json.dumps({"issues": list(issues)})
+            )
+
+        def queue_for(self, repo, label, issues):
+            slug = repo.replace("/", "_")
+            (directory / f"queue-{slug}-{label}.json").write_text(
                 json.dumps({"issues": list(issues)})
             )
 

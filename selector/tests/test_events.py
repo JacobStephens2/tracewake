@@ -303,6 +303,7 @@ def test_a_dispatch_row_is_the_in_flight_lock_and_says_what_was_started():
     record = events.run_dispatched_record(row(kind, payload))
     assert record.area == "the guest image"
     assert record.branch == "loop/312-x"
+    assert record.repo == "acme/widgets"
 
 
 def test_an_iteration_row_takes_the_parsers_record_whole():

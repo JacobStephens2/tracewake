@@ -1,8 +1,8 @@
 """The Targets section on `/`: which repositories this instance reads issues from.
 
-The queue board still columns one target (the first stanza) until `/` grows a
-switcher. This section is the instance's own list: every `[[target]]` in the
-targets file, in file order, because that is what a Cycle reads.
+The queue board columns every target, each card naming its repository. This
+section is the instance's own list: every `[[target]]` in the targets file, in
+file order, because that is what a Cycle reads.
 """
 import re
 

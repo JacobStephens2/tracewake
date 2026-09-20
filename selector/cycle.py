@@ -835,6 +835,17 @@ class Spend:
             issue for r, issue in self._in_flight_keys if r == repo
         )
 
+    def holds(self, issue: int, repo: str) -> bool:
+        """Whether `issue` on `repo` currently holds a Run slot.
+
+        A dispatch with no `task_ref` cannot name a Target; those still
+        count against every Target, because the Journal cannot say they
+        belong to someone else.
+        """
+        return (repo, issue) in self._in_flight_keys or (
+            None, issue
+        ) in self._in_flight_keys
+
     def runs_in_flight(self) -> int:
         """How many Runs currently hold a slot, across every Target.
 
@@ -1622,6 +1633,20 @@ def _route(
 # --- The cycle --------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class TrackerQueue:
+    """One labeled queue, plus whether GitHub has archived the repository.
+
+    `archived` is a repository fact, not an Eligibility clause. An archived
+    Target is read-only, so the Cycle must not dispatch, comment, relabel,
+    or refresh Proposals against it. The adapter reports the flag; callers
+    that only need the issue list keep using `fetch_queue`.
+    """
+
+    issues: list[dict]
+    archived: bool = False
+
+
 def fetch_queue(config: Config, label: str | None = None,
                 timeout: float | None = None) -> list[dict]:
     """The labeled queue, through the substitutable tracker command.
@@ -1634,6 +1659,19 @@ def fetch_queue(config: Config, label: str | None = None,
 
     `timeout` is likewise for the board: a cycle waits as long as the tracker
     takes, but a read inside a page request must not.
+    """
+    return fetch_tracker(config, label=label, timeout=timeout).issues
+
+
+def fetch_tracker(config: Config, label: str | None = None,
+                  timeout: float | None = None) -> TrackerQueue:
+    """The labeled queue and the repository's archived flag.
+
+    A payload that omits `archived` is treated as not archived, which is
+    what the offline suite's canned queues do. When the flag is true this
+    function returns no issues, even if the payload still listed them, so
+    every caller of `fetch_queue` - the board included - sees an empty
+    queue rather than work GitHub will refuse.
     """
     try:
         completed = subprocess.run(
@@ -1656,10 +1694,18 @@ def fetch_queue(config: Config, label: str | None = None,
         )
     try:
         payload = json.loads(completed.stdout)
+        archived = bool(payload.get("archived"))
+        if archived:
+            # The flag is the whole of the answer. Do not sort or return the
+            # listed issues: an archived Target is not a queue, and a
+            # malformed record in a leaked list must not fail the Cycle
+            # instead of halting.
+            return TrackerQueue(issues=[], archived=True)
         # The sort belongs inside the guard: a record with no number is a
         # malformed queue like any other, and it must reach the operator as a
         # journaled cycle.failed rather than as a traceback nothing recorded.
-        return sorted(payload["issues"], key=lambda record: int(record["number"]))
+        issues = sorted(payload["issues"], key=lambda record: int(record["number"]))
+        return TrackerQueue(issues=issues, archived=False)
     except (ValueError, KeyError, TypeError) as exc:
         raise CycleFailed(f"tracker command did not return a queue: {exc}") from exc
 
@@ -1922,7 +1968,17 @@ def run_cycle(
 
     while True:
         try:
-            queue = fetch_queue(config)
+            tracked = fetch_tracker(config)
+            if tracked.archived:
+                # GitHub makes an archived repository read-only. Do not
+                # consider its issues, refresh its Proposals, or dispatch:
+                # those are writes, and a write GitHub will refuse is not a
+                # Cycle that ran.
+                if first_considered is None:
+                    first_considered = 0
+                halted = "repository-archived"
+                break
+            queue = tracked.issues
             review = fetch_queue(config, config.review_label)
             budget = review_budget(config, handover=queue, review=review, raise_on_error=True)
         except CycleFailed as exc:

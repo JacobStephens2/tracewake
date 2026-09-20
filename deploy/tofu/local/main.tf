@@ -30,14 +30,15 @@ resource "docker_volume" "web_venv" {
   name = "${var.name}-web-venv"
 }
 
-# Recreating the container must not drop the Journal or the instance
-# files (issue #114). Same pattern as the Linux venvs above.
-resource "docker_volume" "postgresql" {
-  name = "${var.name}-postgresql"
+# Recreating the container must not drop the Journal or the instance files
+# the wizard writes on the Host (issue #114). Same pattern as the Linux
+# venvs above.
+resource "docker_volume" "journal" {
+  name = "${var.name}-journal"
 }
 
-resource "docker_volume" "tracewake_etc" {
-  name = "${var.name}-etc"
+resource "docker_volume" "instance" {
+  name = "${var.name}-instance"
 }
 
 resource "docker_container" "host" {
@@ -72,13 +73,13 @@ resource "docker_container" "host" {
 
   mounts {
     type   = "volume"
-    source = docker_volume.postgresql.name
+    source = docker_volume.journal.name
     target = "/var/lib/postgresql"
   }
 
   mounts {
     type   = "volume"
-    source = docker_volume.tracewake_etc.name
+    source = docker_volume.instance.name
     target = "/etc/tracewake"
   }
 

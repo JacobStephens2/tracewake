@@ -607,6 +607,11 @@ def _runs(rows: list[dict]) -> list[dict]:
     guessing at it.
     """
     cards: dict[tuple, dict] = {}
+    cycle_repos = {
+        row["id"]: (row.get("payload") or {}).get("repo")
+        for row in rows
+        if row["kind"] == events.CYCLE_STARTED
+    }
     for row in rows:  # newest first
         kind = row["kind"]
         payload = row["payload"] or {}
@@ -691,6 +696,7 @@ def _runs(rows: list[dict]) -> list[dict]:
                 url=record.url,
                 branch=record.branch,
                 task_ref=record.task_ref,
+                repo=record.repo or cycle_repos.get(record.cycle),
                 area=record.area,
                 check=record.check,
                 attempt=record.attempt,
@@ -1055,13 +1061,13 @@ def _loop_rows(conn) -> tuple[list[dict], bool]:
 def _configs() -> tuple[tuple["cycle.Config", ...] | None, str | None]:
     """Every declared target's configuration, or why there is none.
 
-    The queue board still columns the first stanza - `/` growing a target
-    switcher is the board's own ticket - but the Targets section lists
-    every stanza, because that is what a Cycle reads. What this must not
-    do is fail: an instance whose configuration is missing or malformed is
-    exactly when somebody opens the page, so the refusal is carried as a
-    sentence into the board's columns rather than raised as a 500
-    (issue #3).
+    The queue board columns every stanza, each card naming its Target, so
+    two repositories sharing an issue number stay distinguishable. The
+    Targets section lists the same stanzas, because that is what a Cycle
+    reads. What this must not do is fail: an instance whose configuration
+    is missing or malformed is exactly when somebody opens the page, so
+    the refusal is carried as a sentence into the board's columns rather
+    than raised as a 500 (issue #3).
     """
     try:
         return cycle.Config.load(), None
@@ -1145,14 +1151,21 @@ def _loop_context(request: Request) -> dict:
     # is down does not make the queue unknowable, and a tracker that is down
     # does not hide the history.
     board_view = (
-        queue_board.board(config, spend) if config
+        queue_board.combined(configs, spend) if configs
         else queue_board.unconfigured(unconfigured)
     )
     host_view = _host(spend)
-    review_col = next(
-        (c for c in board_view.get("columns", []) if c.get("key") == "awaiting-review"),
-        None,
-    )
+    # Review capacity is per Target. The strip reports the first stanza,
+    # snapshotted before later Targets were merged in: a second Target's
+    # review queue must not spend the first's cap, and a later Target's
+    # tracker failure must not make the first's capacity unknown.
+    review_col = board_view.get("first_review")
+    if review_col is None:
+        review_col = next(
+            (c for c in board_view.get("columns", [])
+             if c.get("key") == "awaiting-review"),
+            None,
+        )
     budget = cycle.review_budget(
         config,
         review=review_col["cards"] if review_col and not review_col.get("error") else None,

@@ -392,6 +392,30 @@ def test_install_describes_the_local_host():
     )
 
 
+def test_install_names_the_local_host_wizard():
+    """Issue #114: standing the local Host up is a wizard, the same way
+    the droplet is wizards/host-up.sh. INSTALL names that walkthrough;
+    host-up.sh stays the droplet path."""
+    install = (ROOT / "INSTALL.md").read_text()
+    assert "wizards/local-host-up.sh" in install, (
+        "INSTALL.md does not name wizards/local-host-up.sh, the laptop "
+        "walkthrough that stands the local Host up (issue #114)."
+    )
+    readme = (ROOT / "README.md").read_text()
+    assert "local-host-up.sh" in readme, (
+        "README.md does not name local-host-up.sh next to host-up.sh "
+        "(issue #114)."
+    )
+    assert "host-up.sh" in readme
+    adr = (ROOT / "docs" / "adr" / "0031-a-local-host-is-the-same-play.md").read_text()
+    assert "wizards/host-up.sh" in adr
+    assert "local-host-up.sh" in adr, (
+        "ADR 0031 must name the laptop wizard so host-up.sh staying the "
+        "droplet path is not read as 'there is no local walkthrough' "
+        "(issue #114)."
+    )
+
+
 def test_tofu_local_host_keeps_the_journal_and_instance_files():
     """Issue #114: recreating the container must not drop the Journal or
     the instance files. Named volumes at /var/lib/postgresql and
@@ -432,6 +456,10 @@ def test_local_host_wizard_is_the_laptop_walkthrough():
     assert "local.tfvars" in text
     assert "local-inventory.yml" in text
     assert "~/.config/tracewake" in text or "$HOME/.config/tracewake" in text
+    assert ".config/tracewake" in text, (
+        "the wizard must write instance facts under ~/.config/tracewake "
+        "(or TRACEWAKE_CONF), not in the tree (issue #114)."
+    )
     for flag in (
         "community.docker.docker",
         "tracewake_tls: false",

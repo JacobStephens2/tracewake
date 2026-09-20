@@ -52,7 +52,7 @@ substituted `SELECTOR_BOX_COMMAND`, not a second setup.
 | `deploy/systemd/` | The units: the Selector's cycle timer and notifier, the window and its Attended Preview. |
 | `deploy/ansible/` | `host.yml` installs the Single-Host Controller, local Box, and HTTPS proxy. |
 | `deploy/tofu/` | The Host machine: a DigitalOcean droplet, or `local/` for a Docker Ubuntu 24.04 container. Ansible is still the play that turns the machine into a Host. |
-| `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. `host-up.sh` stands the droplet Host up (droplet, play, `/healthz`, credential inventory) for #57. `local-host-up.sh` stands the local Host up (Docker Ubuntu, play, `/healthz`) for #114. `host-credentials.sh` mints Google SMTP, Grok login, per-target forge tokens, and the signing-key registration for #59. |
+| `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. `host-up.sh` stands the droplet Host up (droplet, play, `/healthz`, credential inventory) for #57. `local-host-up.sh` stands the same Host up on Docker (play, `/healthz`) for #114. `host-credentials.sh` mints Google SMTP, Grok login, per-target forge tokens, and the signing-key registration for #59. |
 | `docs/adr/` | The decisions, numbered 0001 upward. |
 | `notes/` | Evidence: what was run, what it printed, and what that settled. |
 | `research/` | The source-cited investigations the notes and the ADRs rest on. |

@@ -289,6 +289,7 @@ if ! confirm "Apply and create (or update) the container"; then
   note "Machine not applied. Re-run to apply $TFVARS later."
   exit 0
 fi
+export TRACEWAKE_CONF="$CONF"
 "$REPO_ROOT/deploy/tofu/local/up.sh"
 CONTAINER="$(_tofu_output container_name)"
 HTTP_URL="$(_tofu_output http_url)"
@@ -424,6 +425,7 @@ SELECTOR_BOX_PROGRESS_COMMAND=box-sources/progress-local.sh
 SELECTOR_BOX_LOOP=/srv/tracewake/loop
 SELECTOR_LOOP_URL=$HTTP_URL
 SELECTOR_NOTIFY_COMMAND=/bin/true
+WINDOW_MAIL_COMMAND=/bin/true
 SELECTOR_PROTECTED_REPO=$PROTECTED_REPO
 SELECTOR_PROTECTED_REF=$PROTECTED_REF
 SELECTOR_PROTECTED_PATHS=guardrail-sources/paths.txt
@@ -476,13 +478,20 @@ else
   say "Wrote $ADMIN_PASSWORD_FILE."
 fi
 write_env ADMIN_EMAIL "$ADMIN_EMAIL"
-if docker exec -u conductor \
+set +e
+seed_out=$(docker exec -u conductor \
     -e WINDOW_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     "$CONTAINER" \
-    bash -lc "cd /srv/tracewake/web && set -a && . /etc/tracewake/tracewake.env && set +a && .venv/bin/python seed-admin.py $(printf '%q' "$ADMIN_EMAIL")"; then
+    bash -lc "cd /srv/tracewake/web && set -a && . /etc/tracewake/tracewake.env && set +a && .venv/bin/python seed-admin.py $(printf '%q' "$ADMIN_EMAIL")" 2>&1)
+seed_rc=$?
+set -e
+if [[ "$seed_rc" -eq 0 ]]; then
   say "Seeded $ADMIN_EMAIL via web/seed-admin.py."
+elif [[ "$seed_out" == *"already exists"* ]]; then
+  say "Account $ADMIN_EMAIL already exists."
 else
-  warn "seed-admin.py did not create the account (it fails if the email already exists)."
+  warn "seed-admin.py did not create the account (exit $seed_rc)."
+  note "$seed_out"
   SKIPPED+=("seed-admin.py for $ADMIN_EMAIL (re-run or sign in if it already exists)")
 fi
 
