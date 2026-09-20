@@ -1,26 +1,14 @@
-"""The Selector cycle at its boundary: real cycle.py, faked external commands.
+"""The Selector's entry point at its boundary: real cycle.py, one runner.
 
-Nothing here reads Selector internals. Each test scripts a canned tracker
-response, runs the real `cycle.py --dry-run` as a subprocess, and observes only
-what a cycle can be seen to do from outside: which commands it issued, and
-which rows it appended to the Journal.
+Cycle decisions live in-process (`test_drain.py`, `test_drain_eligibility.py`,
+`test_drain_halts.py`, `test_drain_slots.py`). What remains here still forks
+because it is the entry point, not a Cycle decision: tracker-command failure
+shapes, `--target`, Config from the targets file, the unenrolled-Target
+search, extra preflight names.
 
-Three boundaries are watched:
-
-  Seam 1 - the tracker command. SELECTOR_TRACKER_COMMAND is the per-target
-  labeled queue. Every scenario is a canned queue through that seam.
-
-  Seam 2 - the owner-wide search. SELECTOR_SEARCH_COMMAND is the unenrolled-
-  Target warning's read (issue #39). Default canned hits are none; tests that
-  care pass `owner_issues`.
-
-  Seam 3 - the Journal. A throwaway database per test (testdb.py), read back
-  through journal.events.
-
-A third thing is asserted everywhere: the tripwire. `gh`, `git`, `ssh` and
-`seed-run.sh` are shimmed on PATH to log and fail, so "dry-run stops before
-writing to anything but the Journal" is a checked property of every scenario
-rather than a claim in a docstring.
+Two of the forked Cycle wiring tests live here: the `--dry-run` tripwire
+(`test_dry_run_touches_nothing_but_the_journal`) and the preflight refusal
+(`test_a_missing_required_value_stops_the_cycle_before_the_tracker`).
 """
 import events as event_vocab
 import journal
@@ -55,19 +43,26 @@ def finished(dsn):
 
 
 def test_dry_run_touches_nothing_but_the_journal(db, fakes):
-    result = fakes.run(db, [issue(645), issue(646, blockedBy=1)])
+    """Forked Cycle wiring: `--dry-run` reaches the tracker and nothing else.
+
+    The tripwire PATH (`gh`, `git`, `ssh`, `seed-run.sh` shimmed to log and
+    fail) is how that is a checked property rather than a claim.
+    """
+    result = fakes.run(db, [issue(645), issue(646, blockedBy=1)], dry_run=True)
     assert result.returncode == 0
     assert fakes.tripped() == "", "dry-run reached outside the Journal"
     assert events(db), "the Journal is the one thing it does write"
 
 
 def test_the_tracker_is_asked_for_the_configured_repo_and_label(db, fakes):
-    fakes.run(db, [issue(645)])
+    """Still forks: the entry point's tracker argv, not a Cycle decision."""
+    fakes.run(db, [issue(645)], dry_run=True)
     assert fakes.args_file.read_text().strip() == "acme/widgets ready-for-agent"
 
 
 def test_every_event_of_one_cycle_shares_its_cycle_id(db, fakes):
-    fakes.run(db, [issue(645), issue(646, blockedBy=1)])
+    """Still forks: the entry point's Journal rows for one firing."""
+    fakes.run(db, [issue(645), issue(646, blockedBy=1)], dry_run=True)
     rows = events(db)
     start = [r for r in rows if r["kind"] == "cycle.started"]
     assert len(start) == 1
@@ -76,17 +71,20 @@ def test_every_event_of_one_cycle_shares_its_cycle_id(db, fakes):
 
 
 def test_a_dead_tracker_fails_the_cycle_loudly(db, fakes, tmp_path):
+    """Still forks: a tracker-command failure shape at the entry point."""
     broken = tmp_path / "broken.sh"
     broken.write_text("#!/usr/bin/env bash\necho 'tracker exploded' >&2\nexit 4\n")
     broken.chmod(0o755)
-    result = fakes.run(db, [issue(645)], tracker_command=broken)
+    result = fakes.run(db, [issue(645)], tracker_command=broken, dry_run=True)
     assert result.returncode != 0, "a dead Selector must not look like a quiet queue"
     assert "tracker" in result.stderr.lower()
     assert events(db, "cycle.failed"), "the failure is journaled, not only printed"
 
 
 def test_a_tracker_that_exits_nonzero_after_printing_still_fails(db, fakes, tmp_path):
-    """The dangerous shape: a paginated read that fetched one page and then
+    """Still forks: a tracker-command failure shape at the entry point.
+
+    The dangerous shape: a paginated read that fetched one page and then
     failed prints well-formed JSON on the way out. Trusting the exit code is
     the only thing between that and a short queue read as the whole queue -
     an issue skipped for not being there at all."""
@@ -98,35 +96,37 @@ def test_a_tracker_that_exits_nonzero_after_printing_still_fails(db, fakes, tmp_
         "exit 3\n"
     )
     truncated.chmod(0o755)
-    result = fakes.run(db, [issue(645)], tracker_command=truncated)
+    result = fakes.run(db, [issue(645)], tracker_command=truncated, dry_run=True)
     assert result.returncode != 0
     assert events(db, "cycle.failed")
     assert not events(db, "cycle.finished"), "a failed read is not a finished cycle"
 
 
 def test_a_queue_record_with_no_number_fails_the_cycle(db, fakes):
-    """Malformed on the inside, not just at the envelope: the ordering step
+    """Still forks: a tracker-command failure shape at the entry point.
+
+    Malformed on the inside, not just at the envelope: the ordering step
     is the first thing to touch a record, and it must fail the same journaled
     way as an unparseable response."""
-    result = fakes.run(db, [{"title": "no number here"}])
+    result = fakes.run(db, [{"title": "no number here"}], dry_run=True)
     assert result.returncode != 0
     assert events(db, "cycle.failed")
 
 
 def test_a_tracker_that_returns_nonsense_fails_the_cycle(db, fakes, tmp_path):
+    """Still forks: a tracker-command failure shape at the entry point."""
     junk = tmp_path / "junk.sh"
     junk.write_text("#!/usr/bin/env bash\necho 'not json'\n")
     junk.chmod(0o755)
-    result = fakes.run(db, [], tracker_command=junk)
+    result = fakes.run(db, [], tracker_command=junk, dry_run=True)
     assert result.returncode != 0
     assert events(db, "cycle.failed")
 
 
 def test_dry_run_is_the_cycle_that_would_have_happened(db, fakes):
-    """The two modes share the deciding. A dry-run reasons its way to a pick
-    and journals it, and stops there - the tripwire above is what holds the
-    "stops there"; this is the "reasons its way to a pick"."""
-    result = fakes.run(db, [issue(645), issue(646, blockedBy=1)])
+    """Still forks: `--dry-run` through the entry point journals the pick
+    it would have dispatched. The tripwire holds "stops there"."""
+    result = fakes.run(db, [issue(645), issue(646, blockedBy=1)], dry_run=True)
     assert result.returncode == 0
     assert picked(db)["number"] == 645
     assert finished(db)["dry_run"] is True
@@ -145,7 +145,9 @@ def test_dry_run_is_the_cycle_that_would_have_happened(db, fakes):
 
 
 def test_a_dry_run_works_the_target_the_file_declares(db, fakes):
-    """The whole of a target's declaration, journaled with the cycle that ran
+    """Still forks: Config from the targets file, not a Cycle decision.
+
+    The whole of a target's declaration, journaled with the cycle that ran
     under it. A Journal holding the reasoning but not the settings the
     reasoning ran under leaves "why that repository, under whose Handover?"
     answerable only from a file that has since changed."""
@@ -154,7 +156,7 @@ def test_a_dry_run_works_the_target_the_file_declares(db, fakes):
         "labeler_allowlist": ["an-operator", "a-second-operator"],
         "review_cap": 7,
         "landing": "propose",
-    }])
+    }], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     started = events(db, "cycle.started")[0]["payload"]
@@ -167,26 +169,32 @@ def test_a_dry_run_works_the_target_the_file_declares(db, fakes):
 
 
 def test_the_handover_label_is_the_targets_own(db, fakes):
-    """A target that calls its Handover something else gets a cycle that asks
+    """Still forks: Config from the targets file, not a Cycle decision.
+
+    A target that calls its Handover something else gets a cycle that asks
     the tracker for that label. There is no product-wide `ready-for-agent`
     the code could fall back on."""
-    fakes.run(db, [issue(645)], targets=[{"labels": {"ready": "hand-over"}}])
+    fakes.run(db, [issue(645)], targets=[{"labels": {"ready": "hand-over"}}], dry_run=True)
     assert fakes.args_file.read_text().strip() == "acme/widgets hand-over"
 
 
 def test_the_allowlist_is_the_targets_own(db, fakes):
-    """The Handover IS the label, so who may apply it is the whole of who is
+    """Still forks: Config from the targets file, not a Cycle decision.
+
+    The Handover IS the label, so who may apply it is the whole of who is
     trusted - and it is declared per target, because one operator's tracker
     accounts are not another's."""
-    fakes.run(db, [issue(645)], targets=[{"labeler_allowlist": ["somebody-else"]}])
+    fakes.run(db, [issue(645)], targets=[{"labeler_allowlist": ["somebody-else"]}], dry_run=True)
     assert skips(db) == {645: "labeler-not-allowlisted"}
 
 
 def test_every_declared_target_is_worked_by_one_cycle_run(db, fakes):
-    """A second target is a stanza, not a second controller: one invocation,
+    """Still forks: the entry point's per-Target fan-out, not a Cycle decision.
+
+    A second target is a stanza, not a second controller: one invocation,
     one Journal, one cycle per target."""
     result = fakes.run(db, [issue(645)], targets=[
-        {"repo": "acme/widgets"}, {"repo": "acme/gadgets"}])
+        {"repo": "acme/widgets"}, {"repo": "acme/gadgets"}], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     worked = [e["payload"]["repo"] for e in events(db, "cycle.started")]
@@ -195,11 +203,11 @@ def test_every_declared_target_is_worked_by_one_cycle_run(db, fakes):
 
 
 def test_one_target_can_be_worked_on_its_own(db, fakes):
+    """Still forks: `--target` is the entry point, not a Cycle decision."""
     result = fakes.run(
         db, [issue(645)],
         targets=[{"repo": "acme/widgets"}, {"repo": "acme/gadgets"}],
-        select="acme/gadgets",
-    )
+        select="acme/gadgets", dry_run=True)
 
     assert result.returncode == 0, result.stderr
     assert [e["payload"]["repo"] for e in events(db, "cycle.started")] == [
@@ -207,11 +215,12 @@ def test_one_target_can_be_worked_on_its_own(db, fakes):
 
 
 def test_a_missing_required_value_stops_the_cycle_before_the_tracker(db, fakes):
-    """At preflight, naming the value. Before the tracker is read and long
-    before anything is dispatched: an instance that is half configured must
-    not do half a cycle, and the half it would do is the half that comments on
-    somebody's issue."""
-    result = fakes.run(db, [issue(645)], targets=[{"box_repo": ""}])
+    """Forked Cycle wiring: preflight refusal, naming the value.
+
+    Before the tracker is read and long before anything is dispatched: an
+    instance that is half configured must not do half a cycle, and the half
+    it would do is the half that comments on somebody's issue."""
+    result = fakes.run(db, [issue(645)], targets=[{"box_repo": ""}], dry_run=True)
 
     assert result.returncode == 1
     assert "box_repo" in result.stderr
@@ -221,7 +230,8 @@ def test_a_missing_required_value_stops_the_cycle_before_the_tracker(db, fakes):
 
 
 def test_an_unconfigured_instance_stops_by_naming_the_variable(db, fakes):
-    result = fakes.run(db, [issue(645)], TRACEWAKE_TARGETS_FILE="")
+    """Still forks: extra preflight name, not a Cycle decision."""
+    result = fakes.run(db, [issue(645)], TRACEWAKE_TARGETS_FILE="", dry_run=True)
 
     assert result.returncode == 1
     assert "TRACEWAKE_TARGETS_FILE" in result.stderr
@@ -229,12 +239,14 @@ def test_an_unconfigured_instance_stops_by_naming_the_variable(db, fakes):
 
 
 def test_a_missing_instance_value_also_stops_before_the_tracker(db, fakes):
-    """The other half of the preflight. An instance value that is absent is
-    not caught by the script that reads it until the cycle has already read
-    the queue, seeded a branch and pushed it - `observe_box` treats a box it
-    cannot read as a status failure and carries on, deliberately - so nothing
-    but the preflight makes "before any tracker read" true of it."""
-    result = fakes.run(db, [issue(645)], SELECTOR_BOX_HOST="")
+    """Still forks: extra preflight name, not a Cycle decision.
+
+    An instance value that is absent is not caught by the script that reads
+    it until the cycle has already read the queue, seeded a branch and
+    pushed it - `observe_box` treats a box it cannot read as a status
+    failure and carries on, deliberately - so nothing but the preflight
+    makes "before any tracker read" true of it."""
+    result = fakes.run(db, [issue(645)], SELECTOR_BOX_HOST="", dry_run=True)
 
     assert result.returncode == 1
     assert "SELECTOR_BOX_HOST" in result.stderr
@@ -243,9 +255,11 @@ def test_a_missing_instance_value_also_stops_before_the_tracker(db, fakes):
 
 
 def test_a_missing_search_owner_stops_before_any_tracker_read(db, fakes):
-    """The searched owner is instance configuration (issue #39). A default
+    """Still forks: extra preflight name, not a Cycle decision.
+
+    The searched owner is instance configuration (issue #39). A default
     that named an account would be the thing issue #3 forbids."""
-    result = fakes.run(db, [issue(645)], SELECTOR_SEARCH_OWNER="")
+    result = fakes.run(db, [issue(645)], SELECTOR_SEARCH_OWNER="", dry_run=True)
 
     assert result.returncode == 1
     assert "SELECTOR_SEARCH_OWNER" in result.stderr
@@ -256,6 +270,8 @@ def test_a_missing_search_owner_stops_before_any_tracker_read(db, fakes):
 
 
 # --- Unenrolled-Target warning (#39) ----------------------------------------
+#
+# Still forks: observe_unenrolled is the entry point, not a Cycle decision.
 
 
 def labeled_elsewhere(repo="acme/other", number=7, **over):
@@ -291,7 +307,7 @@ def seed_warning(dsn, **over):
 
 
 def test_a_handover_on_an_unenrolled_repo_is_journaled_as_new(db, fakes):
-    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()])
+    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     payload = latest_unenrolled(db)
@@ -305,7 +321,7 @@ def test_a_handover_on_an_unenrolled_repo_is_journaled_as_new(db, fakes):
 
 def test_a_standing_gap_journals_without_being_new(db, fakes):
     seed_warning(db)
-    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()])
+    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     rows = events(db, "target.unenrolled")
@@ -321,8 +337,7 @@ def test_a_newly_appearing_unenrolled_repo_is_new(db, fakes):
         owner_issues=[
             labeled_elsewhere(),
             labeled_elsewhere(repo="acme/stray", number=3, title="Stray work"),
-        ],
-    )
+        ], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     payload = latest_unenrolled(db)
@@ -336,8 +351,7 @@ def test_labeled_issues_on_declared_targets_are_never_flagged(db, fakes):
         owner_issues=[
             labeled_elsewhere(repo="acme/widgets", number=645),
             labeled_elsewhere(repo="acme/other", number=7),
-        ],
-    )
+        ], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     payload = latest_unenrolled(db)
@@ -348,7 +362,7 @@ def test_labeled_issues_on_declared_targets_are_never_flagged(db, fakes):
 def test_an_empty_gap_is_not_journaled_when_none_was_open(db, fakes):
     result = fakes.run(db, [issue(645)], owner_issues=[
         labeled_elsewhere(repo="acme/widgets", number=645),
-    ])
+    ], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     assert events(db, "target.unenrolled") == []
@@ -360,7 +374,7 @@ def test_a_cleared_gap_is_journaled_empty(db, fakes):
     seed_warning(db)
     result = fakes.run(db, [issue(645)], owner_issues=[
         labeled_elsewhere(repo="acme/widgets", number=645),
-    ])
+    ], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     payload = latest_unenrolled(db)
@@ -371,7 +385,7 @@ def test_a_cleared_gap_is_journaled_empty(db, fakes):
 def test_a_gap_that_returns_after_clearing_is_new_again(db, fakes):
     seed_warning(db)
     seed_warning(db, repos=[], new=[])
-    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()])
+    result = fakes.run(db, [issue(645)], owner_issues=[labeled_elsewhere()], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     payload = latest_unenrolled(db)
@@ -383,8 +397,7 @@ def test_the_owner_search_runs_once_per_cycle_not_per_target(db, fakes):
     result = fakes.run(
         db, [issue(645)],
         targets=[{"repo": "acme/widgets"}, {"repo": "acme/gadgets"}],
-        owner_issues=[labeled_elsewhere()],
-    )
+        owner_issues=[labeled_elsewhere()], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     log = fakes.search_args.parent.joinpath("search.log").read_text().splitlines()
@@ -399,14 +412,14 @@ def test_a_declared_target_worked_via_select_is_still_enrolled(db, fakes):
         db, [issue(645)],
         targets=[{"repo": "acme/widgets"}, {"repo": "acme/gadgets"}],
         select="acme/gadgets",
-        owner_issues=[labeled_elsewhere(repo="acme/widgets", number=645)],
-    )
+        owner_issues=[labeled_elsewhere(repo="acme/widgets", number=645)], dry_run=True)
 
     assert result.returncode == 0, result.stderr
     assert events(db, "target.unenrolled") == []
 
 
 def test_a_failed_owner_search_fails_the_cycle_before_the_queue(db, fakes):
+    """Still forks: the entry point's unenrolled search, not a Cycle decision."""
     failing = fakes.search_args.parent / "failing-search.sh"
     failing.write_text(
         "#!/usr/bin/env bash\n"
@@ -417,8 +430,7 @@ def test_a_failed_owner_search_fails_the_cycle_before_the_queue(db, fakes):
     result = fakes.run(
         db, [issue(645)],
         owner_issues=[labeled_elsewhere()],
-        search_command=failing,
-    )
+        search_command=failing, dry_run=True)
 
     assert result.returncode == 1
     assert not fakes.args_file.exists(), "the per-target tracker ran anyway"
@@ -427,8 +439,10 @@ def test_a_failed_owner_search_fails_the_cycle_before_the_queue(db, fakes):
 
 
 def test_a_zero_drain_concurrency_stops_before_the_tracker(db, fakes):
-    """K of zero aborts at preflight naming the key (issue #37)."""
-    result = fakes.run(db, [issue(645)], SELECTOR_DRAIN_CONCURRENCY="0")
+    """Still forks: extra preflight name, not a Cycle decision.
+
+    K of zero aborts at preflight naming the key (issue #37)."""
+    result = fakes.run(db, [issue(645)], SELECTOR_DRAIN_CONCURRENCY="0", dry_run=True)
 
     assert result.returncode == 1
     assert "SELECTOR_DRAIN_CONCURRENCY" in result.stderr
@@ -438,7 +452,8 @@ def test_a_zero_drain_concurrency_stops_before_the_tracker(db, fakes):
 
 
 def test_a_negative_drain_concurrency_stops_before_the_tracker(db, fakes):
-    result = fakes.run(db, [issue(645)], SELECTOR_DRAIN_CONCURRENCY="-2")
+    """Still forks: extra preflight name, not a Cycle decision."""
+    result = fakes.run(db, [issue(645)], SELECTOR_DRAIN_CONCURRENCY="-2", dry_run=True)
 
     assert result.returncode == 1
     assert "SELECTOR_DRAIN_CONCURRENCY" in result.stderr

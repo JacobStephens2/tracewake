@@ -1,5 +1,11 @@
 """Dispatch at its boundary: real cycle.py and real git, faked everything else.
 
+These still fork because production doing is ADR 0004's substitutable-command
+seam - Cycle decisions live in-process. Two of the forked Cycle wiring tests
+live here: the happy drain (`test_the_whole_dispatch_sequence_is_issued`) and
+a failing Cycle's exit code
+(`test_a_box_that_starts_no_run_fails_the_cycle_loudly`).
+
 Same rule as the cycle suite - nothing here reads Selector internals. Each
 test runs the real `cycle.py` as a subprocess against a canned queue and
 observes only what a dispatch can be seen to do from outside: which commands
@@ -62,6 +68,7 @@ from conftest import (
 
 
 def test_the_whole_dispatch_sequence_is_issued(db, box):
+    """Forked Cycle wiring: a happy drain through the runner."""
     result = box.run(db, [issue(645)])
     assert result.returncode == 0, result.stderr
     log = box.commands()
@@ -225,7 +232,9 @@ def test_a_run_that_ended_on_a_bound_is_not_a_selector_failure(db, box):
 
 
 def test_a_box_that_starts_no_run_fails_the_cycle_loudly(db, box):
-    """An SSH that never connected prints no LOOP_RUN_ENDED_BY. That absence
+    """Forked Cycle wiring: a failing Cycle's exit code.
+
+    An SSH that never connected prints no LOOP_RUN_ENDED_BY. That absence
     is the discriminator: a Run that ended badly reported a bound, and a
     dispatch that never happened cannot."""
     box.run_summary("ssh: connect to host loop.etadventures.com port 22: No route\n")
@@ -458,6 +467,7 @@ def test_a_returned_issue_does_not_stop_a_later_one_being_dispatched(db, box):
 
 
 def test_a_dry_run_hands_nothing_back(db, box):
+    """Still forks: production doing must no-op under `--dry-run` (ADR 0004)."""
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)], dry_run=True)
     log = box.commands()
@@ -469,6 +479,7 @@ def test_a_dry_run_hands_nothing_back(db, box):
 
 
 def test_a_dry_run_dispatches_nothing(db, box):
+    """Still forks: production doing must no-op under `--dry-run` (ADR 0004)."""
     box.run(db, [issue(645)], dry_run=True)
     log = box.commands()
     assert "seed " not in log

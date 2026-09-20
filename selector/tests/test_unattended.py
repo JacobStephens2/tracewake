@@ -1,5 +1,14 @@
 """Unattended operation at the cycle's boundary (issue #156).
 
+Cycle drain decisions are in-process. This file still forks because the
+advisory lock, the per-Target fan-out, box-facts and proposal freshness are
+the entry point or production doing (ADR 0004), not Cycle decisions.
+
+Two of the forked Cycle wiring tests live here: the advisory-lock stand-down
+(`test_a_second_cycle_refuses_while_the_first_is_still_running`) and K>1
+across two Targets
+(`test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2`).
+
 Three properties a timer-driven Selector needs that a hand-run one did not,
 each asserted from outside the cycle - the commands it issued and the rows it
 wrote, never its internals:
@@ -37,7 +46,9 @@ def _nested_cycle(tmp_path, *args):
 
 
 def test_a_second_cycle_refuses_while_the_first_is_still_running(db, box, tmp_path):
-    """The timer's next firing lands in the middle of a Run. It must not
+    """Forked Cycle wiring: the advisory-lock stand-down.
+
+    The timer's next firing lands in the middle of a Run. It must not
     reason about a queue the cycle holding the process is already acting on."""
     result = box.run(
         db, [issue(645)], NESTED_CYCLE=str(_nested_cycle(tmp_path))
@@ -55,7 +66,9 @@ def test_a_second_cycle_refuses_while_the_first_is_still_running(db, box, tmp_pa
 
 
 def test_a_refused_cycle_starts_nothing_it_cannot_finish(db, box, tmp_path):
-    """It journals that it stood down and nothing else: a `cycle.started` from
+    """Still forks: the entry point's lock, not a Cycle decision.
+
+    It journals that it stood down and nothing else: a `cycle.started` from
     a cycle that never reasoned would put a card on /loop for a cycle that
     never happened."""
     box.run(db, [issue(645)], NESTED_CYCLE=str(_nested_cycle(tmp_path)))
@@ -66,7 +79,9 @@ def test_a_refused_cycle_starts_nothing_it_cannot_finish(db, box, tmp_path):
 
 
 def test_a_dry_run_is_refused_by_a_running_cycle_too(db, box, tmp_path):
-    """A dry run writes to the Journal and reads the spend a live cycle is in
+    """Still forks: the entry point's lock covers dry-run too.
+
+    A dry run writes to the Journal and reads the spend a live cycle is in
     the middle of changing, so it queues behind one like any other."""
     box.run(
         db, [issue(645)],
@@ -77,7 +92,9 @@ def test_a_dry_run_is_refused_by_a_running_cycle_too(db, box, tmp_path):
 
 
 def test_the_lock_is_released_when_the_cycle_ends(db, box, tmp_path):
-    """Two cycles one after the other are two cycles, not one and a refusal."""
+    """Still forks: the entry point's lock lifetime, not a Cycle decision.
+
+    Two cycles one after the other are two cycles, not one and a refusal."""
     box.run(db, [issue(645)])
     box.run(db, [issue(645)], dry_run=True)
     assert events(db, "cycle.skipped") == []
@@ -85,6 +102,8 @@ def test_the_lock_is_released_when_the_cycle_ends(db, box, tmp_path):
 
 
 # --- The box card's facts ---------------------------------------------------
+#
+# Still forks: production doing (ADR 0004) observes the box.
 
 
 def test_the_box_facts_are_read_and_journaled(db, box):
@@ -148,7 +167,9 @@ def test_a_box_that_cannot_be_read_is_journaled_and_does_not_fail_the_cycle(db, 
 
 
 def test_a_dry_run_does_not_reach_the_box(db, fakes):
-    """`ssh` is on the tripwire PATH, so a dry run that read the box would be
+    """Still forks: `--dry-run` through the entry point must not reach the box.
+
+    `ssh` is on the tripwire PATH, so a dry run that read the box would be
     caught by it. A dry run reaches the tracker and nothing else.
 
     Both outcomes of the read are asserted absent, not just the successful
@@ -157,7 +178,7 @@ def test_a_dry_run_does_not_reach_the_box(db, fakes):
     pass for a dry run that reached the box and was refused - which is the
     property broken, not preserved. The same holds for the guardrail.
     """
-    result = fakes.run(db, [issue(645)])
+    result = fakes.run(db, [issue(645)], dry_run=True)
     assert result.returncode == 0, result.stderr
     assert fakes.tripped() == ""
     assert events(db, "box.observed") == []
@@ -169,12 +190,15 @@ def test_a_dry_run_does_not_reach_the_box(db, fakes):
 # --- A Cycle drains the queue (issue #8) ------------------------------------
 #
 # Multi-pass drain, considered vs eligible, slot ordering, and K>1 slot
-# waits live in tests/test_drain_slots.py. What remains here is production
-# doing (box facts, pause between live Runs) and the entry-point fan-out.
+# waits live in tests/test_drain_slots.py. What remains here still forks:
+# production doing (box facts, pause between live Runs) and the entry-point
+# fan-out.
 
 
 def test_the_box_facts_are_read_before_each_dispatch_and_guardrail_once_per_cycle(db, box):
-    """The box's facts are read before each dispatch, and the Guardrail is
+    """Still forks: production doing observes the box and Guardrail (ADR 0004).
+
+    The box's facts are read before each dispatch, and the Guardrail is
     journaled once per Cycle (#14 AC 4)."""
     result = box.run(db, [issue(640), issue(645)])
     assert result.returncode == 0, result.stderr
@@ -192,7 +216,10 @@ def test_the_box_facts_are_read_before_each_dispatch_and_guardrail_once_per_cycl
 
 
 def test_pause_is_honoured_between_runs_and_does_not_cancel_run_in_flight(db, box, tmp_path):
-    """Criterion 3: Pause is honoured before each pick and never cancels a Run
+    """Still forks: pause between live Runs is production doing holding the
+    process, not a Cycle decision tested in-process.
+
+    Criterion 3: Pause is honoured before each pick and never cancels a Run
     already in flight."""
     pause_script = tmp_path / "pause-mid-run.sh"
     pause_script.write_text(
@@ -216,6 +243,8 @@ def test_pause_is_honoured_between_runs_and_does_not_cancel_run_in_flight(db, bo
 
 
 # --- Proposal freshness during drains (Issue #10) ---------------------------
+#
+# Still forks: production doing (ADR 0004) keeps Proposals current.
 
 def test_open_proposals_behind_base_and_mergeable_are_updated_during_drain(db, box):
     """AC 1: Each open Proposal that is behind its base and mergeable is updated
@@ -370,7 +399,9 @@ def _run_kinds(dsn):
 
 
 def test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2(db, box):
-    """K=2, two Targets, one Eligible each: both Runs are in flight at once,
+    """Forked Cycle wiring: K>1 across two Targets.
+
+    K=2, two Targets, one Eligible each: both Runs are in flight at once,
     and the Journal's account proves the overlap."""
     gadgets_work = box.extra_work("work-gadgets")
     box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
@@ -397,7 +428,9 @@ def test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2(db, box):
 
 
 def test_k_unset_keeps_the_serial_drain_across_targets(db, box):
-    """K unset defaults to 1: two Targets still drain one after the other,
+    """Still forks: the entry point's default K, not a Cycle decision.
+
+    K unset defaults to 1: two Targets still drain one after the other,
     and each still has its own cycle.started / cycle.finished pair."""
     gadgets_work = box.extra_work("work-gadgets")
     box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])

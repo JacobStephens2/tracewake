@@ -1,5 +1,8 @@
 """What the Selector does to the issue once the Run has ended (issue #155).
 
+These still fork because production doing is ADR 0004's substitutable-command
+seam - Cycle decisions live in-process.
+
 Dispatch (#154) ends the moment the box hands back a summary. This is the half
 after that: the Run's ending bound and the Proposal's checks decide which
 queue the issue lands in, and the operator finds out by reading the issue

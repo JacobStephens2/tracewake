@@ -1,5 +1,8 @@
 """The reconcile Run: bringing a conflicting Proposal up to date (issue #34).
 
+These still fork because production doing is ADR 0004's substitutable-command
+seam - Cycle decisions live in-process.
+
 A Proposal that `gh pr update-branch` cannot cleanly merge is left alone by
 the freshness pass and flagged on the board. The reconcile Run is what meets
 those conflicts inside the microVM boundary instead: the Selector detects
@@ -270,9 +273,11 @@ def test_a_run_in_flight_holds_the_reconcile_for_its_target(db, box, dispatch):
 
 
 def test_a_dry_run_reconciles_nothing(db, fakes):
-    """A dry run reaches the tracker and nothing else: no box Run, no forge
+    """Still forks: `--dry-run` through the entry point must not reconcile.
+
+    A dry run reaches the tracker and nothing else: no box Run, no forge
     mutation, no reconcile row."""
-    result = fakes.run(db, [issue(630, proposals=[conflicting(13)])])
+    result = fakes.run(db, [issue(630, proposals=[conflicting(13)])], dry_run=True)
     assert result.returncode == 0, result.stderr
 
     assert fakes.tripped() == ""

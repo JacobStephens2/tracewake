@@ -1,5 +1,9 @@
 """preview-cycle.sh must redirect EVERY outward reach, not most of them.
 
+This still forks because the wrapper is the entry point around cycle.py: it
+must exec the real cycle under redirected env, or a missed variable is
+invisible.
+
 The wrapper exists because ADR 0016's containment is on the `labstage` account
 that runs the web process and does not extend to a conductor shell. That makes
 it the only thing standing between a preview cycle and production - so what is

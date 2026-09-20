@@ -62,139 +62,16 @@ INSTANCE_ENV = {
 }
 
 
-# --- The dry-run harness ----------------------------------------------------
+# --- The cycle runner -------------------------------------------------------
 #
-# A canned tracker and a tripwire PATH: `gh`, `git`, `ssh` and `seed-run.sh`
-# shimmed to log and fail. Shared, because "a dry run reaches the tracker and
-# nothing else" is a property every suite that drives one should be able to
-# assert rather than one that happens to own the fixture.
-
-@pytest.fixture
-def fakes(tmp_path):
-    """A fake tracker command plus a tripwire PATH; returns a runner."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    tripped = tmp_path / "tripped.log"
-
-    for name in ("gh", "git", "ssh", "seed-run.sh"):
-        shim = bin_dir / name
-        shim.write_text(
-            "#!/usr/bin/env bash\n"
-            f'printf "%s %s\\n" "{name}" "$*" >> "{tripped}"\n'
-            "exit 1\n"
-        )
-        shim.chmod(0o755)
-
-    queue_file = tmp_path / "queue.json"
-    tracker = tmp_path / "tracker.sh"
-    tracker.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        f'if [[ ! -f "{tmp_path}/tracker.args" ]]; then\n'
-        f'    printf "%s %s\\n" "$1" "$2" > "{tmp_path}/tracker.args"\n'
-        f'fi\n'
-        f'printf "%s %s\\n" "$1" "$2" >> "{tmp_path}/tracker.log"\n'
-        f'queue="{tmp_path}/queue-${{2}}.json"\n'
-        f'if [[ -f "${{queue}}" ]]; then\n'
-        f'    exec cat "${{queue}}"\n'
-        f'fi\n'
-        f'if [[ "${{2}}" != "awaiting-review" ]]; then\n'
-        f'    exec cat "{queue_file}"\n'
-        f'fi\n'
-        f'printf \'{{"issues": []}}\\n\'\n'
-    )
-    tracker.chmod(0o755)
-
-    search_file = tmp_path / "search.json"
-    search_file.write_text('{"issues": []}\n')
-    search = tmp_path / "search.sh"
-    search.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        f'printf "%s %s\\n" "$1" "$2" >> "{tmp_path}/search.log"\n'
-        f'if [[ ! -f "{tmp_path}/search.args" ]]; then\n'
-        f'    printf "%s %s\\n" "$1" "$2" > "{tmp_path}/search.args"\n'
-        f'fi\n'
-        f'exec cat "{search_file}"\n'
-    )
-    search.chmod(0o755)
-
-    class Runner:
-        args_file = tmp_path / "tracker.args"
-        search_args = tmp_path / "search.args"
-
-        targets_file = tmp_path / "targets.toml"
-
-        def run(self, dsn, issues=(), *, review_issues=(), owner_issues=(),
-                tracker_command=None, search_command=None,
-                dry_run=True, targets=None, select=None, archived=False,
-                **env):
-            """One cycle against a canned queue.
-
-            `targets` is a list of stanza overrides when a test cares what
-            the target declares; without it one default target is written,
-            because there is no longer any way to name a repository except
-            through the targets file (issue #3).
-
-            `archived` is the tracker payload's repository flag. The canned
-            command does not empty the issue list when it is set: leaking
-            the records is how the cycle suite checks that the Cycle itself
-            refuses to operate, rather than only the GitHub adapter.
-            """
-            payload = {"issues": list(issues)}
-            if archived:
-                payload["archived"] = True
-            queue_file.write_text(json.dumps(payload))
-            search_file.write_text(json.dumps({"issues": list(owner_issues)}))
-            stanzas = targets or ()
-            review_label = "awaiting-review"
-            if stanzas and isinstance(stanzas, (list, tuple)) and len(stanzas) > 0:
-                review_label = stanzas[0].get("labels", {}).get("review", "awaiting-review")
-            (tmp_path / f"queue-{review_label}.json").write_text(
-                json.dumps({"issues": list(review_issues)})
-            )
-            write_targets(self.targets_file, *stanzas)
-            environ = dict(os.environ)
-            environ.update(
-                {
-                    "PATH": f"{bin_dir}:{environ['PATH']}",
-                    "SELECTOR_JOURNAL_DSN": dsn,
-                    "SELECTOR_TRACKER_COMMAND": str(tracker_command or tracker),
-                    "SELECTOR_SEARCH_COMMAND": str(search_command or search),
-                    "TRACEWAKE_TARGETS_FILE": str(self.targets_file),
-                    **INSTANCE_ENV,
-                }
-            )
-            environ.update({k: str(v) for k, v in env.items()})
-            argv = ["--dry-run"] if dry_run else []
-            if select:
-                argv += ["--target", select]
-            return subprocess.run(
-                [sys.executable, str(CYCLE), *argv],
-                capture_output=True,
-                text=True,
-                env=environ,
-            )
-
-        def queue(self, label, issues):
-            (tmp_path / f"queue-{label}.json").write_text(
-                json.dumps({"issues": list(issues)})
-            )
-
-        def tripped(self):
-            return tripped.read_text() if tripped.exists() else ""
-
-    return Runner()
-
-
-
-# --- The dispatch harness ---------------------------------------------------
+# One runner: a canned tracker, a tripwire PATH, a scripted box, and a REAL
+# git remote. Cycle decisions are tested in-process; this is the wiring.
 #
-# Moved here from the dispatch suite when a third suite (outcome routing)
-# needed the same box. One definition of "a scripted box, a scripted Seeding
-# step, a scripted issue command and a REAL git remote", so that a change to
-# what a dispatch reaches breaks every suite that drives one rather than the
-# one that happens to own the fixture.
+# Dry-run puts `gh`, `git`, `ssh` and `seed-run.sh` on PATH (shimmed to log
+# and fail) and omits the doing commands, so a leak is a trip. Live scripts
+# seed / box / issue / facts / guardrail / progress and use real git. A
+# preflight test omits an instance env or a targets key through run()'s env
+# and targets= overrides.
 
 # The first Iteration's rendered briefing, as run.sh emits it on stdout
 # (#80): prose between two markers, last on the stream so the LOOP_RUN_*
@@ -287,26 +164,6 @@ NO_CHECKS = '{"state": "none", "failing": []}\n'
 SELECTOR = Path(__file__).resolve().parents[1]
 CYCLE = SELECTOR / "cycle.py"
 
-CLEAN_RUN = """LOOP_RUN_ENDED_BY=iteration-cap
-LOOP_RUN_EXIT=0
-LOOP_RUN_ITERATIONS=5
-LOOP_RUN_FAULTS=none
-LOOP_RUN_PROPOSAL=proposed
-LOOP_RUN_NOTIFIED=sent
-LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/12
-
-The Run ended at its iteration cap.
-""" + RUN_BRIEFING_BLOCK
-
-FAILED_RUN = """LOOP_RUN_ENDED_BY=agent-failed
-LOOP_RUN_EXIT=4
-LOOP_RUN_ITERATIONS=1
-LOOP_RUN_FAULTS=agent-failed
-LOOP_RUN_PROPOSAL=proposed
-LOOP_RUN_NOTIFIED=sent
-LOOP_PROPOSE_URL=https://github.invalid/acme/widgets/pull/13
-""" + RUN_BRIEFING_BLOCK
-
 
 def _script(path, body):
     path.write_text("#!/usr/bin/env bash\n" + textwrap.dedent(body))
@@ -315,10 +172,25 @@ def _script(path, body):
 
 
 @pytest.fixture
-def box(tmp_path):
-    """A work checkout with a real bare remote, plus the scripted commands a
-    dispatch reaches - Seeding, the box, the issue writes, the box facts and
-    the Progress Log the watcher reads. Returns a runner."""
+def runner(tmp_path):
+    """One runner for a forked cycle.py: tripwire PATH, scripted box, real git."""
+    tripwire = tmp_path / "tripwire"
+    tripwire.mkdir()
+    tripped = tmp_path / "tripped.log"
+
+    def _shim(name):
+        path = tripwire / name
+        path.write_text(
+            "#!/usr/bin/env bash\n"
+            f'printf "%s %s\\n" "{name}" "$*" >> "{tripped}"\n'
+            "exit 1\n"
+        )
+        path.chmod(0o755)
+        return path
+
+    for name in ("gh", "ssh", "seed-run.sh"):
+        _shim(name)
+
     bare = tmp_path / "remote.git"
     work = tmp_path / "work"
     log = tmp_path / "commands.log"
@@ -343,6 +215,8 @@ def box(tmp_path):
     search_file = tmp_path / "search.json"
     search_file.write_text('{"issues": []}\n')
     queue_file = tmp_path / "queue.json"
+    tracker_args = tmp_path / "tracker.args"
+    search_args_file = tmp_path / "search.args"
 
     def git(*args, cwd=None):
         return subprocess.run(
@@ -378,6 +252,10 @@ def box(tmp_path):
             .replace("@GUEST@", str(tmp_path / "guest"))
             .replace("@SEARCH@", str(search_file))
             .replace("@RSUMMARY@", str(reconcile_summary_file))
+            .replace("@TARGS@", str(tracker_args))
+            .replace("@TLOG@", str(tmp_path / "tracker.log"))
+            .replace("@SARGS@", str(search_args_file))
+            .replace("@SLOG@", str(tmp_path / "search.log"))
         )
 
     # Seeding writes BOTH files, and refuses to overwrite a Progress Log that
@@ -620,6 +498,10 @@ if add_label:
 
     tracker = _script(tmp_path / "tracker.sh", fill('''
         set -euo pipefail
+        printf '%s %s\n' "${1:-}" "${2:-}" >> "@TLOG@"
+        if [[ ! -f "@TARGS@" ]]; then
+            printf '%s %s\n' "${1:-}" "${2:-}" > "@TARGS@"
+        fi
         queue_dir="$(dirname "@QUEUE@")"
         repo_safe="$(printf '%s' "${1:-}" | tr '/' '_')"
         labeled_repo="${queue_dir}/queue-${repo_safe}-${2}.json"
@@ -636,8 +518,12 @@ if add_label:
         printf '{"issues": []}\n'
     '''))
 
-    search_command = _script(tmp_path / "search.sh", fill('''
+    search = _script(tmp_path / "search.sh", fill('''
         printf 'search %s\n' "$*" >> "@LOG@"
+        printf '%s %s\n' "${1:-}" "${2:-}" >> "@SLOG@"
+        if [[ ! -f "@SARGS@" ]]; then
+            printf '%s %s\n' "${1:-}" "${2:-}" > "@SARGS@"
+        fi
         exec cat "@SEARCH@"
     '''))
 
@@ -648,9 +534,31 @@ if add_label:
         # The controller-side checkout every stanza this fixture writes points
         # at, exposed so a test can assert Seeding happened in it.
         work_repo = work
+        args_file = tracker_args
+        search_args = search_args_file
 
         def run(self, dsn, issues=(), *, review_issues=(), owner_issues=(),
-                dry_run=False, targets=None, archived=False, **env):
+                tracker_command=None, search_command=None,
+                dry_run=False, targets=None, select=None, archived=False,
+                **env):
+            """One cycle against a canned queue.
+
+            `targets` is a list of stanza overrides when a test cares what
+            the target declares; without it one default target is written,
+            because there is no longer any way to name a repository except
+            through the targets file (issue #3). Each stanza is pointed at
+            this fixture's work checkout unless the test says otherwise.
+
+            `archived` is the tracker payload's repository flag. The canned
+            command does not empty the issue list when it is set: leaking
+            the records is how the cycle suite checks that the Cycle itself
+            refuses to operate, rather than only the GitHub adapter.
+
+            Dry-run omits the doing commands and puts git on the tripwire
+            PATH. Live sets seed / box / issue / facts / guardrail / progress
+            and uses real git. Pass SELECTOR_BOX_HOST="" (or a targets key
+            emptied) to omit a required value for preflight.
+            """
             payload = {"issues": list(issues)}
             if archived:
                 payload["archived"] = True
@@ -665,26 +573,42 @@ if add_label:
                 self.targets_file,
                 *({"work_repo": str(work), **over} for over in stanzas),
             )
+            git_shim = tripwire / "git"
+            if dry_run:
+                _shim("git")
+            elif git_shim.exists():
+                git_shim.unlink()
             environ = dict(os.environ)
             environ.update(
                 {
+                    "PATH": f"{tripwire}:{environ['PATH']}",
                     "SELECTOR_JOURNAL_DSN": dsn,
-                    "SELECTOR_TRACKER_COMMAND": str(tracker),
-                    "SELECTOR_SEARCH_COMMAND": str(search_command),
+                    "SELECTOR_TRACKER_COMMAND": str(tracker_command or tracker),
+                    "SELECTOR_SEARCH_COMMAND": str(search_command or search),
                     "TRACEWAKE_TARGETS_FILE": str(self.targets_file),
                     **INSTANCE_ENV,
-                    "SELECTOR_SEED_COMMAND": str(seed),
-                    "SELECTOR_BOX_COMMAND": str(box_command),
-                    "SELECTOR_ISSUE_COMMAND": str(issue_command),
-                    "SELECTOR_BOX_FACTS_COMMAND": str(facts_command),
-                    "SELECTOR_BOX_PROGRESS_COMMAND": str(progress_command),
-                    "SELECTOR_GUARDRAIL_COMMAND": str(guardrail_command),
                 }
             )
+            if not dry_run:
+                environ.update(
+                    {
+                        "SELECTOR_SEED_COMMAND": str(seed),
+                        "SELECTOR_BOX_COMMAND": str(box_command),
+                        "SELECTOR_ISSUE_COMMAND": str(issue_command),
+                        "SELECTOR_BOX_FACTS_COMMAND": str(facts_command),
+                        "SELECTOR_BOX_PROGRESS_COMMAND": str(progress_command),
+                        "SELECTOR_GUARDRAIL_COMMAND": str(guardrail_command),
+                    }
+                )
             environ.update({k: str(v) for k, v in env.items()})
+            argv = ["--dry-run"] if dry_run else []
+            if select:
+                argv += ["--target", select]
             return subprocess.run(
-                [sys.executable, str(CYCLE), *(["--dry-run"] if dry_run else [])],
-                capture_output=True, text=True, env=environ,
+                [sys.executable, str(CYCLE), *argv],
+                capture_output=True,
+                text=True,
+                env=environ,
             )
 
         def queue(self, label, issues):
@@ -762,10 +686,25 @@ if add_label:
             ).stdout
             return out.split()
 
-    runner = Runner()
-    runner.bare = bare
-    runner.work = work
-    runner.progress_file = progress_file
+        def tripped(self):
+            return tripped.read_text() if tripped.exists() else ""
+
+    built = Runner()
+    built.bare = bare
+    built.work = work
+    built.progress_file = progress_file
+    return built
+
+
+@pytest.fixture
+def fakes(runner):
+    """The one runner, under the name dry-run tests already use."""
+    return runner
+
+
+@pytest.fixture
+def box(runner):
+    """The one runner, under the name production-doing tests already use."""
     return runner
 
 

@@ -1050,23 +1050,42 @@ Detection precedes notification, or the mail is a guess.
   `web/tests/` (the dashboard's side). Needs a Postgres role matching
   the OS user with CREATEDB. It also keeps the books on its own residue, for
   the reason in **Throwaway databases that outlive their run** below.
-- `tests/` - suites at their boundaries. `test_events.py` drives the
+- `tests/` - suites at their boundaries. Cycle decisions are in-process:
+  `test_drain.py`, `test_drain_eligibility.py`, `test_drain_halts.py` and
+  `test_drain_slots.py` call the Cycle with a canned queue, a recording
+  doing and a real Journal. The fixture has one runner. The forked Cycle
+  suite is six wiring tests: a happy drain
+  (`test_dispatch.py::test_the_whole_dispatch_sequence_is_issued`), a
+  failing Cycle's exit code
+  (`test_dispatch.py::test_a_box_that_starts_no_run_fails_the_cycle_loudly`),
+  K greater than one across two Targets
+  (`test_unattended.py::test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2`),
+  `--dry-run`
+  (`test_cycle.py::test_dry_run_touches_nothing_but_the_journal`), the
+  advisory-lock stand-down
+  (`test_unattended.py::test_a_second_cycle_refuses_while_the_first_is_still_running`),
+  and the preflight refusal
+  (`test_cycle.py::test_a_missing_required_value_stops_the_cycle_before_the_tracker`).
+  Anything else that still forks is the entry point or production doing
+  (ADR 0004), and says so in its docstring.
+  `test_events.py` drives the
   vocabulary directly - every constructor's key set, every reader's
   normalization of every era of row, the naming rules - and holds the sweep
   that fails when a kind literal ships outside `events.py`.
   `test_journal.py` is the
   Journal against the real engine: NOTIFY asserted by a live listener,
-  mutation blocked by the guard triggers, ordering. `test_cycle.py` runs the
-  real `cycle.py --dry-run` against canned queue states, reading only the
-  commands it issued and the rows it wrote - plus a tripwire PATH (`gh`,
-  `git`, `ssh`, `seed-run.sh` shimmed to log and fail) that makes "a dry run
-  touches nothing but the Journal" a checked property of every scenario.
-  `test_unattended.py` is #156's three properties at the same boundary: a
-  second cycle standing down while one is in flight (driven by running a real
-  nested `cycle.py` from inside the fake box, which is the only moment two can
-  meet), the fifth dispatch of a day refused from Journal history alone, and
-  the box's facts read and journaled.
-  `test_dispatch.py` runs the same real `cycle.py` with the dispatch commands
+  mutation blocked by the guard triggers, ordering.
+  `test_cycle.py` is the entry point around those six: tracker-command
+  failure shapes, `--target`, Config from the targets file, the
+  unenrolled-Target search, extra preflight names - plus the dry-run
+  tripwire and the preflight refusal. A tripwire PATH (`gh`, `git`, `ssh`,
+  `seed-run.sh` shimmed to log and fail) makes "a dry run touches nothing
+  but the Journal" a checked property.
+  `test_unattended.py` still forks for the lock, the per-Target fan-out,
+  box-facts and proposal freshness: a second cycle standing down while one
+  is in flight is driven by running a real nested `cycle.py` from inside
+  the fake box, which is the only moment two can meet.
+  `test_dispatch.py` is production doing with the dispatch commands
   scripted and **git real**, against a bare repository in a tmpdir: the
   branch, the push and the retry case are asserted against what actually
   ended up on a remote. Its fake box also reads the Journal while it is
