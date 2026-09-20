@@ -188,9 +188,9 @@
         issue list are the same thing.
 
         The whole section folds at its heading, so the page can be skimmed
-        with it shut. Open by default; loop-ui.js re-applies the stored choice
-        here after every live swap, since this fragment is what gets swapped. -#}
-    <details class="fold" data-fold="queue" open>
+        with it shut. Open by default; the visitor's last choice is a cookie
+        this render reads, so a live swap does not reopen a shut section. -#}
+    <details class="fold" data-fold="queue"{% if folds.queue %} open{% endif %}>
     <summary><h2>The queue</h2></summary>
     <p>The whole labeled queue, read from every Target when this page was
        requested and columned by the Selector's Eligibility. Not the Journal:
@@ -246,9 +246,9 @@
     </details>
 
     {% if runs %}
-    {#- Same fold as the queue: open by default, stored choice re-applied
-        after every live swap. -#}
-    <details class="fold" data-fold="runs" open>
+    {#- Same fold as the queue: open by default, stored choice on the cookie
+        this fragment reads. -#}
+    <details class="fold" data-fold="runs"{% if folds.runs %} open{% endif %}>
     <summary><h2>Runs</h2></summary>
     <p>One card per dispatch: the Run in flight, and every Run that has
        ended, with the Proposal it left behind.</p>
@@ -259,8 +259,8 @@
     {% if cycles %}
     {#- Folded shut by default: the cycle cards are the deep history, and the
         page reads as an overview without them. The operator's choice is
-        stored and re-applied by loop-ui.js, same as the queue's. -#}
-    <details class="fold" data-fold="cycles">
+        stored on the same cookie as the queue's. -#}
+    <details class="fold" data-fold="cycles"{% if folds.cycles %} open{% endif %}>
     <summary><h2>Cycles</h2></summary>
     <p>One card per Selector cycle: what it picked, and every issue it passed
        over with the reason it recorded.</p>
@@ -318,7 +318,7 @@
     {% endif %}
 
     {% if events %}
-    <details class="fold" data-fold="events" open>
+    <details class="fold" data-fold="events"{% if folds.events %} open{% endif %}>
     <summary><h2>Every event</h2></summary>
     <table>
       <thead><tr><th>at</th><th>id</th><th>kind</th><th>payload</th></tr></thead>

@@ -4,7 +4,7 @@
     region because it is configuration, not a Journal replay. An admin
     may enroll or unenroll here: success reloads the page so the board
     matches; a failure swaps this fragment so the list can say why. -#}
-<details class="fold targets" data-fold="targets" open>
+<details class="fold targets" data-fold="targets"{% if folds.targets %} open{% endif %}>
   <summary><h2>Targets</h2></summary>
   <p>The repositories this instance reads issues from. A Cycle works
      them in this order.</p>
