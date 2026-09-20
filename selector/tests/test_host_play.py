@@ -5,6 +5,7 @@ deploy/ansible/tests/README.md). No cloud, DNS, or agent credentials are used.
 """
 import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -116,6 +117,32 @@ def test_web_unit_can_reload_on_a_bind_mounted_tree():
         "tracewake-web.service must honour tracewake_web_reload so a local "
         "Host restarts the window when the bind-mounted tree changes "
         "(issue #107)."
+    )
+
+
+def test_web_unit_shortens_stop_timeout_when_reloading():
+    """Issue #114: a --reload window must not sit for systemd's default
+    stop timeout when a live /loop/events stream holds the worker."""
+    unit = (ROOT / "deploy/systemd/tracewake-web.service").read_text()
+    assert "TimeoutStopSec" in unit, (
+        "tracewake-web.service must set TimeoutStopSec when reload is on "
+        "(issue #114)."
+    )
+    reload_blocks = re.findall(
+        r"{%[-\s]*if tracewake_web_reload[^%]*%}(.*?){%[-\s]*endif[-\s]*%}",
+        unit,
+        re.S,
+    )
+    assert any("TimeoutStopSec" in block for block in reload_blocks), (
+        "TimeoutStopSec must be gated on tracewake_web_reload so production "
+        "keeps systemd's default (issue #114)."
+    )
+    match = re.search(r"TimeoutStopSec\s*=\s*(\d+)", unit)
+    assert match, "TimeoutStopSec must set a numeric seconds value"
+    seconds = int(match.group(1))
+    assert seconds <= 15, (
+        f"TimeoutStopSec={seconds} is not short; a live SSE stream would "
+        "hold the worker for systemd's default 90s (issue #114)."
     )
 
 

@@ -30,6 +30,16 @@ resource "docker_volume" "web_venv" {
   name = "${var.name}-web-venv"
 }
 
+# Recreating the container must not drop the Journal or the instance
+# files (issue #114). Same pattern as the Linux venvs above.
+resource "docker_volume" "postgresql" {
+  name = "${var.name}-postgresql"
+}
+
+resource "docker_volume" "tracewake_etc" {
+  name = "${var.name}-etc"
+}
+
 resource "docker_container" "host" {
   name  = var.name
   image = docker_image.host.image_id
@@ -58,6 +68,18 @@ resource "docker_container" "host" {
     type   = "volume"
     source = docker_volume.web_venv.name
     target = "/srv/tracewake/web/.venv"
+  }
+
+  mounts {
+    type   = "volume"
+    source = docker_volume.postgresql.name
+    target = "/var/lib/postgresql"
+  }
+
+  mounts {
+    type   = "volume"
+    source = docker_volume.tracewake_etc.name
+    target = "/etc/tracewake"
   }
 
   mounts {

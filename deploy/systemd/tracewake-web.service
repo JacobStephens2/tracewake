@@ -7,6 +7,12 @@ User={{ tracewake_user }}
 Group={{ tracewake_group }}
 WorkingDirectory={{ tracewake_dir }}/web
 ExecStart={{ tracewake_dir }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port {{ tracewake_web_port }}{% if tracewake_web_reload | default(false) | bool %} --reload{% endif %}
+{% if tracewake_web_reload | default(false) | bool %}
+# A live /loop/events stream holds the reloader's worker past systemd's
+# default 90s stop timeout. Kill it quickly so a save's restart is the
+# inner loop, not a hang (issue #114).
+TimeoutStopSec=5
+{% endif %}
 
 EnvironmentFile=-{{ tracewake_env_file }}
 {% for env in tracewake_extra_env_files %}
