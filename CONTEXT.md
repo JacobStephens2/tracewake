@@ -143,16 +143,18 @@ and it is not an agent - no model output executes in it (ADR 0014).
 _Avoid_: scheduler, dispatcher, intake
 
 **Cycle**:
-One execution of the Selector: read the tracker, apply Eligibility to the whole
-labeled queue, order, apply the caps, journal the reasoning, and dispatch Runs
-until nothing is Eligible, a cap holds, or an admin has paused. Up to an
-instance-configured number of Dispatches may run at once, serial within a
-Target (ADR 0027). The timer's
-unit of work, and the Journal's unit of grouping - every event of one Cycle carries
+One execution of the Selector against one Target: read the tracker, apply
+Eligibility to the whole labeled queue, order, apply the caps, journal the
+reasoning, and dispatch Runs until nothing is Eligible, a cap holds, or an admin
+has paused. A timer firing runs one Cycle per Target, so an Instance with three
+Targets journals three Cycles per firing. Up to an instance-configured number of
+Dispatches may run at once across those Cycles, serial within a Target
+(ADR 0027). The Journal's unit of grouping - every event of one Cycle carries
 its id. It is emphatically not an Iteration, which is why "cycle" is a word the
 Iteration entry above tells you to avoid: a Cycle chooses work and an Iteration does it.
-A Cycle also searches the configured owner for the Handover label on repositories
-with no Target stanza and journals the gap (`target.unenrolled`); it never enrolls
+Before any Target's Cycle, a timer firing also searches the configured owner for
+the Handover label on repositories with no Target stanza and journals the gap
+(`target.unenrolled`); it never enrolls
 anything. Deduplication is keyed off the Journal so a standing gap does not mail
 every half hour. It does not operate on an archived repository: GitHub makes
 those read-only, so the tracker reports no issues, the owner-wide search
