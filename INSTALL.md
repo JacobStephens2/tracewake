@@ -16,10 +16,11 @@ describe standing that machine up.
 
 One machine, with both the controller's and the Box's needs:
 
-- **OS**: Linux with hardware virtualization support (`/dev/kvm` present).
-  Ubuntu 22.04 LTS or 24.04 LTS recommended. Rocky Linux 9, Debian 12+, or
-  Fedora also work for the controller half; `sbx` itself wants Ubuntu 24.04
-  or later.
+- **OS**: Linux with hardware virtualization support (`/dev/kvm` present)
+  for Runs. Ubuntu 22.04 LTS or 24.04 LTS recommended. Rocky Linux 9,
+  Debian 12+, or Fedora also work for the controller half; `sbx` itself
+  wants Ubuntu 24.04 or later. A local Host on Docker (below) does not
+  promise `/dev/kvm`: the window and Selector still run.
 - **PostgreSQL**: Version 14 or higher.
 - **Python**: Version 3.9 or higher with `python3-venv` and `pip`.
 - **Git & GitHub CLI**: `git` 2.30+ and `gh` 2.40+.
@@ -82,6 +83,68 @@ below before enabling it. The Controller account (`conductor`) and Run account
 Run account in your Instance's local Box command. Set `LOOP_AGENT_COMMAND` to
 the chosen adapter in that Run environment. Inventory installs the agent; it
 does not perform its subscription login or supply Instance secrets.
+
+### Local Host (Docker)
+
+The same Single-Host shape, on a laptop (issue #107, ADR 0031). OpenTofu
+creates one Ubuntu 24.04 systemd container; `host.yml` is still the play.
+Nested virtualization is not promised: the window and Selector run; a Run
+may fail at the Execution Boundary until `/dev/kvm` exists.
+
+Keep instance facts out of this tree, in `~/.config/tracewake/`:
+
+```hcl
+# ~/.config/tracewake/local.tfvars
+name      = "tracewake-local"
+checkout  = "/absolute/path/to/this/checkout"
+http_port = 8080
+```
+
+```bash
+deploy/tofu/local/up.sh
+# or: cd deploy/tofu/local && tofu init && tofu apply -var-file=...
+```
+
+`tofu output container_name` is the Docker name. Inventory points Ansible
+at it with `community.docker.docker` (`ansible-galaxy collection install
+community.docker` if `ansible-doc -t connection community.docker.docker`
+does not find it), sets `tracewake_tls: false` (Caddy on `:80`, no ACME),
+`tracewake_manage_checkout: false` (the working tree is bind-mounted at
+`/srv/tracewake`), and `tracewake_web_reload: true` (a save reloads the
+window). The eight installation facts in the table above are still
+required.
+
+```yaml
+# ~/.config/tracewake/local-inventory.yml
+tracewake:
+  hosts:
+    local:
+      ansible_connection: community.docker.docker
+      ansible_host: tracewake-local
+      ansible_python_interpreter: /usr/bin/python3
+      tracewake_hostname: localhost
+      tracewake_tls: false
+      tracewake_manage_checkout: false
+      tracewake_web_reload: true
+      tracewake_repository: https://github.com/example/tracewake.git
+      tracewake_revision: main
+      loop_commit_author_name: Your Name
+      loop_commit_author_email: you@example.com
+      loop_signing_key_comment: local-host
+      loop_target_repository: example/target
+      loop_scripts_workspace: /home/loop/workspace
+```
+
+```bash
+ansible-playbook -i ~/.config/tracewake/local-inventory.yml deploy/ansible/host.yml --check --diff
+ansible-playbook -i ~/.config/tracewake/local-inventory.yml deploy/ansible/host.yml
+curl http://127.0.0.1:8080/healthz
+```
+
+A first apply may stop at `sbx` sign-in (`wizards/loop-sbx-login.sh`).
+Caddy is installed before that role, so `/healthz` should already answer.
+Write `/etc/tracewake/tracewake.env` and `targets.toml` on the container
+as in Step 6, seed an admin, and open the URL OpenTofu printed.
 
 The manual steps below describe those components and the remaining configuration.
 

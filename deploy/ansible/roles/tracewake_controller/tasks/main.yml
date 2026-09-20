@@ -101,6 +101,20 @@
 
 # --- 2. Virtual environments ------------------------------------------------
 
+# A local Host bind-mounts the checkout and overlays .venv with a Docker
+# volume that starts root-owned. Production checkouts are already the
+# Controller's. Either way the venv must be writable before pip runs
+# (issue #107).
+- name: Virtualenv directories are writable by the Controller
+  ansible.builtin.file:
+    path: "{{ tracewake_dir }}/{{ item }}/.venv"
+    state: directory
+    owner: "{{ tracewake_user }}"
+    group: "{{ tracewake_group }}"
+    recurse: true
+  loop: [selector, web]
+  when: not ansible_check_mode
+
 - name: Selector virtual environment and dependencies
   ansible.builtin.pip:
     requirements: "{{ tracewake_dir }}/selector/requirements.txt"

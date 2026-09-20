@@ -6,7 +6,7 @@ After=network.target postgresql.service
 User={{ tracewake_user }}
 Group={{ tracewake_group }}
 WorkingDirectory={{ tracewake_dir }}/web
-ExecStart={{ tracewake_dir }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port {{ tracewake_web_port }}
+ExecStart={{ tracewake_dir }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port {{ tracewake_web_port }}{% if tracewake_web_reload | default(false) | bool %} --reload{% endif %}
 
 EnvironmentFile=-{{ tracewake_env_file }}
 {% for env in tracewake_extra_env_files %}

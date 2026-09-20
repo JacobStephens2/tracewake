@@ -1,5 +1,6 @@
 ---
-# One dedicated Ubuntu Host: Controller, local Box, and HTTPS Dashboard.
+# One dedicated Ubuntu Host: Controller, local Box, and Dashboard
+# (HTTPS by default; HTTP when inventory sets tracewake_tls false).
 # Instance facts come from inventory; agent selection stays a role default so
 # inventory's loop_agent_name wins (including grok).
 # In check mode, roles inspect paths as root because the service accounts may
@@ -37,6 +38,11 @@
     - loop_account
     - tracewake_host
     - tracewake_controller
+    # Caddy is what makes the window reachable from outside the Host.
+    # The Execution Boundary role fails on a missing sbx login, so the
+    # proxy has to be up before that, or a first apply leaves no Dashboard
+    # (issue #107).
+    - tracewake_proxy
     - loop_shell_suite
     - loop_execution_boundary
     - loop_credentials
@@ -45,4 +51,3 @@
     # Grok uses the vendor's shell image; custom recipes remain optional.
     - role: loop_guest_template
       when: loop_agent_name == 'claude' or loop_guest_templates | default([]) | length > 0
-    - tracewake_proxy
