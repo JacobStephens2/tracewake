@@ -242,10 +242,14 @@
     </details>
 
     {% if runs %}
-    <h2>Runs</h2>
+    {#- Same fold as the queue: open by default, stored choice re-applied
+        after every live swap. -#}
+    <details class="fold" data-fold="runs" open>
+    <summary><h2>Runs</h2></summary>
     <p>One card per dispatch: the Run in flight, and every Run that has
        ended, with the Proposal it left behind.</p>
 {% include "_runs.html" %}
+    </details>
     {% endif %}
 
     {% if cycles %}
@@ -310,7 +314,8 @@
     {% endif %}
 
     {% if events %}
-    <h2>Every event</h2>
+    <details class="fold" data-fold="events" open>
+    <summary><h2>Every event</h2></summary>
     <table>
       <thead><tr><th>at</th><th>id</th><th>kind</th><th>payload</th></tr></thead>
       <tbody>
@@ -324,6 +329,7 @@
       {% endfor %}
       </tbody>
     </table>
+    </details>
     {% elif not error %}
     <p>No events yet. The Journal fills when the Selector runs.</p>
     {% endif %}

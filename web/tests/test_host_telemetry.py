@@ -24,7 +24,9 @@ def host_widget(body: str) -> str:
     Sliced rather than searched whole: "41%" somewhere on the page is not
     "the widget showed what the sampler returned".
     """
-    match = re.search(r'<aside class="host"[^>]*>(.*?)</aside>', body, re.DOTALL)
+    match = re.search(
+        r'<details class="fold host"[^>]*>(.*?)</details>', body, re.DOTALL
+    )
     assert match, "no host widget on the page"
     return match.group(1)
 

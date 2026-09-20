@@ -2,8 +2,8 @@
    disk this checkout lives on, and how many Runs the Journal has in flight.
    Sampler failure degrades this widget, not the board. Figures are already
    formatted; this template does not re-branch on ok per cell. #}
-<aside class="host" data-host="{% if host.ok %}ok{% else %}degraded{% endif %}">
-  <h2>The host</h2>
+<details class="fold host" data-fold="host" open data-host="{% if host.ok %}ok{% else %}degraded{% endif %}">
+  <summary><h2>The host</h2></summary>
   <p>Live headroom on this machine, and the count of Runs in flight.</p>
   <section class="strip strip-host">
     <div class="cell cell-cpu">
@@ -34,4 +34,4 @@
   {% if not host.ok %}
   <p class="detail">{{ host.error }}</p>
   {% endif %}
-</aside>
+</details>
