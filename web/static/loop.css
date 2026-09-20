@@ -151,6 +151,20 @@ form.sign-out button {
   font-size: 0.85em;
 }
 .targets form.target-add input { width: 100%; }
+.targets form.target-add details.target-add-more {
+  margin: 0 0 0.6rem;
+}
+.targets form.target-add details.target-add-more > summary {
+  cursor: pointer;
+  color: var(--secondary-color);
+  font-size: 0.85em;
+}
+.targets form.target-add details.target-add-more > summary::before {
+  content: "[+] ";
+}
+.targets form.target-add details.target-add-more[open] > summary::before {
+  content: "[-] ";
+}
 
 /* Pause (#161) is a page-wide operating state, so its banner sits above
    the strip rather than pretending to be one status cell among four. */

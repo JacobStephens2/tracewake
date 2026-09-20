@@ -588,16 +588,85 @@ def _existing(where: Path) -> tuple[Target, ...]:
         return ()
 
 
+def _short_name(repo: str) -> str:
+    """The last path component of `owner/name`, which is what the Host's
+    checkouts and token files are named after."""
+    return repo.rsplit("/", 1)[-1]
+
+
+def _rename_path(value: str, old: str, new: str) -> str:
+    """Replace the source Target's short name in a path, or empty.
+
+    Only the final component is rewritten: a parent directory that
+    happens to match the name (`/home/loop/loop`) stays put. A path
+    that does not carry the name is not reused — two Targets sharing
+    a checkout or a token is the failure this exists to prevent.
+    """
+    if not old:
+        return ""
+    parent, sep, last = value.rpartition("/")
+    if last == old:
+        renamed = new
+    elif old in last:
+        renamed = last.replace(old, new, 1)
+    else:
+        return ""
+    return parent + sep + renamed
+
+
+def draft(repo: str, source: Target) -> dict[str, Any]:
+    """A stanza for `repo`, filled from an existing Target.
+
+    Path fields that carry the source's short name have it substituted.
+    guest_template and labeler_allowlist are copied: they are facts
+    about the instance, not about the repository. No host path is
+    invented — a layout the instance has never declared stays blank.
+    """
+    old = _short_name(source.repo)
+    new = _short_name(repo)
+    return {
+        "repo": repo,
+        "work_repo": _rename_path(str(source.work_repo), old, new),
+        "box_repo": _rename_path(source.box_repo, old, new),
+        "token_file": _rename_path(source.token_file, old, new),
+        "guest_template": source.guest_template,
+        "labeler_allowlist": list(source.labeler_allowlist),
+    }
+
+
+def _fill_from_last(stanza: dict[str, Any], current: tuple[Target, ...]) -> dict[str, Any]:
+    """Blank required fields, filled from the last declared Target.
+
+    A submitted value wins. A layout the last Target does not
+    demonstrate stays blank, and Target.load refuses it by name.
+    """
+    repo = stanza.get("repo") or ""
+    if not repo or not current:
+        return stanza
+    filled = draft(str(repo), current[-1])
+    merged = dict(filled)
+    for key, value in stanza.items():
+        if value:
+            merged[key] = value
+    return merged
+
+
 def add(stanza: dict[str, Any], path: Path | None = None) -> tuple[Target, ...]:
     """Enroll one Target: append its stanza, leave the rest in file order.
 
     The Host's checkouts and token files are not created. Adding a Target
     is putting it on the Cycle's list, not provisioning the machine it
-    will run on.
+    will run on. Blank path, guest, and allowlist fields are filled from
+    the last declared Target, so a second enrollment may name only the
+    repository.
     """
     where = path or targets_file()
     current = _existing(where)
-    incoming = Target.load(stanza, where=str(where), index=len(current) + 1)
+    incoming = Target.load(
+        _fill_from_last(stanza, current),
+        where=str(where),
+        index=len(current) + 1,
+    )
     if incoming.repo in {target.repo for target in current}:
         raise NotConfigured(
             f"{where} already declares {incoming.repo}. Two stanzas for one"
