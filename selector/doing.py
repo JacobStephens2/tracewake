@@ -2,9 +2,14 @@
 
 Hand-back, Proposal upkeep, Dispatch of a pick, routing, and observation of
 the box and the Guardrail. The Cycle in drain.py decides; this module acts.
+
+A Cycle is handed a Doing: production wraps these functions, a dry run does
+nothing and journals nothing, and a recorder sits at the same four
+operations. The four per-drain Proposal sets are this module's state.
 """
 from __future__ import annotations
 
+import abc
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -1119,3 +1124,244 @@ def _route(
             failing=failing
         ),
     )
+
+
+# --- The seam a Cycle is handed --------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProposalUpkeep:
+    """What keeping Proposals current has done this drain, cumulatively."""
+
+    updated: set
+    failed: set
+    reconciled: set
+    reconcile_failed: set
+
+
+@dataclass(frozen=True)
+class PickResult:
+    """The Run's outcome and its Route, or that no Dispatch happened.
+
+    `dispatched` is False when the doing did not start a Run - a dry run's
+    answer, and the Cycle's reason to stop looking. Production always
+    dispatches when asked, or raises.
+    """
+
+    dispatched: bool
+    outcome: dict | None = None
+    route: str | None = None
+
+
+class Doing(abc.ABC):
+    """The four operations a Cycle needs back from the world.
+
+    Grouped by what the Cycle uses, not one per existing function. The Cycle
+    never uses box facts and never acts between Dispatch and Route, so those
+    orderings belong here. The Cycle journals its decisions; a Doing journals
+    its acts.
+    """
+
+    @abc.abstractmethod
+    def observe_guardrail(
+        self, conn: psycopg.Connection, cycle_id: int, config: Config,
+    ) -> None:
+        """Read the Guardrail once, when the Cycle starts, and journal it."""
+
+    @abc.abstractmethod
+    def keep_proposals_current(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        handover: list[dict],
+        review: list[dict],
+    ) -> ProposalUpkeep:
+        """Proposal Freshness and Reconcile Runs.
+
+        Dedup across drain passes is this doing's own state. The answer is
+        what was updated, reconciled, and failed.
+        """
+
+    @abc.abstractmethod
+    def return_to_operator(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        record: dict,
+        detail: str,
+    ) -> bool | None:
+        """The Loud Skip act: comment, relabel, journal.
+
+        True if the tracker accepted, False if it refused, None if this
+        doing did not try.
+        """
+
+    @abc.abstractmethod
+    def work_pick(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        pick: dict,
+        attempt: int,
+    ) -> PickResult:
+        """Read the box, Dispatch, Route. The Cycle never acts between them."""
+
+
+class ProductionDoing(Doing):
+    """Today's acts, including the journal rows that belong next to them."""
+
+    def __init__(self) -> None:
+        self.updated_proposals: set = set()
+        self.failed_proposals: set = set()
+        self.reconciled_proposals: set = set()
+        self.reconcile_failed_proposals: set = set()
+
+    def observe_guardrail(
+        self, conn: psycopg.Connection, cycle_id: int, config: Config,
+    ) -> None:
+        guardrail, guardrail_error = observe_guardrail(config)
+        journal.append(
+            conn,
+            *(
+                events.guardrail_observed(cycle=cycle_id, **guardrail)
+                if guardrail
+                else events.guardrail_unreadable(
+                    cycle=cycle_id, error=guardrail_error
+                )
+            ),
+        )
+
+    def keep_proposals_current(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        handover: list[dict],
+        review: list[dict],
+    ) -> ProposalUpkeep:
+        update_proposals_freshness(
+            conn,
+            cycle_id,
+            config,
+            dispatch_config,
+            handover + review,
+            updated=self.updated_proposals,
+            failed=self.failed_proposals,
+        )
+        reconcile_conflicting_proposals(
+            conn,
+            cycle_id,
+            config,
+            dispatch_config,
+            handover,
+            review,
+            reconciled=self.reconciled_proposals,
+            failed=self.reconcile_failed_proposals,
+        )
+        return ProposalUpkeep(
+            updated=self.updated_proposals,
+            failed=self.failed_proposals,
+            reconciled=self.reconciled_proposals,
+            reconcile_failed=self.reconcile_failed_proposals,
+        )
+
+    def return_to_operator(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        record: dict,
+        detail: str,
+    ) -> bool | None:
+        return _return_to_operator(
+            conn, cycle_id, config, dispatch_config, record, detail
+        )
+
+    def work_pick(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        pick: dict,
+        attempt: int,
+    ) -> PickResult:
+        facts, box_error = observe_box(config)
+        journal.append(
+            conn,
+            *(
+                events.box_observed(cycle=cycle_id, **facts)
+                if facts
+                else events.box_unreachable(cycle=cycle_id, error=box_error)
+            ),
+        )
+        outcome = _dispatch_pick(
+            conn, cycle_id, config, dispatch_config, pick, attempt,
+        )
+        # Routing is separate from dispatching, and after it, because the two
+        # answer different questions: `_dispatch_pick` records what the Run
+        # did, and this decides what that means for the issue. Keeping the
+        # outcome row unconditional is what stops a label swap GitHub refused
+        # from erasing the Journal's record that a Run ever ran.
+        route = _route(
+            conn, cycle_id, config, dispatch_config, pick,
+            outcome, attempt,
+        )
+        return PickResult(dispatched=True, outcome=outcome, route=route)
+
+
+class DryRunDoing(Doing):
+    """A doing that does nothing and journals nothing.
+
+    `--dry-run` reaches the tracker and nothing else. The Cycle still
+    journals its decisions; this adapter is how a new act cannot be added
+    to the Cycle and forgotten in the dry-run path.
+    """
+
+    def observe_guardrail(
+        self, conn: psycopg.Connection, cycle_id: int, config: Config,
+    ) -> None:
+        return None
+
+    def keep_proposals_current(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        handover: list[dict],
+        review: list[dict],
+    ) -> ProposalUpkeep:
+        return ProposalUpkeep(
+            updated=set(), failed=set(), reconciled=set(), reconcile_failed=set(),
+        )
+
+    def return_to_operator(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        record: dict,
+        detail: str,
+    ) -> bool | None:
+        return None
+
+    def work_pick(
+        self,
+        conn: psycopg.Connection,
+        cycle_id: int,
+        config: Config,
+        dispatch_config: dispatch.DispatchConfig,
+        pick: dict,
+        attempt: int,
+    ) -> PickResult:
+        return PickResult(dispatched=False)

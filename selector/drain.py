@@ -15,6 +15,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psycopg
 
@@ -27,6 +28,9 @@ import journal  # noqa: E402
 import targets  # noqa: E402
 from events import MAX_ATTEMPTS, is_failure  # noqa: E402
 from targets import Config  # noqa: E402
+
+if TYPE_CHECKING:
+    from doing import Doing, ProposalUpkeep
 
 # The section `ready-for-agent` promises (ADR 0014). One, not two: Acceptance
 # criteria is what seed-run.sh already refuses without, and it is the Run's
@@ -537,19 +541,17 @@ def run_cycle(
     config: Config,
     dispatch_config: dispatch.DispatchConfig,
     *,
+    doing: Doing,
     dry_run: bool,
     slots: threading.Semaphore | None = None,
 ) -> CycleResult:
     """One cycle. Returns the summary it journaled, plus what it then did.
 
+    `doing` is the acts: Guardrail, Proposals, hand-back, Dispatch and Route.
+    `dry_run` is a payload fact on started/finished, not a branch in this loop.
     `slots` is the instance-wide cap on concurrent Dispatches (issue #37).
     None means this cycle is the only one running, which is K=1.
     """
-    from doing import (
-        observe_guardrail, observe_box,
-        update_proposals_freshness, reconcile_conflicting_proposals,
-        _return_to_operator, _dispatch_pick, _route,
-    )
     cycle_id = journal.append(
         conn,
         *events.cycle_started(
@@ -574,22 +576,8 @@ def run_cycle(
     halted: str | None = None
     last_spend: Spend | None = None
     last_budget: dict | None = None
-    updated_proposals: set = set()
-    failed_proposals: set = set()
-    reconciled_proposals: set = set()
-    reconcile_failed_proposals: set = set()
-    if not dry_run:
-        guardrail, guardrail_error = observe_guardrail(config)
-        journal.append(
-            conn,
-            *(
-                events.guardrail_observed(cycle=cycle_id, **guardrail)
-                if guardrail
-                else events.guardrail_unreadable(
-                    cycle=cycle_id, error=guardrail_error
-                )
-            ),
-        )
+    last_upkeep: ProposalUpkeep | None = None
+    doing.observe_guardrail(conn, cycle_id, config)
 
     while True:
         try:
@@ -610,26 +598,14 @@ def run_cycle(
             journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
             raise
 
-        if not dry_run:
-            update_proposals_freshness(
-                conn,
-                cycle_id,
-                config,
-                dispatch_config,
-                queue + (review or []),
-                updated=updated_proposals,
-                failed=failed_proposals,
-            )
-            reconcile_conflicting_proposals(
-                conn,
-                cycle_id,
-                config,
-                dispatch_config,
-                queue,
-                review or [],
-                reconciled=reconciled_proposals,
-                failed=reconcile_failed_proposals,
-            )
+        last_upkeep = doing.keep_proposals_current(
+            conn,
+            cycle_id,
+            config,
+            dispatch_config,
+            queue,
+            review or [],
+        )
 
         last_budget = budget
 
@@ -675,12 +651,13 @@ def run_cycle(
                 # underspecified issue is handing work back to the operator, not
                 # spending a Run, and an issue the Selector will never seed should not
                 # wait for a free budget to be told so.
-                if reason == "missing-section" and not dry_run:
-                    if _return_to_operator(
+                if reason == "missing-section":
+                    handed_back = doing.return_to_operator(
                         conn, cycle_id, config, dispatch_config, record, detail
-                    ):
+                    )
+                    if handed_back is True:
                         returned.append(number)
-                    else:
+                    elif handed_back is False:
                         return_failures += 1
 
         last_eligible = [int(r["number"]) for r in eligible]
@@ -739,47 +716,25 @@ def run_cycle(
             if first_pick is None:
                 first_pick = pick
 
-        # Before each dispatch: read box facts.
-        # Not in a dry run: a dry run reaches the tracker and nothing else, and
-        # that property is worth more than a status card on a cycle that changed
-        # nothing.
         try:
-            if not dry_run:
-                facts, box_error = observe_box(config)
-                journal.append(
-                    conn,
-                    *(
-                        events.box_observed(cycle=cycle_id, **facts)
-                        if facts
-                        else events.box_unreachable(cycle=cycle_id, error=box_error)
-                    ),
-                )
-
-            if pick and not dry_run:
-                attempt = cycle_spend.attempts(
-                    pick["number"], picked_record.get("labeledAt"),
-                    repo=config.task_repo,
-                ) + 1
-                outcome = _dispatch_pick(
-                    conn, cycle_id, config, dispatch_config, pick, attempt,
-                )
-                outcomes.append(outcome)
-                # Routing is separate from dispatching, and after it, because the two
-                # answer different questions: `_dispatch_pick` records what the Run
-                # did, and this decides what that means for the issue. Keeping the
-                # outcome row unconditional is what stops a label swap GitHub refused
-                # from erasing the Journal's record that a Run ever ran.
-                route = _route(
-                    conn, cycle_id, config, dispatch_config, pick,
-                    outcome, attempt,
-                )
-                routes.append(route)
+            attempt = cycle_spend.attempts(
+                pick["number"], picked_record.get("labeledAt"),
+                repo=config.task_repo,
+            ) + 1
+            worked = doing.work_pick(
+                conn, cycle_id, config, dispatch_config, pick, attempt,
+            )
+            if worked.dispatched:
+                outcomes.append(worked.outcome)
+                routes.append(worked.route)
                 dispatches.append(pick["number"])
         finally:
             if held_slot:
                 slots.release()
 
-        if dry_run or not pick:
+        # Stop looking when the doing did not Dispatch: a dry run still
+        # journals one pick and then ends, with halted unset.
+        if not worked.dispatched:
             break
 
     result = CycleResult(
@@ -802,9 +757,15 @@ def run_cycle(
         return_failures=return_failures,
         outcome=outcomes[-1] if outcomes else None,
         route=routes[-1] if routes else None,
-        updated_proposals=sorted(str(p) for p in updated_proposals),
-        reconciled_proposals=sorted(str(p) for p in reconciled_proposals),
-        reconcile_failures=sorted(str(p) for p in reconcile_failed_proposals),
+        updated_proposals=(
+            sorted(str(p) for p in last_upkeep.updated) if last_upkeep else []
+        ),
+        reconciled_proposals=(
+            sorted(str(p) for p in last_upkeep.reconciled) if last_upkeep else []
+        ),
+        reconcile_failures=(
+            sorted(str(p) for p in last_upkeep.reconcile_failed) if last_upkeep else []
+        ),
     )
     # One cycle summary per drain names every dispatch and the reason it stopped.
     # The six extra fields stay on the value; extra kwargs would TypeError.

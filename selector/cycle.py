@@ -75,6 +75,7 @@ import psycopg
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import dispatch  # noqa: E402
+import doing  # noqa: E402
 import events  # noqa: E402
 import journal  # noqa: E402
 import targets  # noqa: E402
@@ -261,7 +262,7 @@ def _run_targets(
     if not configs:
         return [], None
     concurrency = configs[0].drain_concurrency
-    parallel = (not dry_run) and concurrency > 1 and len(configs) > 1
+    parallel = concurrency > 1 and len(configs) > 1
     if not parallel:
         # One cycle per target, each with its own `cycle.started` and
         # `cycle.finished` pair. A second target is a second stanza and a
@@ -280,6 +281,7 @@ def _run_targets(
                 conn,
                 config,
                 dispatch.DispatchConfig.for_target(config.target),
+                doing=doing.DryRunDoing() if dry_run else doing.ProductionDoing(),
                 dry_run=dry_run,
             )
             for config in configs
@@ -296,6 +298,7 @@ def _run_targets(
                     target_conn,
                     config,
                     dispatch.DispatchConfig.for_target(config.target),
+                    doing=doing.DryRunDoing() if dry_run else doing.ProductionDoing(),
                     dry_run=dry_run,
                     slots=slots,
                 )

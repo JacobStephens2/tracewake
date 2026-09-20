@@ -260,19 +260,28 @@ MUTATIONS = {
     # An underspecified issue is passed over in silence every half hour
     # forever, which is the case ADR 0014 says must be handed back.
     "loud-skip-goes-quiet": (DRAIN, DISPATCH_SUITE,
-        'if reason == "missing-section" and not dry_run:',
+        'if reason == "missing-section":',
         "if False:",
     ),
     # A dry run writes to the tracker: the mode that exists to change nothing
     # comments on issues and swaps their labels.
-    "dry-run-hands-issues-back": (DRAIN, DISPATCH_SUITE,
-        'if reason == "missing-section" and not dry_run:',
-        'if reason == "missing-section":',
+    "dry-run-hands-issues-back": (DOING, DISPATCH_SUITE,
+        "        record: dict,\n"
+        "        detail: str,\n"
+        "    ) -> bool | None:\n"
+        "        return None\n",
+        "        record: dict,\n"
+        "        detail: str,\n"
+        "    ) -> bool | None:\n"
+        "        return _return_to_operator("
+        "conn, cycle_id, config, dispatch_config, record, detail)\n",
     ),
     # A dry run starts a Run. The one mode an operator uses to see what WOULD
     # happen spends a Run finding out.
-    "dry-run-dispatches": (DRAIN, DISPATCH_SUITE,
-        "if pick and not dry_run:", "if pick:",
+    "dry-run-dispatches": (DOING, DISPATCH_SUITE,
+        "        return PickResult(dispatched=False)\n",
+        "        return ProductionDoing().work_pick("
+        "conn, cycle_id, config, dispatch_config, pick, attempt)\n",
     ),
     # The in-flight lock stops being written under the name every cycle reads,
     # so the ninety minutes a Run takes are unguarded and a second cycle
@@ -300,11 +309,11 @@ MUTATIONS = {
     # Every dispatch is attempt 1, so the Journal cannot tell a first Run from
     # a retry and #155's give-up has nothing to count.
     "every-dispatch-is-the-first": (DRAIN, DISPATCH_SUITE,
-        '                attempt = cycle_spend.attempts(\n'
-        '                    pick["number"], picked_record.get("labeledAt"),\n'
-        '                    repo=config.task_repo,\n'
-        '                ) + 1',
-        "                attempt = 1",
+        '            attempt = cycle_spend.attempts(\n'
+        '                pick["number"], picked_record.get("labeledAt"),\n'
+        '                repo=config.task_repo,\n'
+        '            ) + 1',
+        "            attempt = 1",
     ),
     # A Run that ended on a bound is reported as a dispatch failure, so the
     # Termination Contract working pages the operator every time.
@@ -454,9 +463,19 @@ MUTATIONS = {
     # A dry run reaches the box. The property that a dry run touches the
     # tracker and nothing else is what makes it safe to run against
     # production from a keyboard.
-    "a-dry-run-reaches-the-box": (DRAIN, UNATTENDED_SUITE,
-        "            if not dry_run:\n                facts, box_error = observe_box(config)",
-        "            if True:\n                facts, box_error = observe_box(config)",
+    "a-dry-run-reaches-the-box": (DOING, UNATTENDED_SUITE,
+        "        return PickResult(dispatched=False)\n",
+        "        facts, box_error = observe_box(config)\n"
+        "        journal.append(\n"
+        "            conn,\n"
+        "            *(\n"
+        "                events.box_observed(cycle=cycle_id, **facts)\n"
+        "                if facts\n"
+        "                else events.box_unreachable("
+        "cycle=cycle_id, error=box_error)\n"
+        "            ),\n"
+        "        )\n"
+        "        return PickResult(dispatched=False)\n",
     ),
     # The owning area stops falling back to the issue title, so every issue
     # without the section - which is most of them, and is why the requirement
@@ -584,12 +603,12 @@ MUTATIONS = {
     ),
     # A Cycle stops after one dispatch rather than draining the queue.
     "cycle-stops-after-one-dispatch": (DRAIN, UNATTENDED_SUITE,
-        "            dispatches.append(pick[\"number\"])",
-        "            dispatches.append(pick[\"number\"])\n            break",
+        "                dispatches.append(pick[\"number\"])",
+        "                dispatches.append(pick[\"number\"])\n                break",
     ),
     # K=2 never overlaps: the drain stays sequential across Targets.
     "parallel-drain-never-starts": (CYCLE, UNATTENDED_SUITE,
-        "    parallel = (not dry_run) and concurrency > 1 and len(configs) > 1",
+        "    parallel = concurrency > 1 and len(configs) > 1",
         "    parallel = False",
     ),
     # K of zero is accepted, so a misconfigured instance drains nothing and
@@ -792,9 +811,13 @@ MUTATIONS = {
     # A dry run reads the guardrail - a `gh` call and a walk of the deployed
     # tree, on the mode whose property is that it reaches the tracker and
     # nothing else.
-    "a-dry-run-reads-the-guardrail": (DRAIN, GUARDRAIL_SUITE,
-        "    if not dry_run:\n        guardrail, guardrail_error = observe_guardrail(config)",
-        "    if True:\n        guardrail, guardrail_error = observe_guardrail(config)",
+    "a-dry-run-reads-the-guardrail": (DOING, GUARDRAIL_SUITE,
+        "        self, conn: psycopg.Connection, cycle_id: int, config: Config,\n"
+        "    ) -> None:\n"
+        "        return None\n",
+        "        self, conn: psycopg.Connection, cycle_id: int, config: Config,\n"
+        "    ) -> None:\n"
+        "        ProductionDoing().observe_guardrail(conn, cycle_id, config)\n",
     ),
     # Two declared trees are read in one cycle and the chip is green only when
     # both are: one green tree is not enough.
@@ -1290,17 +1313,16 @@ MUTATIONS = {
         '[[ -f "${assert_script}" ]] || die "assert-credentials.sh not executable or not found at ${assert_script}"\n',
     ),
     # Freshness: open proposals behind their base are not updated during a drain.
-    "proposal-behind-not-updated": (DRAIN, UNATTENDED_SUITE,
-        "        if not dry_run:\n"
-        "            update_proposals_freshness(\n"
-        "                conn,\n"
-        "                cycle_id,\n"
-        "                config,\n"
-        "                dispatch_config,\n"
-        "                queue + (review or []),\n"
-        "                updated=updated_proposals,\n"
-        "                failed=failed_proposals,\n"
-        "            )\n",
+    "proposal-behind-not-updated": (DOING, UNATTENDED_SUITE,
+        "        update_proposals_freshness(\n"
+        "            conn,\n"
+        "            cycle_id,\n"
+        "            config,\n"
+        "            dispatch_config,\n"
+        "            handover + review,\n"
+        "            updated=self.updated_proposals,\n"
+        "            failed=self.failed_proposals,\n"
+        "        )\n",
         "        pass\n",
     ),
     # Freshness: conflicting proposals are erroneously updated.
@@ -1338,18 +1360,18 @@ MUTATIONS = {
     ),
     # Reconcile (#34): the drain never dispatches one, so conflicting
     # Proposals rot under their badge forever.
-    "reconcile-pass-skipped": (DRAIN, RECONCILE_SUITE,
-        "            reconcile_conflicting_proposals(\n"
-        "                conn,\n"
-        "                cycle_id,\n"
-        "                config,\n"
-        "                dispatch_config,\n"
-        "                queue,\n"
-        "                review or [],\n"
-        "                reconciled=reconciled_proposals,\n"
-        "                failed=reconcile_failed_proposals,\n"
-        "            )\n",
-        "            pass\n",
+    "reconcile-pass-skipped": (DOING, RECONCILE_SUITE,
+        "        reconcile_conflicting_proposals(\n"
+        "            conn,\n"
+        "            cycle_id,\n"
+        "            config,\n"
+        "            dispatch_config,\n"
+        "            handover,\n"
+        "            review,\n"
+        "            reconciled=self.reconciled_proposals,\n"
+        "            failed=self.reconcile_failed_proposals,\n"
+        "        )\n",
+        "        pass\n",
     ),
     # Reconcile (#34): a failed reconcile leaves the issue where it was,
     # so the next cycle dispatches another Run at the same conflicts.
