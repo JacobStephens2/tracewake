@@ -732,8 +732,7 @@ def _dispatch_pick(
         kept = dispatch.keep_previous_progress(dispatch_config, branch)
     except dispatch.DispatchFailed as exc:
         # Nothing has been dispatched, so nothing holds the lock and nothing
-        # is journaled as a dispatch. The cycle still fails loudly.
-        journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
+        # is journaled as a dispatch. The Cycle journals cycle.failed.
         raise CycleFailed(str(exc)) from exc
 
     context["branch"] = branch

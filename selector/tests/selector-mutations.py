@@ -1077,8 +1077,8 @@ MUTATIONS = {
     # A shipping module spells a kind by hand again - behavior identical, and
     # only the sweep can notice, which is what the sweep is for.
     "a-kind-spelled-outside-the-vocabulary": (DRAIN, EVENTS_SUITE,
-        "            journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n            raise\n",
-        '            journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n            raise\n',
+        "        journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))\n        raise\n",
+        '        journal.append(conn, "cycle.failed", {"cycle": cycle_id, "error": str(exc)})\n        raise\n',
     ),
     # The staging fixture drifts from the writer - a key today's writer always
     # journals goes missing from a seeded row, the state a preview would

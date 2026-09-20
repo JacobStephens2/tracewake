@@ -7,6 +7,7 @@ process that starts a Cycle lives in cycle.py.
 """
 from __future__ import annotations
 
+import abc
 import json
 import re
 import subprocess
@@ -448,6 +449,45 @@ def fetch_tracker(config: Config, label: str | None = None,
         raise CycleFailed(f"tracker command did not return a queue: {exc}") from exc
 
 
+@dataclass(frozen=True)
+class TrackerReads:
+    """The Handover queue, the review queue, and whether the repository is archived.
+
+    One operation's answer. An archived Target is not a queue: the Cycle
+    halts before considering issues, refreshing Proposals, or dispatching.
+    """
+
+    handover: list[dict]
+    review: list[dict]
+    archived: bool = False
+
+
+class Tracker(abc.ABC):
+    """The one read a Cycle needs of the tracker."""
+
+    @abc.abstractmethod
+    def read(self, config: Config) -> TrackerReads:
+        """The Handover queue, the review queue, and whether the repository is archived.
+
+        A tracker that cannot be read raises CycleFailed: that is a failed
+        Cycle, not an empty queue.
+        """
+
+
+class ProductionTracker(Tracker):
+    """Today's `fetch_tracker` / `fetch_queue`, as one operation."""
+
+    def read(self, config: Config) -> TrackerReads:
+        tracked = fetch_tracker(config)
+        if tracked.archived:
+            return TrackerReads(handover=[], review=[], archived=True)
+        return TrackerReads(
+            handover=tracked.issues,
+            review=fetch_queue(config, config.review_label),
+            archived=False,
+        )
+
+
 class CycleFailed(Exception):
     """The cycle could not run. Journaled, printed, and exits non-zero."""
 
@@ -541,12 +581,14 @@ def run_cycle(
     config: Config,
     dispatch_config: dispatch.DispatchConfig,
     *,
+    tracker: Tracker,
     doing: Doing,
     dry_run: bool,
     slots: threading.Semaphore | None = None,
 ) -> CycleResult:
     """One cycle. Returns the summary it journaled, plus what it then did.
 
+    `tracker` is the reads: Handover queue, review queue, archived flag.
     `doing` is the acts: Guardrail, Proposals, hand-back, Dispatch and Route.
     `dry_run` is a payload fact on started/finished, not a branch in this loop.
     `slots` is the instance-wide cap on concurrent Dispatches (issue #37).
@@ -577,11 +619,11 @@ def run_cycle(
     last_spend: Spend | None = None
     last_budget: dict | None = None
     last_upkeep: ProposalUpkeep | None = None
-    doing.observe_guardrail(conn, cycle_id, config)
+    try:
+        doing.observe_guardrail(conn, cycle_id, config)
 
-    while True:
-        try:
-            tracked = fetch_tracker(config)
+        while True:
+            tracked = tracker.read(config)
             if tracked.archived:
                 # GitHub makes an archived repository read-only. Do not
                 # consider its issues, refresh its Proposals, or dispatch:
@@ -591,199 +633,199 @@ def run_cycle(
                     first_considered = 0
                 halted = "repository-archived"
                 break
-            queue = tracked.issues
-            review = fetch_queue(config, config.review_label)
+            queue = tracked.handover
+            review = tracked.review
             budget = review_budget(config, handover=queue, review=review, raise_on_error=True)
-        except CycleFailed as exc:
-            journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
-            raise
 
-        last_upkeep = doing.keep_proposals_current(
-            conn,
-            cycle_id,
-            config,
-            dispatch_config,
-            queue,
-            review or [],
-        )
-
-        last_budget = budget
-
-        if first_considered is None:
-            first_considered = len(queue)
-
-        cycle_spend = spend(conn)
-        last_spend = cycle_spend
-        eligible: list[dict] = []
-        for record in queue:
-            number = int(record["number"])
-            if number in dispatches:
-                continue
-            labeled_at = record.get("labeledAt")
-            verdict = eligibility(
-                record, config,
-                cycle_spend.attempts(
-                    number, labeled_at, repo=config.task_repo,
-                ),
-                cycle_spend.last_attempt_failed(
-                    number, labeled_at, repo=config.task_repo,
-                ),
+            last_upkeep = doing.keep_proposals_current(
+                conn,
+                cycle_id,
+                config,
+                dispatch_config,
+                queue,
+                review or [],
             )
-            if verdict is None:
-                eligible.append(record)
-                continue
-            reason, detail = verdict
-            if number not in skipped_numbers:
-                skipped_numbers.add(number)
-                skipped[reason] = skipped.get(reason, 0) + 1
-                journal.append(
-                    conn,
-                    *events.issue_skipped(
-                        cycle=cycle_id,
-                        number=number,
-                        title=record.get("title"),
-                        url=record.get("url"),
-                        reason=reason,
-                        detail=detail,
+
+            last_budget = budget
+
+            if first_considered is None:
+                first_considered = len(queue)
+
+            cycle_spend = spend(conn)
+            last_spend = cycle_spend
+            eligible: list[dict] = []
+            for record in queue:
+                number = int(record["number"])
+                if number in dispatches:
+                    continue
+                labeled_at = record.get("labeledAt")
+                verdict = eligibility(
+                    record, config,
+                    cycle_spend.attempts(
+                        number, labeled_at, repo=config.task_repo,
+                    ),
+                    cycle_spend.last_attempt_failed(
+                        number, labeled_at, repo=config.task_repo,
                     ),
                 )
-                # The loud skip. Independent of the caps and of the pick: returning an
-                # underspecified issue is handing work back to the operator, not
-                # spending a Run, and an issue the Selector will never seed should not
-                # wait for a free budget to be told so.
-                if reason == "missing-section":
-                    handed_back = doing.return_to_operator(
-                        conn, cycle_id, config, dispatch_config, record, detail
+                if verdict is None:
+                    eligible.append(record)
+                    continue
+                reason, detail = verdict
+                if number not in skipped_numbers:
+                    skipped_numbers.add(number)
+                    skipped[reason] = skipped.get(reason, 0) + 1
+                    journal.append(
+                        conn,
+                        *events.issue_skipped(
+                            cycle=cycle_id,
+                            number=number,
+                            title=record.get("title"),
+                            url=record.get("url"),
+                            reason=reason,
+                            detail=detail,
+                        ),
                     )
-                    if handed_back is True:
-                        returned.append(number)
-                    elif handed_back is False:
-                        return_failures += 1
+                    # The loud skip. Independent of the caps and of the pick: returning an
+                    # underspecified issue is handing work back to the operator, not
+                    # spending a Run, and an issue the Selector will never seed should not
+                    # wait for a free budget to be told so.
+                    if reason == "missing-section":
+                        handed_back = doing.return_to_operator(
+                            conn, cycle_id, config, dispatch_config, record, detail
+                        )
+                        if handed_back is True:
+                            returned.append(number)
+                        elif handed_back is False:
+                            return_failures += 1
 
-        last_eligible = [int(r["number"]) for r in eligible]
+            last_eligible = [int(r["number"]) for r in eligible]
 
-        pick = None
-        held_slot = False
-        if control.is_paused(conn):
-            # The timer keeps running while paused. It still reads the queue and
-            # journals Eligibility so the page remains an explanation of what
-            # would have happened; only the Dispatch is stopped.
-            halted = "paused"
-            break
-        elif not queue:
-            halted = "queue-empty"
-            break
-        elif config.drain_concurrency == 1 and cycle_spend.in_flight:
-            halted = "run-in-flight"
-            break
-        elif config.drain_concurrency > 1 and cycle_spend.in_flight_on(config.task_repo):
-            # Per-Target leftover: a Run this Target already holds, including
-            # one a previous cycle died before recording. Other Targets' live
-            # Dispatches are the slot cap, not a halt.
-            halted = "run-in-flight"
-            break
-        elif budget["remaining"] == 0:
-            halted = "review-cap-reached"
-            break
-        elif not eligible:
-            halted = "none-eligible"
-            break
-        else:
-            # Lowest first: deterministic and explainable, and it works a
-            # dependency chain bottom-up because the chain was numbered that way.
-            # Acquire a slot before journaling the pick so a pause during the
-            # wait still stops the pick rather than dispatching after it.
-            if slots is not None:
-                slots.acquire()
-                held_slot = True
-                if control.is_paused(conn):
-                    halted = "paused"
+            pick = None
+            held_slot = False
+            if control.is_paused(conn):
+                # The timer keeps running while paused. It still reads the queue and
+                # journals Eligibility so the page remains an explanation of what
+                # would have happened; only the Dispatch is stopped.
+                halted = "paused"
+                break
+            elif not queue:
+                halted = "queue-empty"
+                break
+            elif config.drain_concurrency == 1 and cycle_spend.in_flight:
+                halted = "run-in-flight"
+                break
+            elif config.drain_concurrency > 1 and cycle_spend.in_flight_on(config.task_repo):
+                # Per-Target leftover: a Run this Target already holds, including
+                # one a previous cycle died before recording. Other Targets' live
+                # Dispatches are the slot cap, not a halt.
+                halted = "run-in-flight"
+                break
+            elif budget["remaining"] == 0:
+                halted = "review-cap-reached"
+                break
+            elif not eligible:
+                halted = "none-eligible"
+                break
+            else:
+                # Lowest first: deterministic and explainable, and it works a
+                # dependency chain bottom-up because the chain was numbered that way.
+                # Acquire a slot before journaling the pick so a pause during the
+                # wait still stops the pick rather than dispatching after it.
+                if slots is not None:
+                    slots.acquire()
+                    held_slot = True
+                    if control.is_paused(conn):
+                        halted = "paused"
+                        slots.release()
+                        held_slot = False
+                        break
+                picked_record = eligible[0]
+                body_sections = sections(picked_record.get("body") or "")
+                check = body_sections.get("check", "")
+                pick = {
+                    "cycle": cycle_id,
+                    "number": int(picked_record["number"]),
+                    "title": picked_record.get("title"),
+                    "url": picked_record.get("url"),
+                    "area": _area(picked_record, body_sections),
+                    "check": _check_command(check) or None,
+                }
+                journal.append(conn, *events.cycle_picked(**pick))
+                if first_pick is None:
+                    first_pick = pick
+
+            try:
+                attempt = cycle_spend.attempts(
+                    pick["number"], picked_record.get("labeledAt"),
+                    repo=config.task_repo,
+                ) + 1
+                worked = doing.work_pick(
+                    conn, cycle_id, config, dispatch_config, pick, attempt,
+                )
+                if worked.dispatched:
+                    outcomes.append(worked.outcome)
+                    routes.append(worked.route)
+                    dispatches.append(pick["number"])
+            finally:
+                if held_slot:
                     slots.release()
-                    held_slot = False
-                    break
-            picked_record = eligible[0]
-            body_sections = sections(picked_record.get("body") or "")
-            check = body_sections.get("check", "")
-            pick = {
-                "cycle": cycle_id,
-                "number": int(picked_record["number"]),
-                "title": picked_record.get("title"),
-                "url": picked_record.get("url"),
-                "area": _area(picked_record, body_sections),
-                "check": _check_command(check) or None,
-            }
-            journal.append(conn, *events.cycle_picked(**pick))
-            if first_pick is None:
-                first_pick = pick
 
-        try:
-            attempt = cycle_spend.attempts(
-                pick["number"], picked_record.get("labeledAt"),
-                repo=config.task_repo,
-            ) + 1
-            worked = doing.work_pick(
-                conn, cycle_id, config, dispatch_config, pick, attempt,
-            )
-            if worked.dispatched:
-                outcomes.append(worked.outcome)
-                routes.append(worked.route)
-                dispatches.append(pick["number"])
-        finally:
-            if held_slot:
-                slots.release()
+            # Stop looking when the doing did not Dispatch: a dry run still
+            # journals one pick and then ends, with halted unset.
+            if not worked.dispatched:
+                break
 
-        # Stop looking when the doing did not Dispatch: a dry run still
-        # journals one pick and then ends, with halted unset.
-        if not worked.dispatched:
-            break
-
-    result = CycleResult(
-        cycle=cycle_id,
-        considered=first_considered if first_considered is not None else 0,
-        eligible=last_eligible,
-        skipped=skipped,
-        picked=dispatches[0] if dispatches else (first_pick["number"] if first_pick else None),
-        dispatches=dispatches,
-        halted=halted,
-        in_flight=last_spend.in_flight if last_spend else None,
-        awaiting_review=(
-            last_budget["count"]
-            if last_budget and last_budget["count"] is not None
-            else 0
-        ),
-        review_cap=config.review_cap,
-        returned=returned,
-        dry_run=dry_run,
-        return_failures=return_failures,
-        outcome=outcomes[-1] if outcomes else None,
-        route=routes[-1] if routes else None,
-        updated_proposals=(
-            sorted(str(p) for p in last_upkeep.updated) if last_upkeep else []
-        ),
-        reconciled_proposals=(
-            sorted(str(p) for p in last_upkeep.reconciled) if last_upkeep else []
-        ),
-        reconcile_failures=(
-            sorted(str(p) for p in last_upkeep.reconcile_failed) if last_upkeep else []
-        ),
-    )
-    # One cycle summary per drain names every dispatch and the reason it stopped.
-    # The six extra fields stay on the value; extra kwargs would TypeError.
-    journal.append(
-        conn,
-        *events.cycle_finished(
-            cycle=result.cycle,
-            considered=result.considered,
-            eligible=result.eligible,
-            skipped=result.skipped,
-            picked=result.picked,
-            dispatches=result.dispatches,
-            halted=result.halted,
-            in_flight=result.in_flight,
-            awaiting_review=result.awaiting_review,
-            review_cap=result.review_cap,
-            returned=result.returned,
-            dry_run=result.dry_run,
-        ),
-    )
-    return result
+        result = CycleResult(
+            cycle=cycle_id,
+            considered=first_considered if first_considered is not None else 0,
+            eligible=last_eligible,
+            skipped=skipped,
+            picked=dispatches[0] if dispatches else (first_pick["number"] if first_pick else None),
+            dispatches=dispatches,
+            halted=halted,
+            in_flight=last_spend.in_flight if last_spend else None,
+            awaiting_review=(
+                last_budget["count"]
+                if last_budget and last_budget["count"] is not None
+                else 0
+            ),
+            review_cap=config.review_cap,
+            returned=returned,
+            dry_run=dry_run,
+            return_failures=return_failures,
+            outcome=outcomes[-1] if outcomes else None,
+            route=routes[-1] if routes else None,
+            updated_proposals=(
+                sorted(str(p) for p in last_upkeep.updated) if last_upkeep else []
+            ),
+            reconciled_proposals=(
+                sorted(str(p) for p in last_upkeep.reconciled) if last_upkeep else []
+            ),
+            reconcile_failures=(
+                sorted(str(p) for p in last_upkeep.reconcile_failed) if last_upkeep else []
+            ),
+        )
+        # One cycle summary per drain names every dispatch and the reason it stopped.
+        # The six extra fields stay on the value; extra kwargs would TypeError.
+        journal.append(
+            conn,
+            *events.cycle_finished(
+                cycle=result.cycle,
+                considered=result.considered,
+                eligible=result.eligible,
+                skipped=result.skipped,
+                picked=result.picked,
+                dispatches=result.dispatches,
+                halted=result.halted,
+                in_flight=result.in_flight,
+                awaiting_review=result.awaiting_review,
+                review_cap=result.review_cap,
+                returned=result.returned,
+                dry_run=result.dry_run,
+            ),
+        )
+        return result
+    except CycleFailed as exc:
+        journal.append(conn, *events.cycle_failed(cycle=cycle_id, error=str(exc)))
+        raise

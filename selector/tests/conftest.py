@@ -787,3 +787,128 @@ def last(dsn, kind):
     rows = events(dsn, kind)
     assert rows, f"no {kind} row in the Journal"
     return rows[-1]["payload"]
+
+
+# --- In-process Cycle harness ------------------------------------------------
+#
+# A canned tracker, a recording doing, and a Config built directly. Later
+# tickets (#139–#141) reuse these; they know the ABC, not how a doing is built.
+
+import dispatch as dispatch_mod  # noqa: E402
+import doing as doing_mod  # noqa: E402
+import drain  # noqa: E402
+from targets import Config, Labels, Target  # noqa: E402
+
+
+def a_target() -> Target:
+    return Target(
+        repo=TARGET_REPO,
+        labels=Labels(
+            ready="ready-for-agent",
+            needs_info="needs-info",
+            review="awaiting-review",
+            human="ready-for-human",
+        ),
+        labeler_allowlist=(ALLOWLISTED_OPERATOR,),
+        work_repo=Path("/nonexistent/work"),
+        box_repo="/nonexistent/box",
+        token_file="/nonexistent/token",
+        guest_template="widgets-guest:1",
+        landing="propose",
+        review_cap=20,
+    )
+
+
+def a_config() -> Config:
+    """Per-Target configuration, constructed directly - no env, no file."""
+    return Config(
+        target=a_target(),
+        tracker_command="/nonexistent/tracker",
+        box_facts_command="/nonexistent/facts",
+        box_facts_timeout_seconds=60,
+        guardrail_command="/nonexistent/guardrail",
+        guardrail_timeout_seconds=30,
+        board_timeout_seconds=10,
+        guardrail_trees=(),
+        drain_concurrency=1,
+    )
+
+
+def a_dispatch_config() -> dispatch_mod.DispatchConfig:
+    """Dummy paths. A recording doing must not invoke them."""
+    return dispatch_mod.DispatchConfig(
+        work_repo=Path("/nonexistent/work"),
+        command_env={},
+        remote="origin",
+        branch_prefix="loop/",
+        seed_command="/nonexistent/seed",
+        progress_log_path="PROGRESS.md",
+        run_heading="## Run started",
+        box_command="/nonexistent/box",
+        issue_command="/nonexistent/issue",
+        command_timeout_seconds=1,
+        run_timeout_seconds=1,
+        checks_timeout_seconds=1,
+        checks_poll_seconds=1,
+    )
+
+
+class CannedTracker(drain.Tracker):
+    """Answers from memory: no subprocess, no env."""
+
+    def __init__(self, handover, review=None, *, archived=False, error=None):
+        self._handover = list(handover)
+        self._review = list(review or [])
+        self._archived = archived
+        self._error = error
+
+    def read(self, config):
+        if self._error is not None:
+            raise drain.CycleFailed(self._error)
+        handover = list(self._handover)
+        if not self._archived:
+            # Same contract as fetch_tracker: the Cycle picks eligible[0]
+            # as lowest-first, so the queue arrives already ordered.
+            handover = sorted(handover, key=lambda record: int(record["number"]))
+        return drain.TrackerReads(
+            handover=handover,
+            review=list(self._review),
+            archived=self._archived,
+        )
+
+
+class RecordingDoing(doing_mod.Doing):
+    """Records calls. work_pick succeeds without GitHub or the box."""
+
+    def __init__(self, *, error=None):
+        self.calls = []
+        self.picks = []
+        self._error = error
+
+    def observe_guardrail(self, conn, cycle_id, config):
+        self.calls.append("observe_guardrail")
+
+    def keep_proposals_current(
+        self, conn, cycle_id, config, dispatch_config, handover, review,
+    ):
+        self.calls.append("keep_proposals_current")
+        return doing_mod.ProposalUpkeep(
+            updated=set(), failed=set(), reconciled=set(), reconcile_failed=set(),
+        )
+
+    def return_to_operator(
+        self, conn, cycle_id, config, dispatch_config, record, detail,
+    ):
+        self.calls.append(("return_to_operator", record.get("number")))
+        return None
+
+    def work_pick(self, conn, cycle_id, config, dispatch_config, pick, attempt):
+        self.picks.append(pick["number"])
+        self.calls.append(("work_pick", pick["number"]))
+        if self._error is not None:
+            raise drain.CycleFailed(self._error)
+        return doing_mod.PickResult(
+            dispatched=True,
+            outcome={"ended_by": "iteration-cap", "issue": pick["number"]},
+            route="awaiting-review",
+        )

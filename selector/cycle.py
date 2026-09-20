@@ -79,7 +79,7 @@ import doing  # noqa: E402
 import events  # noqa: E402
 import journal  # noqa: E402
 import targets  # noqa: E402
-from drain import CycleFailed, CycleResult, run_cycle  # noqa: E402
+from drain import CycleFailed, CycleResult, ProductionTracker, run_cycle  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
@@ -281,6 +281,7 @@ def _run_targets(
                 conn,
                 config,
                 dispatch.DispatchConfig.for_target(config.target),
+                tracker=ProductionTracker(),
                 doing=doing.DryRunDoing() if dry_run else doing.ProductionDoing(),
                 dry_run=dry_run,
             )
@@ -298,6 +299,7 @@ def _run_targets(
                     target_conn,
                     config,
                     dispatch.DispatchConfig.for_target(config.target),
+                    tracker=ProductionTracker(),
                     doing=doing.DryRunDoing() if dry_run else doing.ProductionDoing(),
                     dry_run=dry_run,
                     slots=slots,
