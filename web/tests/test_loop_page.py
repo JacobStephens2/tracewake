@@ -52,6 +52,11 @@ def test_home_renders_queue_board():
     assert "Selector Journal" in resp.text
 
 
+def test_home_page_title_is_tracewake():
+    """The tab names the product. 'The Loop' is one half of it (CONTEXT.md)."""
+    assert "<title>Tracewake</title>" in client.get("/").text
+
+
 def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
     token = csrf_from(client.get("/").text)
     paused = client.post(

@@ -5,7 +5,7 @@
    What is left here is the shell's own content: the heading, the Targets
    list, and the link to the history. #}
 {% extends "terminal_base.html" %}
-{% block title %}The Loop{% endblock %}
+{% block full_title %}Tracewake{% endblock %}
 {% block logo %}THE LOOP // SELECTOR JOURNAL{% endblock %}
 {% block nav %}<a href="{{ history_url }}">history</a> <a href="/adr">decisions</a>{% include "_accounts_nav.html" %}{% endblock %}
 {% block main %}
