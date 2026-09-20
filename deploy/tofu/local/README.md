@@ -42,5 +42,7 @@ still run; a Run may fail at `sbx` until `/dev/kvm` exists.
 
 The checkout is bind-mounted at `/srv/tracewake`. Named volumes hide the
 in-tree `.venv` directories so a Linux virtualenv does not collide with
-the operator's. Inventory should set `tracewake_manage_checkout: false`
-so an apply does not reset the working tree.
+the operator's, and keep `/var/lib/postgresql` and `/etc/tracewake` so
+recreating the container does not drop the Journal or the instance files.
+Inventory should set `tracewake_manage_checkout: false` so an apply does
+not reset the working tree.

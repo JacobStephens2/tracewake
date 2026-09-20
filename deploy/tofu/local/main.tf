@@ -31,7 +31,8 @@ resource "docker_volume" "web_venv" {
 }
 
 # Recreating the container must not drop the Journal or the instance files
-# the wizard writes on the Host (issue #114).
+# the wizard writes on the Host (issue #114). Same pattern as the Linux
+# venvs above.
 resource "docker_volume" "journal" {
   name = "${var.name}-journal"
 }

@@ -416,25 +416,50 @@ def test_install_names_the_local_host_wizard():
     )
 
 
-def test_local_host_wizard_walks_the_laptop_path():
-    """Issue #114: the wizard writes instance facts out of the tree, runs
-    the local module and the same play, and leaves a sign-in-able HTTP
-    window. The live run is a human step; this pins the script the
-    operator is told to run."""
+def test_tofu_local_host_keeps_the_journal_and_instance_files():
+    """Issue #114: recreating the container must not drop the Journal or
+    the instance files. Named volumes at /var/lib/postgresql and
+    /etc/tracewake, the same way the module already keeps the Linux venvs.
+    """
+    main = ROOT / "deploy" / "tofu" / "local" / "main.tf"
+    text = main.read_text()
+    for target in ("/var/lib/postgresql", "/etc/tracewake"):
+        assert target in text, (
+            f"the local module must keep {target} on a named volume so "
+            "recreating the container does not drop the Journal or the "
+            "instance files (issue #114)."
+        )
+        nearby = text[max(0, text.index(target) - 250):text.index(target) + 80]
+        assert 'type   = "volume"' in nearby or 'type = "volume"' in nearby, (
+            f"{target} must be a named docker volume, not a bind of a "
+            "laptop path (issue #114)."
+        )
+        assert "docker_volume." in nearby, (
+            f"{target} must source a docker_volume resource (issue #114)."
+        )
+
+
+def test_local_host_wizard_is_the_laptop_walkthrough():
+    """Issue #114: standing a local Host up is a wizard, not a paste.
+    host-up.sh stays the droplet path (ADR 0031).
+    """
     wizard = ROOT / "wizards" / "local-host-up.sh"
     assert wizard.is_file(), (
-        "wizards/local-host-up.sh is missing. It is the laptop analogue "
-        "of wizards/host-up.sh (issue #114)."
+        "wizards/local-host-up.sh is the laptop Host walkthrough "
+        "(issue #114)."
     )
     text = wizard.read_text()
+    assert "TRACEWAKE_CONF" in text, (
+        "the wizard must honour TRACEWAKE_CONF the same way "
+        "deploy/tofu/local/up.sh does (issue #114)."
+    )
     assert "local.tfvars" in text
     assert "local-inventory.yml" in text
+    assert "~/.config/tracewake" in text or "$HOME/.config/tracewake" in text
     assert ".config/tracewake" in text, (
         "the wizard must write instance facts under ~/.config/tracewake "
         "(or TRACEWAKE_CONF), not in the tree (issue #114)."
     )
-    assert "deploy/tofu/local" in text or "tofu/local/up.sh" in text
-    assert "host.yml" in text
     for flag in (
         "community.docker.docker",
         "tracewake_tls: false",
@@ -442,28 +467,42 @@ def test_local_host_wizard_walks_the_laptop_path():
         "tracewake_web_reload: true",
     ):
         assert flag in text, (
-            f"the local inventory the wizard writes must include {flag!r} "
+            f"the inventory the wizard writes must include {flag!r} "
             "(issue #114)."
         )
+    assert "deploy/tofu/local/up.sh" in text, (
+        "the wizard runs deploy/tofu/local/up.sh (issue #114)."
+    )
+    assert "host.yml" in text, (
+        "the wizard runs ansible-playbook against host.yml (issue #114)."
+    )
+    assert "seed-admin.py" in text, (
+        "the wizard seeds an admin via web/seed-admin.py (issue #114)."
+    )
     assert "WINDOW_COOKIE_SECURE=0" in text, (
-        "plain HTTP needs WINDOW_COOKIE_SECURE=0 so the window cookie is "
-        "session, not __Host-session (issue #114)."
+        "the wizard sets WINDOW_COOKIE_SECURE=0 so a plain-HTTP window "
+        "can sign in (issue #114)."
     )
-    assert "seed-admin.py" in text
-    assert "/healthz" in text
-
-
-def test_tofu_local_host_keeps_journal_and_instance_files():
-    """Issue #114: recreating the container must not drop the Journal or
-    /etc/tracewake. Named volumes already hide the Linux venvs; postgres
-    data and the instance files need the same treatment."""
-    main = ROOT / "deploy" / "tofu" / "local" / "main.tf"
-    text = main.read_text()
-    assert "/var/lib/postgresql" in text, (
-        "the local module must keep PostgreSQL on a named volume so a "
-        "container recreate does not drop the Journal (issue #114)."
+    assert not re.search(r"(?m)^export WINDOW_COOKIE_SECURE=", text), (
+        "systemd EnvironmentFile ignores 'export KEY=value'; the instance "
+        "file must be KEY=value so the window process sees "
+        "WINDOW_COOKIE_SECURE=0 (issue #114)."
     )
-    assert "/etc/tracewake" in text, (
-        "the local module must keep /etc/tracewake on a named volume so a "
-        "container recreate does not drop the instance files (issue #114)."
+    assert "127.0.0.1" in text and "/healthz" in text, (
+        "curl http://127.0.0.1:<http_port>/healthz is the health check "
+        "the wizard waits on (issue #114)."
+    )
+
+    install = (ROOT / "INSTALL.md").read_text()
+    assert "wizards/local-host-up.sh" in install, (
+        "INSTALL.md names wizards/local-host-up.sh as the local Host "
+        "walkthrough (issue #114)."
+    )
+    readme = (ROOT / "README.md").read_text()
+    assert "local-host-up.sh" in readme, (
+        "README.md's wizards line names local-host-up.sh (issue #114)."
+    )
+    host_up = (ROOT / "wizards" / "host-up.sh").read_text()
+    assert "droplet" in host_up.lower(), (
+        "wizards/host-up.sh stays the droplet path (issue #114, ADR 0031)."
     )

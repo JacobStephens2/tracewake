@@ -184,47 +184,60 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=6
+TOTAL_STAGES=7
 
-# Issue #114: the local Host exists and answers on the published HTTP port.
-# Machine, play, instance files, admin, /healthz. Instance facts stay out of
-# the tree in $HOST_CONF. wizards/host-up.sh stays the droplet path.
-HOST_CONF="${TRACEWAKE_CONF:-$HOME/.config/tracewake}"
-ENV_FILE="$HOST_CONF/local.env"
-TFVARS="$HOST_CONF/local.tfvars"
-INVENTORY="$HOST_CONF/local-inventory.yml"
-WINDOW_ENV="$HOST_CONF/local-window.env"
+# Issue #114: the laptop Host walkthrough. OpenTofu's job stays the
+# machine (deploy/tofu/local/up.sh). Ansible's job stays the Host
+# (host.yml). This wizard writes instance facts out of the tree and
+# runs both. host-up.sh stays the droplet path (ADR 0031).
+CONF="${TRACEWAKE_CONF:-$HOME/.config/tracewake}"
+ENV_FILE="$CONF/local.env"
+TFVARS="$CONF/local.tfvars"
+TFSTATE="$CONF/local.tfstate"
+TFDATA="$CONF/local-tofu-data"
+INVENTORY="$CONF/local-inventory.yml"
+ADMIN_PASSWORD_FILE="$CONF/admin-password"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLAY="$REPO_ROOT/deploy/ansible/host.yml"
-UP="$REPO_ROOT/deploy/tofu/local/up.sh"
+MODULE="$REPO_ROOT/deploy/tofu/local"
 
-mkdir -p "$HOST_CONF"
-chmod 700 "$HOST_CONF"
+mkdir -p "$CONF" "$TFDATA"
+chmod 700 "$CONF"
 touch "$ENV_FILE" && chmod 600 "$ENV_FILE"
 
 [[ -f "$PLAY" ]] || { warn "run this from the tracewake checkout (no $PLAY)"; exit 1; }
-[[ -f "$UP" ]] || { warn "run this from the tracewake checkout (no $UP)"; exit 1; }
+
+# _wait_for TRIES COMMAND...: retry COMMAND every 10s; true on first success.
+_wait_for() {
+  local tries="$1"; shift
+  local i
+  for i in $(seq 1 "$tries"); do
+    if "$@" >/dev/null 2>&1; then return 0; fi
+    sleep 10
+  done
+  return 1
+}
+
+_tofu_output() {
+  local name="$1"
+  (cd "$MODULE" && TF_DATA_DIR="$TFDATA" tofu output -raw -state="$TFSTATE" "$name")
+}
 
 _container_write() {
-  local dest="$1" owner="$2"
-  local tmp
-  tmp=$(mktemp)
-  cat > "$tmp"
-  docker cp "$tmp" "$CONTAINER:$dest"
-  rm -f "$tmp"
-  docker exec "$CONTAINER" chown "$owner" "$dest"
-  docker exec "$CONTAINER" chmod 600 "$dest"
+  local dest="$1"
+  docker exec -i "$CONTAINER" tee "$dest" >/dev/null
 }
 
 banner "Tracewake local Host (#114)"
 
 # ── 1. Tools ──────────────────────────────────────────────────────────────
-stage "Tools: docker, tofu, ansible"
-say "The runbook shells out to Docker, OpenTofu, and Ansible."
+stage "Tools: tofu, ansible, docker"
+say "The runbook shells out to OpenTofu, Ansible, and Docker."
 missing=()
-command -v docker >/dev/null 2>&1 || missing+=("docker - Docker Engine / Docker Desktop")
 command -v tofu >/dev/null 2>&1 || missing+=("tofu - OpenTofu: https://opentofu.org/docs/intro/install/")
 command -v ansible-playbook >/dev/null 2>&1 || missing+=("ansible-playbook - Ansible: https://docs.ansible.com/")
+command -v docker >/dev/null 2>&1 || missing+=("docker - Docker Engine, running")
+command -v curl >/dev/null 2>&1 || missing+=("curl")
 if (( ${#missing[@]} )); then
   warn "missing tools:"
   for m in "${missing[@]}"; do note "  - $m"; done
@@ -232,77 +245,93 @@ if (( ${#missing[@]} )); then
   exit 1
 fi
 if ! docker info >/dev/null 2>&1; then
-  warn "docker is installed but not running. Start Docker Desktop, then re-run."
+  warn "docker is installed but not running (or this user cannot talk to it)."
   exit 1
 fi
 if ! ansible-doc -t connection community.docker.docker >/dev/null 2>&1; then
-  warn "Ansible cannot find community.docker.docker."
-  note "Install it: ansible-galaxy collection install community.docker"
-  exit 1
+  say "Ansible needs the community.docker collection for the container connection."
+  if confirm "Install community.docker via ansible-galaxy now"; then
+    ansible-galaxy collection install community.docker
+  else
+    note "Install it, then re-run: ansible-galaxy collection install community.docker"
+    exit 1
+  fi
 fi
-say "docker, tofu, ansible-playbook, and community.docker are all present."
+say "tofu, ansible-playbook, docker, and community.docker.docker are present."
 
 # ── 2. Machine ────────────────────────────────────────────────────────────
-stage "Machine: container identifiers"
-say "OpenTofu needs the three identifiers from #107. State stays in $HOST_CONF."
+stage "Machine: local.tfvars and deploy/tofu/local/up.sh"
+say "OpenTofu creates one Ubuntu 24.04 systemd container. State stays in $CONF."
 if [[ -f "$TFVARS" ]] && confirm "Reuse existing $TFVARS"; then
   say "Reusing $TFVARS."
 else
-  ask TF_NAME "Container name:"
-  : "${TF_NAME:?Container name is required}"
-  ask CHECKOUT "Absolute path of this checkout:"
-  : "${CHECKOUT:?Checkout path is required}"
-  CHECKOUT="${CHECKOUT/#\~/$HOME}"
-  ask HTTP_PORT "Host port Caddy is published on:"
-  : "${HTTP_PORT:?Host port is required}"
+  ask TF_NAME "Container name [tracewake-local]:"
+  : "${TF_NAME:=tracewake-local}"
+  ask TF_CHECKOUT "Checkout to bind-mount at /srv/tracewake [$REPO_ROOT]:"
+  : "${TF_CHECKOUT:=$REPO_ROOT}"
+  TF_CHECKOUT="${TF_CHECKOUT/#\~/$HOME}"
+  [[ "$TF_CHECKOUT" = /* ]] || TF_CHECKOUT="$(cd "$TF_CHECKOUT" && pwd)"
+  ask TF_HTTP_PORT "Host port for Caddy [8080]:"
+  : "${TF_HTTP_PORT:=8080}"
+  write_env TF_NAME "$TF_NAME"
+  write_env TF_CHECKOUT "$TF_CHECKOUT"
+  write_env TF_HTTP_PORT "$TF_HTTP_PORT"
   umask 077
   cat > "$TFVARS" <<EOF
 name      = "$TF_NAME"
-checkout  = "$CHECKOUT"
-http_port = $HTTP_PORT
+checkout  = "$TF_CHECKOUT"
+http_port = $TF_HTTP_PORT
 EOF
   say "Wrote $TFVARS."
-  write_env TF_NAME "$TF_NAME"
-  write_env CHECKOUT "$CHECKOUT"
-  write_env HTTP_PORT "$HTTP_PORT"
 fi
-if ! confirm "Apply deploy/tofu/local and create (or update) the container"; then
-  note "Container not created. Re-run to apply $TFVARS later."
+say "Applying deploy/tofu/local (named volumes keep the Journal and instance files)."
+if ! confirm "Apply and create (or update) the container"; then
+  note "Machine not applied. Re-run to apply $TFVARS later."
   exit 0
 fi
-export TRACEWAKE_CONF="$HOST_CONF"
-"$UP"
-CONTAINER=$(cd "$REPO_ROOT/deploy/tofu/local" && tofu output -raw -state="$HOST_CONF/local.tfstate" container_name)
-HTTP_URL=$(cd "$REPO_ROOT/deploy/tofu/local" && tofu output -raw -state="$HOST_CONF/local.tfstate" http_url)
+export TRACEWAKE_CONF="$CONF"
+"$REPO_ROOT/deploy/tofu/local/up.sh"
+CONTAINER="$(_tofu_output container_name)"
+HTTP_URL="$(_tofu_output http_url)"
 write_env CONTAINER "$CONTAINER"
 write_env HTTP_URL "$HTTP_URL"
 say "Container: $CONTAINER"
-say "URL: $HTTP_URL"
+say "Dashboard URL after the play: $HTTP_URL"
 
-# ── 3. Play ───────────────────────────────────────────────────────────────
-stage "Play: instance inventory"
-say "The play needs the eight installation facts from INSTALL.md, plus the laptop flags."
+# ── 3. Inventory ──────────────────────────────────────────────────────────
+stage "Inventory: local-inventory.yml"
+say "The play needs the eight installation facts from INSTALL.md, plus the laptop Host flags."
 if [[ -f "$INVENTORY" ]] && confirm "Reuse existing $INVENTORY"; then
   say "Reusing $INVENTORY."
 else
-  CONTAINER="${CONTAINER:-$(_existing CONTAINER || true)}"
-  : "${CONTAINER:?Container name is missing; stage 2 did not complete}"
+  : "${CONTAINER:=$(_existing CONTAINER || true)}"
+  : "${CONTAINER:?container name is missing; stage 2 did not complete}"
+  ask INV_HOSTNAME "Dashboard name, no scheme [localhost]:"
+  : "${INV_HOSTNAME:=localhost}"
   ask INV_REPO "Product repository clone URL:"
   : "${INV_REPO:?Repository URL is required}"
-  ask INV_REVISION "Reviewed product revision:"
-  : "${INV_REVISION:?Revision is required}"
+  ask INV_REVISION "Reviewed product revision [main]:"
+  : "${INV_REVISION:=main}"
   ask INV_NAME "Commit author name:"
   : "${INV_NAME:?Author name is required}"
   ask INV_EMAIL "Commit author email:"
   : "${INV_EMAIL:?Author email is required}"
-  ask INV_KEY_COMMENT "Signing key label:"
-  : "${INV_KEY_COMMENT:?Signing key label is required}"
+  ask INV_KEY_COMMENT "Signing key label [local-host]:"
+  : "${INV_KEY_COMMENT:=local-host}"
   ask INV_TARGET "Initial target repository slug:"
   : "${INV_TARGET:?Target slug is required}"
-  ask INV_WORKSPACE "Box checkout path:"
-  : "${INV_WORKSPACE:?Box checkout path is required}"
-  ask INV_AGENT "Agent:"
-  : "${INV_AGENT:?Agent is required}"
+  ask INV_WORKSPACE "Box checkout path [/home/loop/workspace]:"
+  : "${INV_WORKSPACE:=/home/loop/workspace}"
+  ask INV_AGENT "Agent [grok]:"
+  : "${INV_AGENT:=grok}"
+  write_env INV_HOSTNAME "$INV_HOSTNAME"
+  write_env INV_REPO "$INV_REPO"
+  write_env INV_REVISION "$INV_REVISION"
+  write_env INV_NAME "$INV_NAME"
+  write_env INV_EMAIL "$INV_EMAIL"
+  write_env INV_TARGET "$INV_TARGET"
+  write_env INV_WORKSPACE "$INV_WORKSPACE"
+  write_env INV_AGENT "$INV_AGENT"
   umask 077
   cat > "$INVENTORY" <<EOF
 tracewake:
@@ -311,8 +340,7 @@ tracewake:
       ansible_connection: community.docker.docker
       ansible_host: "$CONTAINER"
       ansible_python_interpreter: /usr/bin/python3
-      loop_agent_name: "$INV_AGENT"
-      tracewake_hostname: localhost
+      tracewake_hostname: "$INV_HOSTNAME"
       tracewake_tls: false
       tracewake_manage_checkout: false
       tracewake_web_reload: true
@@ -323,56 +351,71 @@ tracewake:
       loop_signing_key_comment: "$INV_KEY_COMMENT"
       loop_target_repository: "$INV_TARGET"
       loop_scripts_workspace: "$INV_WORKSPACE"
+      loop_agent_name: "$INV_AGENT"
 EOF
   say "Wrote $INVENTORY."
 fi
+
+# ── 4. Play ───────────────────────────────────────────────────────────────
+stage "Play: ansible-playbook host.yml"
 say "Check mode first (reports changes; defers operations needing new binaries)."
 ansible-playbook -i "$INVENTORY" "$PLAY" --check --diff
 pause "Review the check-mode diff above."
-set +e
-ansible-playbook -i "$INVENTORY" "$PLAY"
-play_rc=$?
-set -e
-if [[ "$play_rc" -ne 0 ]]; then
-  warn "Play exited $play_rc. A first apply may stop at sbx sign-in; Caddy should already answer."
-  SKIPPED+=("host.yml apply (exit $play_rc); wizards/loop-sbx-login.sh if the Execution Boundary failed")
+if ansible-playbook -i "$INVENTORY" "$PLAY"; then
+  say "host.yml finished."
 else
-  say "Play applied."
+  warn "The play did not finish. A first apply often stops at sbx sign-in."
+  note "Caddy is installed before that role; /healthz may already answer."
+  note "Runs stay out of reach until wizards/loop-sbx-login.sh and /dev/kvm."
+  if ! confirm "Continue with instance files, admin, and /healthz"; then
+    exit 1
+  fi
+  SKIPPED+=("host.yml finished with errors (often sbx sign-in)")
 fi
 
-# ── 4. Instance ───────────────────────────────────────────────────────────
-stage "Instance: env and targets on the Host"
-say "An instance is an env file plus a targets file, written on the container."
-CONTAINER="${CONTAINER:-$(_existing CONTAINER || true)}"
-: "${CONTAINER:?Container name is missing; stage 2 did not complete}"
-HTTP_URL="${HTTP_URL:-$(_existing HTTP_URL || true)}"
-: "${HTTP_URL:?HTTP URL is missing; stage 2 did not complete}"
+: "${CONTAINER:=$(_existing CONTAINER || true)}"
+: "${CONTAINER:?container name is missing; stage 2 did not complete}"
+: "${HTTP_URL:=$(_existing HTTP_URL || true)}"
+if [[ -z "$HTTP_URL" && -f "$TFSTATE" ]]; then
+  HTTP_URL="$(_tofu_output http_url)"
+fi
+
+# ── 5. Instance files ─────────────────────────────────────────────────────
+stage "Instance: tracewake.env and targets.toml on the container"
+say "These files live at /etc/tracewake on the Host, on a named volume."
+say "WINDOW_COOKIE_SECURE=0 is set so a plain-HTTP window can sign in."
 if docker exec "$CONTAINER" test -f /etc/tracewake/tracewake.env \
-    && docker exec "$CONTAINER" test -f /etc/tracewake/targets.toml \
-    && confirm "Reuse existing /etc/tracewake on $CONTAINER"; then
-  say "Reusing /etc/tracewake on the container."
+    && confirm "Reuse existing instance files on the container"; then
+  say "Reusing /etc/tracewake/tracewake.env and targets.toml."
 else
-  ask SEARCH_OWNER "SELECTOR_SEARCH_OWNER (forge account to search):"
+  : "${INV_TARGET:=$(_existing INV_TARGET || true)}"
+  : "${INV_WORKSPACE:=$(_existing INV_WORKSPACE || true)}"
+  ask INV_TARGET "Target repository slug:"
+  : "${INV_TARGET:?Target slug is required}"
+  ask INV_WORKSPACE "Box checkout path [/home/loop/workspace]:"
+  : "${INV_WORKSPACE:=/home/loop/workspace}"
+  ask WORK_REPO "Work checkout path [$INV_WORKSPACE]:"
+  : "${WORK_REPO:=$INV_WORKSPACE}"
+  ask TOKEN_FILE "Per-target token path [/etc/tracewake/tokens/target.token]:"
+  : "${TOKEN_FILE:=/etc/tracewake/tokens/target.token}"
+  ask LABELER "GitHub username for the labeler allowlist:"
+  : "${LABELER:?labeler allowlist needs a GitHub username}"
+  ask SEARCH_OWNER "SELECTOR_SEARCH_OWNER (forge owner to search):"
   : "${SEARCH_OWNER:?SELECTOR_SEARCH_OWNER is required}"
-  ask PROTECTED_REPO "SELECTOR_PROTECTED_REPO (owner/name):"
+  ask PROTECTED_REPO "SELECTOR_PROTECTED_REPO (guardrail tree slug):"
   : "${PROTECTED_REPO:?SELECTOR_PROTECTED_REPO is required}"
-  ask PROTECTED_REF "SELECTOR_PROTECTED_REF:"
-  : "${PROTECTED_REF:?SELECTOR_PROTECTED_REF is required}"
-  ask PROTECTED_PATHS "SELECTOR_PROTECTED_PATHS:"
-  : "${PROTECTED_PATHS:?SELECTOR_PROTECTED_PATHS is required}"
-  ask TARGET_REPO "Target repo slug:"
-  : "${TARGET_REPO:?Target repo is required}"
-  ask WORK_REPO "Target work_repo path on the Host:"
-  : "${WORK_REPO:?work_repo is required}"
-  ask BOX_REPO "Target box_repo path on the Host:"
-  : "${BOX_REPO:?box_repo is required}"
-  ask TOKEN_FILE "Target token_file path on the Host:"
-  : "${TOKEN_FILE:?token_file is required}"
-  ask LABELER "labeler_allowlist GitHub username:"
-  : "${LABELER:?labeler_allowlist is required}"
-  ask REVIEW_CAP "review_cap:"
-  : "${REVIEW_CAP:?review_cap is required}"
-  _container_write /etc/tracewake/tracewake.env conductor:conductor <<EOF
+  ask PROTECTED_REF "SELECTOR_PROTECTED_REF [refs/heads/main]:"
+  : "${PROTECTED_REF:=refs/heads/main}"
+  write_env INV_TARGET "$INV_TARGET"
+  write_env INV_WORKSPACE "$INV_WORKSPACE"
+  write_env SEARCH_OWNER "$SEARCH_OWNER"
+  write_env PROTECTED_REPO "$PROTECTED_REPO"
+  docker exec "$CONTAINER" mkdir -p /etc/tracewake
+  docker exec "$CONTAINER" chown conductor:conductor /etc/tracewake
+  docker exec "$CONTAINER" chmod 700 /etc/tracewake
+  umask 077
+  _container_write /etc/tracewake/tracewake.env <<EOF
+# Read by systemd EnvironmentFile= and by an exported shell environment.
 TRACEWAKE_TARGETS_FILE=/etc/tracewake/targets.toml
 SELECTOR_JOURNAL_DSN=dbname=selector
 SELECTOR_BOX_HOST=local
@@ -383,21 +426,21 @@ SELECTOR_BOX_LOOP=/srv/tracewake/loop
 SELECTOR_LOOP_URL=$HTTP_URL
 SELECTOR_NOTIFY_COMMAND=/bin/true
 WINDOW_MAIL_COMMAND=/bin/true
-WINDOW_COOKIE_SECURE=0
 SELECTOR_PROTECTED_REPO=$PROTECTED_REPO
 SELECTOR_PROTECTED_REF=$PROTECTED_REF
-SELECTOR_PROTECTED_PATHS=$PROTECTED_PATHS
+SELECTOR_PROTECTED_PATHS=guardrail-sources/paths.txt
 SELECTOR_SEARCH_OWNER=$SEARCH_OWNER
+WINDOW_COOKIE_SECURE=0
 EOF
-  _container_write /etc/tracewake/targets.toml conductor:conductor <<EOF
+  _container_write /etc/tracewake/targets.toml <<EOF
 [[target]]
-repo = "$TARGET_REPO"
+repo = "$INV_TARGET"
 work_repo = "$WORK_REPO"
-box_repo = "$BOX_REPO"
+box_repo = "$INV_WORKSPACE"
 token_file = "$TOKEN_FILE"
 guest_template = "loop-base:1"
 labeler_allowlist = ["$LABELER"]
-review_cap = $REVIEW_CAP
+review_cap = 20
 landing = "propose"
 
 [target.labels]
@@ -406,64 +449,67 @@ needs_info = "needs-info"
 review = "awaiting-review"
 human = "ready-for-human"
 EOF
-  say "Wrote /etc/tracewake/tracewake.env and targets.toml on $CONTAINER."
-  docker exec "$CONTAINER" systemctl restart tracewake-web.service || true
+  docker exec "$CONTAINER" chown conductor:conductor \
+    /etc/tracewake/tracewake.env /etc/tracewake/targets.toml
+  docker exec "$CONTAINER" chmod 600 \
+    /etc/tracewake/tracewake.env /etc/tracewake/targets.toml
+  say "Wrote instance files on $CONTAINER."
+fi
+if docker exec "$CONTAINER" systemctl restart tracewake-web.service; then
+  say "Restarted the window so WINDOW_COOKIE_SECURE=0 is live."
+else
+  warn "Could not restart tracewake-web.service; /healthz may still fail until the unit is up."
+  SKIPPED+=("restart tracewake-web.service on $CONTAINER")
 fi
 
-# ── 5. Admin ──────────────────────────────────────────────────────────────
-stage "Admin: seed the first window account"
-say "There is no registration page. The first admin is seeded on the Journal."
-CONTAINER="${CONTAINER:-$(_existing CONTAINER || true)}"
-: "${CONTAINER:?Container name is missing; stage 2 did not complete}"
+# ── 6. Admin ──────────────────────────────────────────────────────────────
+stage "Admin: seed-admin.py"
+say "There is no registration page. Seed the first window admin."
 ask ADMIN_EMAIL "Admin email:"
-: "${ADMIN_EMAIL:?Admin email is required}"
-ask_secret ADMIN_PASSWORD "Admin password:"
-: "${ADMIN_PASSWORD:?Admin password is required}"
-umask 077
-cat > "$WINDOW_ENV" <<EOF
-WINDOW_URL=${HTTP_URL:-$(_existing HTTP_URL || true)}
-WINDOW_ADMIN_EMAIL=$ADMIN_EMAIL
-WINDOW_ADMIN_PASSWORD=$ADMIN_PASSWORD
-EOF
-chmod 600 "$WINDOW_ENV"
-say "Wrote $WINDOW_ENV."
+: "${ADMIN_EMAIL:?admin email is required}"
+if [[ -f "$ADMIN_PASSWORD_FILE" ]] && confirm "Reuse existing $ADMIN_PASSWORD_FILE"; then
+  ADMIN_PASSWORD="$(cat "$ADMIN_PASSWORD_FILE")"
+else
+  ask_secret ADMIN_PASSWORD "Admin password:"
+  : "${ADMIN_PASSWORD:?admin password is required}"
+  umask 077
+  printf '%s\n' "$ADMIN_PASSWORD" > "$ADMIN_PASSWORD_FILE"
+  chmod 600 "$ADMIN_PASSWORD_FILE"
+  say "Wrote $ADMIN_PASSWORD_FILE."
+fi
+write_env ADMIN_EMAIL "$ADMIN_EMAIL"
 set +e
-seed_out=$(docker exec -u conductor -w /srv/tracewake/web \
-  -e SELECTOR_JOURNAL_DSN=dbname=selector \
-  -e WINDOW_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-  "$CONTAINER" /srv/tracewake/web/.venv/bin/python seed-admin.py "$ADMIN_EMAIL" 2>&1)
+seed_out=$(docker exec -u conductor \
+    -e WINDOW_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    "$CONTAINER" \
+    bash -lc "cd /srv/tracewake/web && set -a && . /etc/tracewake/tracewake.env && set +a && .venv/bin/python seed-admin.py $(printf '%q' "$ADMIN_EMAIL")" 2>&1)
 seed_rc=$?
 set -e
 if [[ "$seed_rc" -eq 0 ]]; then
-  say "Seeded $ADMIN_EMAIL."
+  say "Seeded $ADMIN_EMAIL via web/seed-admin.py."
 elif [[ "$seed_out" == *"already exists"* ]]; then
   say "Account $ADMIN_EMAIL already exists."
 else
-  warn "Seeding failed (exit $seed_rc). The window may still answer; seed later with web/seed-admin.py."
+  warn "seed-admin.py did not create the account (exit $seed_rc)."
   note "$seed_out"
-  SKIPPED+=("seed-admin.py for $ADMIN_EMAIL")
+  SKIPPED+=("seed-admin.py for $ADMIN_EMAIL (re-run or sign in if it already exists)")
 fi
 
-# ── 6. Health ─────────────────────────────────────────────────────────────
+# ── 7. Health ─────────────────────────────────────────────────────────────
 stage "Health: /healthz on the published port"
-HTTP_URL="${HTTP_URL:-$(_existing HTTP_URL || true)}"
-: "${HTTP_URL:?HTTP URL is missing; stage 2 did not complete}"
-say "Waiting for $HTTP_URL/healthz."
-ok=0
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  if curl -sf --max-time 5 "$HTTP_URL/healthz" >/dev/null; then
-    ok=1
-    break
-  fi
-  sleep 5
-done
-if [[ "$ok" -eq 1 ]]; then
+: "${HTTP_URL:=$(_existing HTTP_URL || true)}"
+: "${HTTP_URL:?http_url is missing; stage 2 did not complete}"
+say "The health check is curl http://127.0.0.1:<http_port>/healthz."
+say "Waiting on curl $HTTP_URL/healthz (up to five minutes)."
+if _wait_for 30 curl -sf --max-time 10 "$HTTP_URL/healthz"; then
   say "$HTTP_URL/healthz answers."
   open_url "$HTTP_URL/"
-  note "Sign in as the seeded admin. A save under web/ reloads the window."
+  step "Sign in as the seeded admin; you should land on the Queue Board at /."
 else
-  warn "$HTTP_URL/healthz did not answer. Check caddy and tracewake-web on $CONTAINER."
-  SKIPPED+=("/healthz at $HTTP_URL/healthz")
+  warn "$HTTP_URL/healthz did not answer. Check Caddy and tracewake-web on the container, then re-run."
+  SKIPPED+=("curl $HTTP_URL/healthz")
 fi
+note "The cycle timer stays disabled until credentials exist."
+# ──────────────────────────────────────────────────────────────────────────
 
 finish
