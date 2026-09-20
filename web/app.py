@@ -744,8 +744,10 @@ def _runs(rows: list[dict]) -> list[dict]:
 
 # `systemctl show` on the timer, as one substitutable command. A read, no
 # privilege, and overridable so the strip can be driven in tests without a
-# systemd on the other end.
-TIMER_UNIT = "selector-cycle.timer"
+# systemd on the other end. The name is the unit ansible installs and the
+# sudoers rule grants - a leftover `selector-cycle.timer` is a Start button
+# that enables nothing, or a command sudoers will not match.
+TIMER_UNIT = "tracewake-selector-cycle.timer"
 TIMER_PROPERTIES = ("ActiveState", "NextElapseUSecRealtime")
 # Short: this runs inside a request. A systemd that is not answering must make
 # the cell say so rather than hold the page open.
@@ -835,8 +837,14 @@ def _timer_control(action: str) -> str | None:
     except (OSError, subprocess.SubprocessError) as exc:
         return str(exc)
     if done.returncode != 0:
-        detail = (done.stderr or done.stdout).strip().splitlines()
-        return detail[-1] if detail else f"exit {done.returncode}"
+        detail = (done.stderr or done.stdout).strip()
+        if not detail:
+            return f"exit {done.returncode}"
+        # Every line: sudo's useful sentence is not always the last one.
+        # With NoNewPrivileges set it names the flag, then a container
+        # warning; keeping only the last line is how Start timer hid the
+        # cause behind "if sudo is running in a container".
+        return " ".join(detail.splitlines())
     return None
 
 

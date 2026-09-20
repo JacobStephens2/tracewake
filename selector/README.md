@@ -584,7 +584,7 @@ review budget is read through `cycle.review_budget` - the same function the cap
 is enforced with - because two readings that could disagree would be a
 strip that reassures about a cap it is not the one reading. The next-cycle
 cell reads `systemctl show` on the timer through `SELECTOR_TIMER_COMMAND`
-(default: `systemctl show selector-cycle.timer`; the one substitutable command
+(default: `systemctl show tracewake-selector-cycle.timer`; the one substitutable command
 the page owns rather than `cycle.py`, and the seam the dashboard suite drives)
 and says so loudly when the timer is not active. So does the Selector cell
 itself, which reads `stopped - nothing will start a cycle` rather than `idle`:

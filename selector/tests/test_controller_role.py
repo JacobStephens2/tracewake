@@ -163,6 +163,18 @@ def test_window_timer_toggle_has_a_scoped_sudoers_rule():
     assert rule.count("systemctl") == 2
 
 
+def test_cd_update_installs_the_timer_sudoers():
+    """Ansible writes /etc/sudoers.d/tracewake-timer on provision. CD
+    must keep it there too: a Host that was stood up before the rule
+    existed otherwise gets a Start button that cannot sudo, and
+    cd-update is the path a merged PR actually runs.
+    """
+    script = (ROOT / "deploy" / "cd-update.sh").read_text()
+    assert "/etc/sudoers.d/tracewake-timer" in script
+    assert "visudo" in script
+    assert "tracewake-selector-cycle.timer" in script
+
+
 def test_distro_neutral_postgres_and_venvs_in_role():
     """One playbook run on a fresh host gives it the Journal with its schema applied
     and the virtual environments.
