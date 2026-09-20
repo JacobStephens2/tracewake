@@ -146,6 +146,19 @@ def _run_context(cycle, issue, attempt, branch, task_ref):
             "branch": branch, "task_ref": task_ref}
 
 
+def repo_of(task_ref: str | None) -> str | None:
+    """The Target repository a `task_ref` names.
+
+    `task_ref` is `owner/name#number` - the stanza's `repo` key, then the
+    issue. The repository is the part before `#`. A thin row with no
+    `task_ref`, or one written before there was one, has none to name.
+    """
+    if not task_ref:
+        return None
+    repo = task_ref.split("#", 1)[0]
+    return repo or None
+
+
 def run_dispatched(*, cycle, issue, title, url, task_ref, attempt, branch,
                    area, check, kept_progress):
     """The in-flight lock: journaled before the box is reached, and the row
@@ -787,6 +800,10 @@ class RunDispatched:
     area: str | None
     check: str | None
     kept_progress: object
+
+    @property
+    def repo(self) -> str | None:
+        return repo_of(self.task_ref)
 
 
 def run_dispatched_record(row) -> RunDispatched:

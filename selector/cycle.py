@@ -835,6 +835,17 @@ class Spend:
             issue for r, issue in self._in_flight_keys if r == repo
         )
 
+    def holds(self, issue: int, repo: str) -> bool:
+        """Whether `issue` on `repo` currently holds a Run slot.
+
+        A dispatch with no `task_ref` cannot name a Target; those still
+        count against every Target, because the Journal cannot say they
+        belong to someone else.
+        """
+        return (repo, issue) in self._in_flight_keys or (
+            None, issue
+        ) in self._in_flight_keys
+
     def runs_in_flight(self) -> int:
         """How many Runs currently hold a slot, across every Target.
 
