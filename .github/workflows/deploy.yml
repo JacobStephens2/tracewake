@@ -1,9 +1,13 @@
 # Continuous deployment for the Tracewake Host.
 #
 # On every push to the default branch (which is how a merged pull request
-# lands), SSH to the Host as root and run deploy/cd-update.sh, which moves
-# the checkout forward, refreshes dependencies and schema, and restarts the
-# long-lived units. Full provisioning stays in deploy/ansible/host.yml.
+# lands), check out that revision, SSH to the Host as root, and pipe
+# deploy/cd-update.sh into a remote bash. Piping the pushed copy is what
+# lets a Host whose checkout predates the script still converge; bash of
+# the on-disk path is what failed with exit 127 (#105). The script then
+# moves the checkout forward, refreshes dependencies and schema, and
+# restarts the long-lived units. Full provisioning stays in
+# deploy/ansible/host.yml.
 #
 # Required configuration (Settings > Secrets and variables > Actions).
 # Nothing here names any particular host: the address is a fact about the
@@ -36,6 +40,9 @@ jobs:
           printf '%s\n' "${{ secrets.TRACEWAKE_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Check out the pushed revision
+        uses: actions/checkout@v4
+
       - name: Deploy to the Host
         run: |
           HOST="${{ vars.TRACEWAKE_SSH_HOST }}"
@@ -48,4 +55,4 @@ jobs:
           fi
           ssh -i ~/.ssh/tracewake_deploy -o BatchMode=yes \
             "root@${HOST}" \
-            'bash /srv/tracewake/deploy/cd-update.sh'
+            'bash -s' < deploy/cd-update.sh

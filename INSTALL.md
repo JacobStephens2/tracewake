@@ -448,14 +448,17 @@ Tracewake is now fully operational and draining your task queue unattended.
 ## 6. Continuous Deployment
 
 Every push to the default branch (which is how a merged pull request lands)
-deploys itself: `.github/workflows/deploy.yml` SSHs to the Host as root and
-runs `deploy/cd-update.sh`, which moves `/srv/tracewake` to the branch tip,
-refreshes both virtualenvs, re-applies the (idempotent) Journal schema, and
-restarts the window and the notifier. The cycle unit is a oneshot behind its
-timer, so the next trigger picks the new tree up on its own. Full
-provisioning stays in `deploy/ansible/host.yml`; the workflow only rolls the
-deployed revision forward. A checkout with local modifications to tracked
-files stops the deploy loudly rather than resetting an operator hotfix away.
+deploys itself: `.github/workflows/deploy.yml` checks out that revision,
+SSHs to the Host as root, and pipes `deploy/cd-update.sh` into a remote
+bash. The runner sends the pushed copy, so a Host whose checkout predates
+the script still converges. The script then moves `/srv/tracewake` to the
+branch tip, refreshes both virtualenvs, re-applies the (idempotent) Journal
+schema, and restarts the window and the notifier. The cycle unit is a
+oneshot behind its timer, so the next trigger picks the new tree up on its
+own. Full provisioning stays in `deploy/ansible/host.yml`; the workflow
+only rolls the deployed revision forward. A checkout with local
+modifications to tracked files stops the deploy loudly rather than
+resetting an operator hotfix away.
 
 The workflow needs one repository variable and two repository secrets
 (Settings > Secrets and variables > Actions). The Host's address is

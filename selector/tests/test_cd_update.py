@@ -218,3 +218,17 @@ def test_cd_update_repairs_object_store_before_fetch():
     assert '"$TRACEWAKE_DIR/.git/objects"' in before
     assert "chmod u+rwx" in before
     assert "find" in before
+
+
+def test_cd_update_refuses_local_modifications_before_reset():
+    """Bootstrap never hard-resets an operator hotfix. The porcelain
+    guard is the same path the runner-supplied copy takes, because that
+    copy is this script.
+    """
+    script = CD_UPDATE.read_text()
+    refuse_at = script.index("refusing to deploy over local modifications")
+    reset_at = script.index('reset --hard')
+    assert refuse_at < reset_at
+    assert "commit them or revert them" in script
+    assert "--untracked-files=no" in script[:reset_at]
+
