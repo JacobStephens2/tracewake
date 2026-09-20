@@ -1,8 +1,20 @@
 ---
-status: accepted
+status: superseded by ADR 0014
 ---
 
-# Web dashboard from day one, driven by multimodal (text + image) intake
+# [Retired: 2026-09-20, superseded by ADR 0010 and ADR 0014] Web dashboard from day one, driven by multimodal (text + image) intake
+
+> **Status:** Retired. The window is not an intake surface.
+> Handover is applying `ready-for-agent` (ADR 0014). Seeding is a setup step
+> that fetches one operator-chosen task, not issue intake (ADR 0010). A
+> dashboard form that captured text and images and handed them to a Run would
+> feed an unattended agent input the operator never attested, which is the
+> content-trust floor ADR 0003 closed.
+> What remains of the "dashboard from day one" is the FastAPI window (ADR 0001):
+> it renders the Journal — the queue board, a Run's history, these decisions —
+> and is not the front door for work. Issue #13 removed the demonstration
+> intake this ADR described. Image upload, a SQLite request store, and a
+> multipart form were never built, and must not be.
 
 The single-user factory gets a web dashboard as its primary interface from the
 start — overriding the CLI-first default in `notes/lessons.md` — because
