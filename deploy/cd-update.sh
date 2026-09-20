@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Continuous deployment for the Tracewake Host (Single-Host, ADR 0029).
 #
-# Runs ON the Host as root, invoked over SSH by .github/workflows/deploy.yml
+# Runs ON the Host as root, piped over SSH by .github/workflows/deploy.yml
 # on every push to the default branch:
 #
-#   ssh "root@${TRACEWAKE_SSH_HOST}" 'bash /srv/tracewake/deploy/cd-update.sh'
+#   ssh "root@${TRACEWAKE_SSH_HOST}" 'bash -s' < deploy/cd-update.sh
 #
-# TRACEWAKE_SSH_HOST is the repository variable the workflow reads; this
-# script itself takes no address, it runs on the Host.
+# The runner sends the pushed copy, so a Host whose checkout predates this
+# file still starts (#105). TRACEWAKE_SSH_HOST is the repository variable
+# the workflow reads; this script itself takes no address, it runs on the
+# Host.
 #
 # What it does, in order:
 #   1. Makes the shared git object store writable by the instance user.
@@ -36,10 +38,11 @@
 # deploy/ansible/host.yml (packages, accounts, Caddy, guest templates).
 # This script rolls the deployed revision forward; ansible builds the Host.
 #
-# Self-update: the workflow invokes the copy in the CURRENT checkout, which
-# may be behind. After moving the checkout, the script re-execs the copy in
-# the NEW tree (guarded by TRACEWAKE_CD_REEXEC) so the deployed revision's
-# own logic always finishes the deploy.
+# Self-update: the workflow pipes the pushed copy, which may be ahead of
+# the Host checkout (and may be the first copy the Host has ever seen).
+# After moving the checkout, the script re-execs the copy in the NEW tree
+# (guarded by TRACEWAKE_CD_REEXEC) so the deployed revision's own logic
+# always finishes the deploy.
 #
 # Safety: aborts when the checkout carries local modifications to tracked
 # files (an operator hotfix must be committed, not reset away) and fails
