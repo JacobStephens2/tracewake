@@ -5,6 +5,8 @@ and MicroVMs. The choice is stored on the account, not a cookie, so a
 second browser and a live-region swap both come back the way this account
 left them, and another account still sees the default.
 """
+from __future__ import annotations
+
 import pytest
 from fastapi.testclient import TestClient
 
