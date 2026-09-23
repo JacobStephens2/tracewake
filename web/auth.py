@@ -83,6 +83,10 @@ class ResetInvalid(Exception):
     """The reset token is missing, used, or past its expiry."""
 
 
+class PasswordInvalid(Exception):
+    """The password change failed validation."""
+
+
 @dataclass(frozen=True)
 class Account:
     id: int
@@ -103,6 +107,10 @@ class RequireRole:
     Callable-instance, attached router-wide so a control added to that
     router is gated without a per-route reminder (issue #40).
     """
+
+    @property
+    def __globals__(self):
+        return self.__call__.__globals__
 
     def __init__(self, role: str):
         self.role = role
@@ -524,6 +532,51 @@ def consume_reset(token: str, password: str) -> int:
             (account_id,),
         )
     return account_id
+
+
+def change_password(
+    account_id: int,
+    current_password: str,
+    new_password: str,
+    current_token_hash: Optional[str] = None,
+) -> None:
+    """Change an account's password.
+
+    Verifies current_password against the stored hash.
+    Refuses empty new_password.
+    Updates web.accounts with the new argon2id hash.
+    Deletes other sessions for this account.
+    """
+    if not new_password:
+        raise PasswordInvalid("A new password is required.")
+    with _tx() as conn:
+        existing = conn.execute(
+            "SELECT password_hash FROM web.accounts WHERE id = %s",
+            (account_id,),
+        ).fetchone()
+        if existing is None or existing[0] is None:
+            raise PasswordInvalid("Account not found or has no password.")
+        stored_hash = existing[0]
+        ok, _ = verify_password(current_password, stored_hash)
+        if not ok:
+            raise PasswordInvalid("Current password is incorrect.")
+        new_hash = hash_password(new_password)
+        conn.execute(
+            "UPDATE web.accounts SET password_hash = %s WHERE id = %s",
+            (new_hash, account_id),
+        )
+        if current_token_hash:
+            conn.execute(
+                "DELETE FROM web.sessions"
+                " WHERE account_id = %s AND token_hash != %s",
+                (account_id, current_token_hash),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM web.sessions"
+                " WHERE account_id = %s",
+                (account_id,),
+            )
 
 
 def list_accounts() -> list[dict]:

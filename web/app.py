@@ -202,6 +202,7 @@ def _page(request: Request, name: str, context: dict, **kwargs):
             "csrf_token": session.csrf_token if session else "",
             "logout_url": _path(request, "/logout"),
             "accounts_url": _path(request, "/accounts"),
+            "password_url": _path(request, "/password"),
             "account": account,
             "can_control": account is not None and account.role == "admin",
             **context,
@@ -532,6 +533,45 @@ def invite_redeem(
     response = RedirectResponse(root + "/", status_code=303)
     auth.set_session_cookie(response, raw)
     return response
+
+
+@app.get("/password", response_class=HTMLResponse)
+def password_form(request: Request):
+    account = getattr(request.state, "account", None)
+    if account is None:
+        raise auth.NotAuthorised()
+    saved = request.query_params.get("saved") == "1"
+    return _page(request, "password.html", {
+        "error": None,
+        "saved": saved,
+    })
+
+
+@app.post("/password", dependencies=[Depends(require_csrf)])
+def password_post(
+    request: Request,
+    current_password: str = Form(""),
+    new_password: str = Form(""),
+):
+    account = getattr(request.state, "account", None)
+    if account is None:
+        raise auth.NotAuthorised()
+    session = getattr(request.state, "session", None)
+    token_hash = session.token_hash if session else None
+    try:
+        auth.change_password(
+            account.id,
+            current_password,
+            new_password,
+            current_token_hash=token_hash,
+        )
+    except auth.PasswordInvalid as exc:
+        return _page(request, "password.html", {
+            "error": str(exc),
+            "saved": False,
+        })
+    root = request.scope.get("root_path", "") or ""
+    return RedirectResponse(root + "/password?saved=1", status_code=303)
 
 
 @app.get("/adr", response_class=HTMLResponse)
