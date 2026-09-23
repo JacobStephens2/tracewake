@@ -47,6 +47,7 @@
     <div class="logo">{% block logo %}THE LOOP{% endblock %}</div>
     <nav aria-label="Navigation">{% block nav %}<a href="/">board</a> <a href="/history">history</a> <a href="/adr">decisions</a>{% include "_accounts_nav.html" %}{% endblock %}
       {% if account %}
+      <a href="{{ password_url }}">password</a>
       <form method="post" action="{{ logout_url }}" class="sign-out">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit">sign out</button>
