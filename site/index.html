@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracewake - Labeled issues become reviewable pull requests</title>
+<meta name="description" content="Tracewake turns a labeled issue into a reviewable pull request, unattended. A coding agent works inside a fresh microVM under a Termination Contract. Nothing merges itself.">
+<meta property="og:title" content="Tracewake">
+<meta property="og:description" content="Label an issue. Get back a draft pull request. Nothing merges itself.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tracewake.dev/">
+<link rel="stylesheet" href="terminal.css">
+<style>
+/* The dark palette and the theme control, copied from the window's loop.css:
+   terminal.css (vendored, the factory's visual identity) declares the light
+   values; these blocks are the whole of the dark theme. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background-color: #222225;
+  --font-color: #e8e9ed;
+  --invert-font-color: #222225;
+  --primary-color: #62c4ff;
+  --secondary-color: #a3abba;
+  --error-color: #ff3c74;
+  --progress-bar-background: #3f3f44;
+  --progress-bar-fill: #62c4ff;
+  --code-bg-color: #3f3f44;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background-color: #222225;
+    --font-color: #e8e9ed;
+    --invert-font-color: #222225;
+    --primary-color: #62c4ff;
+    --secondary-color: #a3abba;
+    --error-color: #ff3c74;
+    --progress-bar-background: #3f3f44;
+    --progress-bar-fill: #62c4ff;
+    --code-bg-color: #3f3f44;
+  }
+}
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--secondary-color);
+  color: var(--font-color);
+  font-family: var(--font-stack);
+  font-size: 0.8em;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.theme-toggle:hover {
+  background-color: var(--primary-color);
+  color: var(--invert-font-color);
+}
+/* Page chrome in the window's shape: logo left, nav right, wrapping. */
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  padding-top: calc(var(--global-space) * 2);
+}
+.site-header nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1.25rem;
+}
+.cta-row { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.5rem 0; }
+.cta-row .btn { text-decoration: none; }
+.table-scroll { overflow-x: auto; }
+footer { margin: calc(var(--global-space) * 4) 0; color: var(--secondary-color); }
+</style>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("theme");
+    if (t === "light" || t === "dark") { document.documentElement.dataset.theme = t; }
+  } catch (e) { /* storage denied: follow the OS */ }
+})();
+</script>
+</head>
+<body class="terminal">
+<div class="container">
+  <header class="site-header">
+    <div class="logo">TRACEWAKE</div>
+    <nav aria-label="Navigation"><a href="https://github.com/JacobStephens2/tracewake">spec</a> <a href="lessons.html">design notes</a>
+      <button type="button" id="theme-toggle" class="theme-toggle"
+              aria-live="polite">theme: system</button></nav>
+  </header>
+  <main>
+
+  <h1>Label an issue. Get back a pull request.</h1>
+  <p>Tracewake turns a labeled issue into a reviewable pull request,
+  unattended. A coding agent does the work inside a fresh microVM under a
+  Termination Contract. The run's only output is a draft PR, which you review.
+  Nothing merges itself.</p>
+  <div class="cta-row">
+    <a class="btn btn-primary" href="https://github.com/JacobStephens2/tracewake">Read the spec on GitHub</a>
+    <a class="btn btn-primary btn-ghost" href="lessons.html">Design notes</a>
+  </div>
+  <p>MIT licensed. v0 is being assembled in the open.</p>
+
+  <hr>
+
+  <h2>How it works</h2>
+  <ol>
+    <li>You hand over a task with a label. Applying
+      <code>ready-for-agent</code> is the handover: your attestation that you
+      authored or read the task and authorize an unattended run on it. The
+      issue needs an <code>Acceptance criteria</code> section, or it gets
+      handed straight back.</li>
+    <li>The Selector picks it up on its cycle. Every 30 minutes the Selector
+      reads the tracker, checks eligibility - allowlisted labeler, no
+      blockers, no open proposal, retry budget unspent - seeds a Plan and
+      Progress Log, and dispatches the run.</li>
+    <li>An agent works inside a fresh microVM. Each iteration runs isolated,
+      with pinned network egress and an ephemeral filesystem. Context is
+      discarded between iterations; all state lives in git. The run ends only
+      when one of five declared contract bounds binds.</li>
+    <li>You review a draft pull request. The run's sole output is a proposal:
+      a draft PR with verified checks. You review, test, and merge. Dispatch
+      halts when open proposals reach your review capacity, so unattended
+      throughput never outruns human review.</li>
+  </ol>
+
+  <hr>
+
+  <h2>The bets, side by side</h2>
+  <p>Tracewake answers the same problem as OpenAI's Symphony - issues into
+  merged code without continuous supervision - with the opposite bets at every
+  point:</p>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th></th><th>Symphony</th><th>Tracewake</th></tr></thead>
+    <tbody>
+      <tr><td>Handover</td><td>Workflow state</td><td>A label you apply</td></tr>
+      <tr><td>Parallelism</td><td>Ten agents at once</td><td>One run at a time per target</td></tr>
+      <tr><td>Workspace</td><td>Persistent, reused</td><td>Fresh microVM per iteration</td></tr>
+      <tr><td>Done detection</td><td>Stall timer</td><td>Termination Contract, five bounds</td></tr>
+      <tr><td>Output</td><td>Lands in main</td><td>Draft PR only - nothing merges itself</td></tr>
+      <tr><td>Config</td><td>In-repo workflow file</td><td>On the controller; target repos carry zero Tracewake files</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr>
+
+  <h2>What it refuses to do</h2>
+  <ul>
+    <li><strong>No autonomous merges.</strong> A run's sole external output is
+      a draft pull request. Every change is reviewed by a human.</li>
+    <li><strong>No metered keys.</strong> Agents authenticate with flat-rate
+      subscriptions. Preflight refuses metered API keys, so there is no
+      runaway spend.</li>
+    <li><strong>No credential leaks.</strong> Outgoing diffs are scanned for
+      known token patterns before any proposal publishes.</li>
+    <li><strong>No unisolated execution.</strong> Every iteration runs inside
+      an isolated microVM or container with pinned egress.</li>
+    <li><strong>No unverified done signals.</strong> A model's claim of
+      completion is advisory. A run ends only when a contract bound
+      binds.</li>
+    <li><strong>No reviewer flooding.</strong> Dispatch halts when open
+      proposals reach your review cap.</li>
+  </ul>
+
+  <hr>
+
+  <h2>Status</h2>
+  <p>v0 is being assembled. The repository holds the history, the code, the
+  suites - and the configuration that replaced the defaults. What is left is
+  tracked under
+  <a href="https://github.com/JacobStephens2/tracewake/issues/1">Spec: Tracewake v0</a>.</p>
+  <p>One instance runs on a single host: the Selector, the Journal, the
+  window, and the local box. A second repository is a second stanza in a
+  config file, not a second controller.</p>
+
+  </main>
+  <footer>
+    <p>Tracewake is MIT licensed. <a href="https://github.com/JacobStephens2/tracewake">GitHub</a> - <a href="lessons.html">Lessons for a factory with one operator</a></p>
+  </footer>
+</div>
+<script>
+(function () {
+  "use strict";
+  var MODES = ["system", "light", "dark"];
+  function storedMode() {
+    try {
+      var t = localStorage.getItem("theme");
+      return t === "light" || t === "dark" ? t : "system";
+    } catch (e) { return "system"; }
+  }
+  function applyMode(mode) {
+    if (mode === "system") {
+      delete document.documentElement.dataset.theme;
+    } else {
+      document.documentElement.dataset.theme = mode;
+    }
+    var b = document.getElementById("theme-toggle");
+    if (b) { b.textContent = "theme: " + mode; }
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    var b = document.getElementById("theme-toggle");
+    if (b) {
+      b.addEventListener("click", function () {
+        var next = MODES[(MODES.indexOf(storedMode()) + 1) % MODES.length];
+        try {
+          if (next === "system") { localStorage.removeItem("theme"); }
+          else { localStorage.setItem("theme", next); }
+        } catch (e) { /* storage denied: applies for this page only */ }
+        applyMode(next);
+      });
+    }
+    applyMode(storedMode());
+  });
+})();
+</script>
+</body>
+</html>

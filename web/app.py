@@ -64,7 +64,7 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 # checkout carries, and StaticFiles serves whatever is under the directory it
 # is given. Naming the content trees is the difference between serving the
 # documents and serving the repository.
-for _tree in ("docs", "notes", "research"):
+for _tree in ("docs", "notes", "research", "site"):
     app.mount(
         f"/{_tree}",
         StaticFiles(directory=PROJECT / _tree, html=True),

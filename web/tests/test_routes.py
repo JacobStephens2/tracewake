@@ -42,3 +42,16 @@ def test_events_route_is_configured():
     assert "/events" in route_paths
     assert "/loop/events" in route_paths
 
+
+def test_lessons_nav_link_resolves_to_the_essay():
+    """The nav's "lessons" link, the /site mount, and the essay filename
+    must agree: a rename in site/ that the nav does not follow lands the
+    reader on the wrong document."""
+    import re
+
+    body = client.get("/adr").text
+    (href,) = re.findall(r'<a href="([^"]+)">lessons</a>', body)
+    resp = client.get(href)
+    assert resp.status_code == 200
+    assert "factory with one operator" in resp.text
+
