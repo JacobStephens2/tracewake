@@ -28,9 +28,12 @@ tracewake_extra_env_files: []
 # Alert failure service.
 tracewake_on_failure: "notify-unit-failure@%n.service"
 
-# Window service settings
+# Dashboard service settings
 tracewake_web_enabled: true
 tracewake_web_port: 8100
+# uvicorn --reload. Production stays false; a local Host with a bind-mounted
+# tree sets this so a save is the inner loop (issue #107).
+tracewake_web_reload: false
 
 # Attended Preview window settings (ADR 0016).
 tracewake_staging_user: labstage

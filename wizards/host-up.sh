@@ -184,10 +184,12 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=5
+TOTAL_STAGES=7
 
 # Issue #57: the Host exists and answers on loopback. Droplet, play, /healthz,
-# credential inventory. Instance facts stay out of the tree in $HOST_CONF.
+# credential inventory. Stages 4-5 point DNS at the new VM and confirm the
+# public origin serves the Dashboard over HTTPS (issue #58). Instance facts
+# stay out of the tree in $HOST_CONF.
 HOST_CONF="$HOME/.config/tracewake"
 ENV_FILE="$HOST_CONF/host.env"
 TFVARS="$HOST_CONF/host.tfvars"
@@ -468,7 +470,75 @@ ansible-playbook -i "$INVENTORY" "$PLAY" --check --diff
 pause "Review the check-mode diff above."
 ansible-playbook -i "$INVENTORY" "$PLAY"
 
-# ── 4. Health ─────────────────────────────────────────────────────────────
+# _wait_for TRIES COMMAND...: retry COMMAND every 10s; true on first success.
+_wait_for() {
+  local tries="$1"; shift
+  local i
+  for i in $(seq 1 "$tries"); do
+    if "$@" >/dev/null 2>&1; then return 0; fi
+    sleep 10
+  done
+  return 1
+}
+
+# ── 4. DNS ────────────────────────────────────────────────────────────────
+stage "DNS: point the name at this Host"
+say "Caddy can only issue its certificate once the Dashboard's name resolves here (#58)."
+HOST_IP="${HOST_IP:-$(_existing HOST_IP || true)}"
+: "${HOST_IP:?Host IP is missing; stage 2 did not complete}"
+DNS_NAME="$(awk -F'"' '/tracewake_hostname:/ {print $2; exit}' "$INVENTORY" 2>/dev/null || true)"
+: "${DNS_NAME:?tracewake_hostname is missing from $INVENTORY}"
+say "Record to change: A $DNS_NAME -> $HOST_IP, DNS-only (proxy off)."
+open_url "https://dash.cloudflare.com"
+step "DNS → Records → edit the A record for $DNS_NAME to $HOST_IP, proxy OFF (DNS only), then save."
+step "Allow inbound TCP 80 and 443 to this Host so issuance can complete."
+pause "Press Enter when the record is saved."
+say "Waiting for the name to resolve to this Host (up to five minutes)."
+RESOLVED=""
+for _ in $(seq 1 30); do
+  RESOLVED="$(python3 -c 'import socket,sys; print(socket.gethostbyname(sys.argv[1]))' "$DNS_NAME" 2>/dev/null || true)"
+  [[ "$RESOLVED" == "$HOST_IP" ]] && break
+  sleep 10
+done
+if [[ "$RESOLVED" != "$HOST_IP" ]]; then
+  warn "Still resolving to ${RESOLVED:-nothing}. DNS may need longer; re-run to retry."
+  SKIPPED+=("DNS A record for $DNS_NAME (needs $HOST_IP)")
+else
+  say "The name resolves here."
+fi
+
+# ── 5. Origin ─────────────────────────────────────────────────────────────
+stage "Origin: HTTPS and sign-in at the public name"
+say "Confirming the public origin serves the Dashboard (#58)."
+if [[ "$RESOLVED" != "$HOST_IP" ]]; then
+  warn "Skipping: the name does not resolve here yet."
+  SKIPPED+=("public origin for $DNS_NAME (DNS first)")
+else
+  say "Waiting for Caddy's certificate (up to five minutes)."
+  if _wait_for 30 curl -sf --max-time 10 "https://$DNS_NAME/healthz"; then
+    say "HTTPS answers with a matching certificate."
+  else
+    warn "HTTPS is not serving a matching certificate yet. Check Caddy on the Host, then re-run."
+    SKIPPED+=("certificate for $DNS_NAME (https://$DNS_NAME/healthz)")
+  fi
+  say "The public Dashboard must send a visitor to sign-in."
+  ORIGIN_CHECK="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 "https://$DNS_NAME/" 2>/dev/null || true)"
+  if [[ "$ORIGIN_CHECK" == 303*"sign-in"* ]]; then
+    say "Unauthenticated GET / 303s to sign-in."
+  else
+    warn "GET / answered ${ORIGIN_CHECK:-nothing}; expected a 303 to sign-in."
+    SKIPPED+=("sign-in gate at https://$DNS_NAME/")
+  fi
+  step "Sign in as the seeded admin; you should land on the Queue Board at /."
+  if confirm "Did sign-in land on the Queue Board"; then
+    say "The public origin is the Dashboard."
+  else
+    warn "If the admin is not seeded yet, work the admin-seeding step, then re-run."
+    SKIPPED+=("operator sign-in at https://$DNS_NAME/")
+  fi
+fi
+
+# ── 6. Health ─────────────────────────────────────────────────────────────
 stage "Health: /healthz on loopback"
 say "The Dashboard listens on 127.0.0.1:8100; Caddy is the only public origin."
 if ssh -i "$SSH_KEY_FILE" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 "root@$HOST_IP" 'curl -sf http://127.0.0.1:8100/healthz'; then
@@ -478,7 +548,7 @@ else
   SKIPPED+=("/healthz on loopback (ssh root@$HOST_IP 'curl -sf http://127.0.0.1:8100/healthz')")
 fi
 
-# ── 5. Credentials ────────────────────────────────────────────────────────
+# ── 7. Credentials ────────────────────────────────────────────────────
 stage "Credentials: inventory on the Host"
 say "Runs the mechanical audit from INSTALL.md step 5 on the Host."
 if ssh -i "$SSH_KEY_FILE" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 "root@$HOST_IP" 'cd /srv/tracewake/loop && ./assert-credentials.sh'; then

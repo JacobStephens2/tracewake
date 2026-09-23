@@ -48,10 +48,11 @@ substituted `SELECTOR_BOX_COMMAND`, not a second setup.
 | `CONTEXT.md` | The single domain vocabulary for the project. |
 | `loop/` | The Run-side half: the Termination Contract, one Run, Seeding, the Proposal, the agent adapters, and the offline bats suite that drives all of it through scripted fakes. Start at `loop/README.md`. |
 | `selector/` | The controller: the Cycle, Eligibility, Dispatch, the Journal, the watcher, the notifier, the board, and its pytest suite. Start at `selector/README.md`. |
-| `web/` | The window: a FastAPI app that renders the Journal - the queue board, a Run's history, the ADRs - and its suite. |
-| `deploy/systemd/` | The units: the Selector's cycle timer and notifier, the window and its Attended Preview. |
+| `web/` | The dashboard: a FastAPI app that renders the Journal - the queue board, a Run's history, the ADRs - and its suite. |
+| `deploy/systemd/` | The units: the Selector's cycle timer and notifier, the dashboard and its Attended Preview. |
 | `deploy/ansible/` | `host.yml` installs the Single-Host Controller, local Box, and HTTPS proxy. |
-| `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. `host-up.sh` stands the Host up (droplet, play, `/healthz`, credential inventory) for #57. |
+| `deploy/tofu/` | The Host machine: a DigitalOcean droplet, or `local/` for a Docker Ubuntu 24.04 container. Ansible is still the play that turns the machine into a Host. |
+| `wizards/` | Runnable walkthroughs for the steps only a human can take - the browser logins the box does not have a browser for. `host-up.sh` stands the droplet Host up (droplet, play, `/healthz`, credential inventory) for #57. `local-host-up.sh` stands the same Host up on Docker (play, `/healthz`) for #114. `host-credentials.sh` mints Google SMTP, Grok login, per-target forge tokens, and the signing-key registration for #59. |
 | `docs/adr/` | The decisions, numbered 0001 upward. |
 | `notes/` | Evidence: what was run, what it printed, and what that settled. |
 | `research/` | The source-cited investigations the notes and the ADRs rest on. |
@@ -96,17 +97,21 @@ refuses to do:
 
 Three suites and two mutation checks, all offline - no model, no network, no
 spend. The two Python suites need a Postgres role matching the OS user with
-`CREATEDB`; they create and drop a throwaway database per run.
+`CREATEDB`; they create and drop a throwaway database per run. A macOS
+checkout is expected green: tests that need a Host facility (`/proc/stat`,
+systemd, `ansible_facts.services`) skip with a reason naming it. Those proofs
+run on the Host, or for the Single-Host play's check-mode in the Ubuntu
+container in `deploy/ansible/tests/README.md`.
 
 ```bash
-# The Loop - 289 tests, bats
+# The Loop - bats
 cd loop && bats tests/
 
-# The Selector - 340 tests, pytest
+# The Selector - pytest
 cd selector && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 
-# The window - 220 tests, pytest
+# The dashboard - pytest
 cd web && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```
@@ -131,4 +136,4 @@ left is tracked in this repository's issues, under
 
 ## Licence
 
-MIT. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).

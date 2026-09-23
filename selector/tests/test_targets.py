@@ -181,6 +181,304 @@ def test_selecting_a_target_that_is_not_declared_lists_the_ones_that_are(
     assert "acme/widgets" in str(raised.value)
 
 
+# --- Removing a target -------------------------------------------------------
+#
+# The window's Remove control unenrolls a stanza. The file is the instance's
+# list, so the public seam is here: drop the named repo, leave the rest in
+# file order, and load() is what a Cycle reads next.
+
+
+def test_removing_a_target_leaves_the_others_in_file_order(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {"repo": "acme/alpha"},
+        {"repo": "acme/beta"},
+        {"repo": "acme/gamma"},
+    )
+    remaining = targets.remove("acme/beta", path)
+    assert [t.repo for t in remaining] == ["acme/alpha", "acme/gamma"]
+    assert [t.repo for t in targets.load(path)] == ["acme/alpha", "acme/gamma"]
+
+
+def test_the_remaining_target_keeps_the_values_it_declared(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {"repo": "acme/alpha"},
+        {
+            "repo": "acme/beta",
+            "review_cap": 3,
+            "labels": {"review": "second-look"},
+            "labeler_allowlist": ["beta-operator"],
+        },
+    )
+    targets.remove("acme/alpha", path)
+    (beta,) = targets.load(path)
+    assert beta.repo == "acme/beta"
+    assert beta.review_cap == 3
+    assert beta.labels.review == "second-look"
+    assert beta.labeler_allowlist == ("beta-operator",)
+
+
+def test_removing_the_last_target_leaves_a_file_with_no_stanza(tmp_path):
+    """An empty instance is still a file the variable names.
+
+    Deleting the file would make the next load say it could not be read,
+    which is the wrong diagnosis: the operator just unenrolled the last
+    Target, and a Cycle should refuse for having nothing to work.
+    """
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    remaining = targets.remove("acme/alpha", path)
+    assert remaining == ()
+    assert path.is_file()
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.load(path)
+    assert "[[target]]" in str(raised.value)
+
+
+def test_removing_a_repository_that_is_not_declared_is_refused(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.remove("acme/nothing", path)
+    assert "acme/nothing" in str(raised.value)
+    assert "acme/alpha" in str(raised.value)
+    (still,) = targets.load(path)
+    assert still.repo == "acme/alpha"
+
+
+def test_removing_a_target_does_not_delete_its_host_files(tmp_path):
+    """Unenroll, do not clean the machine.
+
+    The stanza is what a Cycle reads. The checkout and token file are the
+    Host's, and a Remove from the window must not take them with it.
+    """
+    work = tmp_path / "work"
+    token = tmp_path / "token"
+    work.mkdir()
+    token.write_text("secret\n")
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {"repo": "acme/alpha"},
+        {
+            "repo": "acme/beta",
+            "work_repo": str(work),
+            "token_file": str(token),
+        },
+    )
+    targets.remove("acme/beta", path)
+    assert work.is_dir()
+    assert token.read_text() == "secret\n"
+
+
+# --- Adding a target ---------------------------------------------------------
+#
+# The window's Add form writes a stanza. Same seam as remove: the file is
+# what a Cycle reads next, in file order, with every required value named
+# by the operator and none invented.
+
+
+def _stanza(**over):
+    stanza = {
+        "repo": "acme/gamma",
+        "work_repo": "/nonexistent/work/gamma",
+        "box_repo": "/nonexistent/box/gamma",
+        "token_file": "/nonexistent/token/gamma",
+        "guest_template": "gamma-guest:1",
+        "labeler_allowlist": ["an-operator"],
+    }
+    stanza.update(over)
+    return stanza
+
+
+def test_adding_a_target_appends_it_in_file_order(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"}, {"repo": "acme/beta"})
+    remaining = targets.add(_stanza(), path)
+    assert [t.repo for t in remaining] == [
+        "acme/alpha", "acme/beta", "acme/gamma",
+    ]
+    assert [t.repo for t in targets.load(path)] == [
+        "acme/alpha", "acme/beta", "acme/gamma",
+    ]
+
+
+def test_adding_a_target_keeps_the_values_already_declared(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {
+            "repo": "acme/alpha",
+            "review_cap": 3,
+            "labels": {"review": "second-look"},
+        },
+    )
+    targets.add(_stanza(), path)
+    alpha, gamma = targets.load(path)
+    assert alpha.review_cap == 3
+    assert alpha.labels.review == "second-look"
+    assert gamma.repo == "acme/gamma"
+    assert gamma.labeler_allowlist == ("an-operator",)
+
+
+def test_adding_the_first_target_to_an_empty_file_enrolls_it(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    targets.remove("acme/alpha", path)
+    remaining = targets.add(_stanza(), path)
+    assert [t.repo for t in remaining] == ["acme/gamma"]
+    (loaded,) = targets.load(path)
+    assert loaded.repo == "acme/gamma"
+
+
+def test_adding_the_first_target_creates_a_missing_file(tmp_path):
+    path = tmp_path / "targets.toml"
+    assert path.exists() is False
+    remaining = targets.add(_stanza(), path)
+    assert [t.repo for t in remaining] == ["acme/gamma"]
+    (loaded,) = targets.load(path)
+    assert loaded.repo == "acme/gamma"
+
+
+def test_adding_a_repository_already_declared_is_refused(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.add(_stanza(repo="acme/alpha"), path)
+    assert "acme/alpha" in str(raised.value)
+    (still,) = targets.load(path)
+    assert still.repo == "acme/alpha"
+
+
+def test_adding_does_not_overwrite_a_malformed_file(tmp_path):
+    path = tmp_path / "targets.toml"
+    path.write_text("this is not toml {\n")
+    with pytest.raises(targets.NotConfigured):
+        targets.add(_stanza(), path)
+    assert path.read_text() == "this is not toml {\n"
+
+
+def test_a_sibling_is_drafted_by_renaming_the_last_path_component(tmp_path):
+    """The operator names the repository; the instance already knows its layout.
+
+    work_repo and box_repo carry the short name as their last component,
+    and the token file carries it inside the filename. Substituting that
+    name is how a second Target is enrolled without inventing a host
+    path in the product.
+    """
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {
+            "repo": "acme/alpha",
+            "work_repo": "/nonexistent/work/alpha",
+            "box_repo": "/nonexistent/box/alpha",
+            "token_file": "/nonexistent/token/alpha.token",
+            "guest_template": "shared-guest:1",
+        },
+    )
+    (source,) = targets.load(path)
+    drafted = targets.draft("acme/gamma", source)
+    assert drafted["repo"] == "acme/gamma"
+    assert drafted["work_repo"] == "/nonexistent/work/gamma"
+    assert drafted["box_repo"] == "/nonexistent/box/gamma"
+    assert drafted["token_file"] == "/nonexistent/token/gamma.token"
+    assert drafted["guest_template"] == "shared-guest:1"
+    assert drafted["labeler_allowlist"] == ["an-operator"]
+
+
+def test_a_path_that_does_not_carry_the_name_is_left_blank(tmp_path):
+    """Reusing it would share a checkout, which is the failure.
+
+    The first Target on a Host sometimes has a box path that is not
+    the repository's name. Copying that path into a sibling would put
+    two Runs in one directory. An empty field is a refusal the
+    operator can fill; a copied one is a silent collision.
+    """
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {
+            "repo": "acme/alpha",
+            "work_repo": "/nonexistent/work",
+            "box_repo": "/nonexistent/workspace",
+            "token_file": "/nonexistent/token",
+        },
+    )
+    (source,) = targets.load(path)
+    drafted = targets.draft("acme/gamma", source)
+    assert drafted["work_repo"] == ""
+    assert drafted["box_repo"] == ""
+    assert drafted["token_file"] == ""
+    assert drafted["guest_template"] == "widgets-guest:1"
+
+
+def test_only_the_final_component_is_renamed(tmp_path):
+    """A parent directory that happens to match the name stays put.
+
+    `/home/loop/loop` adding `acme/foo` is `/home/loop/foo`, not
+    `/home/foo/foo`. The short name lives at the end of the path.
+    """
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {
+            "repo": "acme/loop",
+            "work_repo": "/home/loop/loop",
+            "box_repo": "/home/loop/loop",
+            "token_file": "/home/loop/.config/loop/loop-github-token",
+        },
+    )
+    (source,) = targets.load(path)
+    drafted = targets.draft("acme/foo", source)
+    assert drafted["work_repo"] == "/home/loop/foo"
+    assert drafted["box_repo"] == "/home/loop/foo"
+    assert drafted["token_file"] == "/home/loop/.config/loop/foo-github-token"
+
+
+def test_adding_names_only_the_repository_when_a_sibling_shows_the_layout(
+    tmp_path,
+):
+    """The window's easier add is this seam, not a second policy.
+
+    A stanza that names only the repository is enrollable when the
+    last Target already demonstrates the Host's layout. Guest image
+    and allowlist copy; paths that carry the short name are renamed.
+    """
+    path = tmp_path / "targets.toml"
+    write_targets(
+        path,
+        {
+            "repo": "acme/alpha",
+            "work_repo": "/nonexistent/work/alpha",
+            "box_repo": "/nonexistent/box/alpha",
+            "token_file": "/nonexistent/token/alpha.token",
+            "guest_template": "shared-guest:1",
+        },
+    )
+    remaining = targets.add({"repo": "acme/gamma"}, path)
+    assert [t.repo for t in remaining] == ["acme/alpha", "acme/gamma"]
+    gamma = remaining[1]
+    assert str(gamma.work_repo) == "/nonexistent/work/gamma"
+    assert gamma.box_repo == "/nonexistent/box/gamma"
+    assert gamma.token_file == "/nonexistent/token/gamma.token"
+    assert gamma.guest_template == "shared-guest:1"
+    assert gamma.labeler_allowlist == ("an-operator",)
+
+
+def test_adding_a_stanza_short_of_a_required_value_is_refused(tmp_path):
+    path = tmp_path / "targets.toml"
+    write_targets(path, {"repo": "acme/alpha"})
+    with pytest.raises(targets.NotConfigured) as raised:
+        targets.add(_stanza(token_file=""), path)
+    assert "token_file" in str(raised.value)
+    (still,) = targets.load(path)
+    assert still.repo == "acme/alpha"
+
+
 def test_a_single_stanza_may_be_written_as_a_table(tmp_path):
     """`[target]` and `[[target]]` mean the same thing to a reader, and a
     single-target instance is the common case."""

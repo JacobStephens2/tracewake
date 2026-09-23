@@ -127,13 +127,13 @@ class DispatchConfig:
                 env("SELECTOR_COMMAND_TIMEOUT_SECONDS", "300")
             ),
             # The Run's own is longer than the Termination Contract's run
-            # clock (90 minutes) by enough to cover the checkout and the
+            # clock (6 hours) by enough to cover the checkout and the
             # proposal. It is a backstop for a box command that wedged, not a
             # second bound on the Run: the Run bounds itself, and a number
             # here that could fire first would be a bound nobody declared in
             # contract.sh.
             run_timeout_seconds=int(
-                env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "7200")
+                env("SELECTOR_DISPATCH_TIMEOUT_SECONDS", "23400")
             ),
             # How long a Proposal's checks may stay pending before the
             # Selector stops waiting (#155). CI starts when the Run pushes,
@@ -169,6 +169,34 @@ def report_fields(text: str) -> dict[str, str]:
         if match:
             fields[match.group(1)] = match.group(2).strip()
     return fields
+
+
+# The first Iteration's rendered briefing, as run.sh emits it on stdout (#80):
+# the lines between these two markers. A block rather than a KEY=VALUE line
+# because it is prose, not a field - and `report_fields` already ignores both
+# markers, so the two wire formats share the stream without sharing a parser.
+BRIEFING_BEGIN = "LOOP_BRIEFING_BEGIN"
+BRIEFING_END = "LOOP_BRIEFING_END"
+
+
+def extract_briefing(text: str) -> str | None:
+    """The briefing block run.sh rendered at Run start, or None.
+
+    None is an old box, not a broken one: a Run from before the briefing was
+    emitted has no stored fact to journal, and refusing the dispatch for that
+    would turn every box that has not been ansible-applied yet into an outage.
+    """
+    lines = []
+    inside = False
+    for line in text.splitlines():
+        if line.strip() == BRIEFING_BEGIN:
+            lines, inside = [], True
+            continue
+        if line.strip() == BRIEFING_END and inside:
+            return "\n".join(lines).strip() or None
+        if inside:
+            lines.append(line)
+    return None
 
 
 def _run(argv: list[str], *, timeout: int | None = None,
@@ -430,6 +458,10 @@ def start_run(config: DispatchConfig, branch: str, task_ref: str) -> dict:
         "proposal": fields.get("LOOP_PROPOSE_URL") or None,
         "proposed": fields.get("LOOP_RUN_PROPOSAL") or None,
         "notified": fields.get("LOOP_RUN_NOTIFIED") or None,
+        # The stored fact of what the agent read (#80): rendered on the box
+        # at Run start, journaled by the cycle below. None from a box that
+        # predates the emission, which journals nothing rather than failing.
+        "briefing": extract_briefing(completed.stdout),
     }
 
 
@@ -535,4 +567,53 @@ def update_branch(config: DispatchConfig, task_repo: str, proposal: str | int) -
         raise DispatchFailed(
             f"could not update branch for proposal {proposal}: {_said(completed)}"
         )
+
+
+def reconcile(config: DispatchConfig, task_repo: str, proposal: str | int,
+              check: str | None = None) -> dict:
+    """Reconcile one conflicting Proposal on the box and hand back the report.
+
+    A reconcile Run is a different kind of Run from `start_run`, and it goes
+    through the same box surface under its own verb rather than through a
+    second command: the box is what holds the microVM boundary and the
+    per-target checkout, so reaching it any other way would be a second box.
+
+    `proposal` is the Proposal's URL or number, like `checks` and
+    `update-branch` take: the box resolves the working branch from the forge
+    itself, so the Selector never has to parse one out of a URL. `check` is
+    the owning issue's Check section when it has one - the suite the merged
+    branch must pass before the box pushes it.
+
+    The box pushes only after a clean verification; a non-zero exit means the
+    conflicts could not be resolved or the suite went red, and nothing was
+    pushed. Like `start_run`, this blocks for the length of the Run, which is
+    why it carries the Run's backstop rather than the seconds-scale command
+    timeout.
+    """
+    argv = [config.box_command, "reconcile", str(proposal)]
+    if check:
+        argv += ["--check", check]
+    completed = _run(
+        argv,
+        timeout=config.run_timeout_seconds,
+        overlay=config.command_env,
+    )
+    fields = report_fields(completed.stdout)
+    # Read before the exit code is judged: the box reports the branch before
+    # it pushes, so a reconcile that merged and verified but could not push
+    # still names where the work got to - and the escalation below says that
+    # instead of that none exists.
+    branch = fields.get("LOOP_RECONCILE_BRANCH") or None
+    if completed.returncode != 0:
+        failed = DispatchFailed(
+            f"could not reconcile proposal {proposal}: {_said(completed)}"
+        )
+        failed.branch = branch
+        raise failed
+    return {
+        "proposal": str(proposal),
+        # None from a box that reconciled without emitting the report line,
+        # which journals nothing rather than failing the row.
+        "branch": branch,
+    }
 

@@ -27,10 +27,10 @@ Six architectural rules govern the draining Cycle:
    The pause flag is evaluated before each pick. An operator pausing mid-drain
    allows the Run currently in flight to complete and route normally; the pause
    stops the next pick and halts the drain cleanly.
-4. **Per-dispatch status observation.**
-   The box's facts and the Guardrail status are read immediately before each
-   dispatch, rather than once per Cycle. A multi-hour drain reflects live box facts
-   and repository protection state ahead of each Run.
+4. **Per-dispatch box observation; the Guardrail once per Cycle.**
+   The box's facts are read immediately before each dispatch, rather than once
+   per Cycle, so a multi-hour drain reflects live box facts ahead of each Run.
+   The Guardrail is read once, when the Cycle starts (ADR 0026 rule 5; see below).
 5. **One summary per drain.**
    One `cycle.finished` row is journaled when the drain ends. Its payload names
    every dispatch (`dispatches: list[int]`), the initial pick (`picked`), and the
@@ -54,3 +54,10 @@ Six architectural rules govern the draining Cycle:
 **Amended by ADR 0027 (issue #37).** Rule 1's "serially" is now "up to K
 concurrently, serial within a Target". Review Cap, not thread count,
 remains the throughput bound. K unset is still this ADR's original drain.
+
+**Amended by ADR 0026 rule 5; text brought into line 2026-09-20.** Rule 4 as
+first written read the Guardrail before each dispatch as well. ADR 0026 moved
+it to once per Cycle, before the dispatch loop, because an idle queue
+dispatches nothing and so journaled no reading, and the chip on `/loop` went
+stale over a healthy Selector. This ADR's text had not followed. The box's facts
+stay per-dispatch, because those are what a Run is about to land on.

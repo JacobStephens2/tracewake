@@ -19,7 +19,7 @@ ETA's.
 _Avoid_: the Loop, our Ralph
 
 **Tracewake**:
-The product: the Selector, the Loop and the window, with everything that names
+The product: the Selector, the Loop and the dashboard, with everything that names
 a company, a tracker, a box or a person arriving as configuration rather than
 living in the code. Every term in this glossary is a Tracewake term. An
 instance has no name of its own - ETA's is "ETA's Tracewake", the way its
@@ -77,7 +77,7 @@ _Avoid_: approval, sign-off, triage
 
 **Operator**:
 The one person an Instance trusts: the identity whose Handover the Selector
-honours and whose review lands work. Not a Window Account and not a role of one.
+honours and whose review lands work. Not a Dashboard Account and not a role of one.
 _Avoid_: admin, user, owner, maintainer
 
 **Instance**:
@@ -89,19 +89,25 @@ the code has a default for any of it. An instance has no name of its own;
 ETA's is "ETA's Tracewake".
 _Avoid_: deployment, tenant, install, the Loop
 
-**Window Account**:
-An email-identified identity for an Instance's window, carrying a role of admin
-or reader. Not an Operator.
-_Avoid_: user, login, viewer (the role is reader), operator
+**Dashboard**:
+The instance's web app - its control panel: the Queue Board, Run History,
+decisions, accounts, and the controls that change the Instance. Not a
+watch-only surface; it still decides no work.
+_Avoid_: window, the window, UI, frontend, status page
+
+**Dashboard Account**:
+An email-identified identity for an Instance's Dashboard, carrying a role of
+admin or reader. Not an Operator.
+_Avoid_: user, login, viewer (the role is reader), operator, Window Account
 
 **Admin**:
-The Window Account role that may change the Instance from the window - today,
-pause and resume. Any number of accounts may carry it; none of them is the
-Operator.
+The Dashboard Account role that may change the Instance from the dashboard -
+today, pause and resume, the Selector timer, and the Target list. Any number of
+accounts may carry it; none of them is the Operator.
 _Avoid_: operator, owner, superuser
 
 **Reader**:
-The Window Account role that may look at every page and the live stream, and
+The Dashboard Account role that may look at every page and the live stream, and
 may change nothing.
 _Avoid_: viewer, guest, user, operator
 
@@ -113,8 +119,10 @@ environment satisfies all Execution Boundary and credential isolation guarantees
 _Avoid_: local loop, dev mode, standalone mode
 
 **Host**:
-The machine this Instance's window and Selector run on. Distinct from the box,
-where Runs execute; in Single-Host Mode they are the same machine.
+The machine this Instance's dashboard and Selector run on. Distinct from the box,
+where Runs execute; in Single-Host Mode they are the same machine. OpenTofu
+creates it — a DigitalOcean droplet, or a local Docker Ubuntu 24.04
+container — and `host.yml` configures it (ADR 0006, ADR 0031).
 _Avoid_: the box, server, node, telemetry
 
 **Target**:
@@ -135,18 +143,24 @@ and it is not an agent - no model output executes in it (ADR 0014).
 _Avoid_: scheduler, dispatcher, intake
 
 **Cycle**:
-One execution of the Selector: read the tracker, apply Eligibility to the whole
-labeled queue, order, apply the caps, journal the reasoning, and dispatch Runs
-until nothing is Eligible, a cap holds, or an admin has paused. Up to an
-instance-configured number of Dispatches may run at once, serial within a
-Target (ADR 0027). The timer's
-unit of work, and the Journal's unit of grouping - every event of one Cycle carries
+One execution of the Selector against one Target: read the tracker, apply
+Eligibility to the whole labeled queue, order, apply the caps, journal the
+reasoning, and dispatch Runs until nothing is Eligible, a cap holds, or an admin
+has paused. A timer firing runs one Cycle per Target, so an Instance with three
+Targets journals three Cycles per firing. Up to an instance-configured number of
+Dispatches may run at once across those Cycles, serial within a Target
+(ADR 0027). The Journal's unit of grouping - every event of one Cycle carries
 its id. It is emphatically not an Iteration, which is why "cycle" is a word the
 Iteration entry above tells you to avoid: a Cycle chooses work and an Iteration does it.
-A Cycle also searches the configured owner for the Handover label on repositories
-with no Target stanza and journals the gap (`target.unenrolled`); it never enrolls
+Before any Target's Cycle, a timer firing also searches the configured owner for
+the Handover label on repositories with no Target stanza and journals the gap
+(`target.unenrolled`); it never enrolls
 anything. Deduplication is keyed off the Journal so a standing gap does not mail
-every half hour.
+every half hour. It does not operate on an archived repository: GitHub makes
+those read-only, so the tracker reports no issues, the owner-wide search
+excludes them, and a Cycle that still sees the flag journals
+`halted: repository-archived` rather than dispatching, commenting, or
+refreshing Proposals.
 _Avoid_: tick, sweep, poll, pass
 
 **Dispatch**:
@@ -192,11 +206,21 @@ a Cycle (ADR 0023). A Proposal that encounters merge conflicts is left un-update
 and flagged with a conflict badge on the Queue Board.
 _Avoid_: auto-rebase, branch sync
 
+**Reconcile Run**:
+A Run dispatched for a conflicting Proposal rather than for an issue: the base
+branch is merged into the Proposal's working branch inside the microVM
+boundary, conflicts are resolved there, the merged branch is verified, and the
+Proposal branch is pushed - never the default branch (ADR 0030). Journaled
+`proposal.reconciled` on success; a failure the Run cannot resolve escalates
+the owning issue to `ready-for-human` (`proposal.reconcile-failed`).
+_Avoid_: rebase bot, auto-merge
+
 **Eligible**:
 The predicate a labeled task passes before the Selector may seed it: labeled by
 an allowlisted operator, no open blocking dependency - native tracker edges
 only - no open sub-issues (a parent spec is not a unit of work), no open
-Proposal, retry budget unspent.
+Proposal except the leftover draft of a failed attempt still inside the retry
+budget, retry budget unspent.
 _Avoid_: unblocked, ready (the labels already own that word)
 
 **Selector Journal**:
@@ -224,11 +248,11 @@ in flight, `awaiting-review`, `ready-for-human`. Its columning is the Selector's
 own Eligibility predicate, imported - a board that decided for itself which
 tasks were Eligible would be a second Selector, and their first disagreement
 would be a bug in whichever one you did not read. Beside the queue, the Host's
-live headroom - CPU, memory, and the disk this checkout lives on - and the
-count of Runs in flight, that last derived from the Journal's in-flight
-predicate and nothing else.
-_Avoid_: kanban, backlog, dashboard (the page is the dashboard; this is one
-panel on it)
+live headroom - CPU, memory, and the disk this checkout lives on - the count
+of Runs in flight, that last derived from the Journal's in-flight predicate
+and nothing else, and the microVMs the box is holding right now.
+_Avoid_: kanban, backlog, dashboard (the Dashboard is the whole app; this is
+one panel on it)
 
 **Run History**:
 Every Run that has ended, on `/loop/history`, replayed from the Selector
@@ -324,6 +348,14 @@ The mechanism the agent cannot cross while unattended. The one subsystem that
 Attendedness re-earns after the single-operator collapses have deleted the rest of
 the isolation apparatus.
 _Avoid_: sandbox, container, isolation stack
+
+**MicroVM**:
+One live instance of the Execution Boundary on the box, created for an
+Iteration and destroyed when that Iteration ends. Listed on `/loop` as they
+stand now, not replayed from the Journal: a Cycle-time observation would
+almost always be empty. The box answers through `sbx ls`; the dashboard says
+microVM.
+_Avoid_: sandbox (the CLI's word), container, VM
 
 **Executed Path**:
 A path in this repository that a timer, or model output, runs with nobody

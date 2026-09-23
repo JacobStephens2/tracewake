@@ -1,7 +1,7 @@
 """The Host's live headroom: CPU, memory, and the disk this checkout lives on.
 
-The window calls `sample()`. Tests replace it. A failure raises SamplerError;
-the window degrades the widget and still draws the board.
+The dashboard calls `sample()`. Tests replace it. A failure raises SamplerError;
+the dashboard degrades the widget and still draws the board.
 
 CPU is a /proc/stat delta against the previous sample so a later request does
 not sleep; the first call takes a short second reading so the figure is still
@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# The checkout the window serves. Sampling `/` would report a disk this
+# The checkout the dashboard serves. Sampling `/` would report a disk this
 # checkout does not live on, on a machine with more than one filesystem.
 DISK_ROOT = Path(__file__).resolve().parents[1]
 

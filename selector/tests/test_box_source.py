@@ -9,6 +9,10 @@ check out the run branch, carry the target's repository token and guest template
 without emitting empty exports, invoke `run.sh --repo <repo> --task-ref <task-ref>
 --propose --notify`, and propagate the Run's stdout report and exit code.
 
+Both also take `reconcile <proposal-url-or-number> [--check <command>]`: the
+reconcile Run's way in, reaching `loop/reconcile.sh` with the Proposal and the
+Check instead of starting an ordinary Run.
+
 Local dispatch adds the credential inventory gate: `loop/assert-credentials.sh`
 is run as preflight, refusing dispatch and naming every violation if any
 forbidden credentials (or missing required credentials) are found on the box.
@@ -29,10 +33,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import dispatch  # noqa: E402
 import targets  # noqa: E402
+import watcher  # noqa: E402
 
 SSH_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "ssh.sh"
 LOCAL_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "local.sh"
 FACTS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "facts.sh"
+FACTS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "facts-local.sh"
+PROGRESS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "progress-local.sh"
+MICROVMS_SOURCE = Path(__file__).resolve().parents[1] / "box-sources" / "microvms.sh"
+MICROVMS_LOCAL = Path(__file__).resolve().parents[1] / "box-sources" / "microvms-local.sh"
 
 BOX_SOURCES = [SSH_SOURCE, LOCAL_SOURCE]
 
@@ -42,6 +51,13 @@ TARGET_ENV = {
     "LOOP_GITHUB_TOKEN_FILE": "/home/loop/.config/loop/gadgets-token",
     "LOOP_GUEST_TEMPLATE": "gadgets-python:1",
 }
+
+
+@dataclass
+class ReconciledProposal:
+    args: list[str]
+    report: str
+    exit_code: int
 
 
 @dataclass
@@ -70,6 +86,7 @@ class Runner:
         run_calls_file: Path,
         run_env_file: Path,
         assert_shim: Path,
+        reconcile_calls_file: Path,
     ) -> None:
         self.bin_dir = bin_dir
         self.loop_dir = loop_dir
@@ -80,6 +97,7 @@ class Runner:
         self.run_calls_file = run_calls_file
         self.run_env_file = run_env_file
         self.assert_shim = assert_shim
+        self.reconcile_calls_file = reconcile_calls_file
 
     def run(self, script: Path, *argv: str, **env: str) -> subprocess.CompletedProcess[str]:
         environ = dict(os.environ)
@@ -229,6 +247,18 @@ def box_runner(tmp_path: Path) -> Runner:
     )
     run_shim.chmod(0o755)
 
+    reconcile_calls_file = loop_dir / "reconcile.calls"
+    reconcile_shim = loop_dir / "reconcile.sh"
+    reconcile_shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{reconcile_calls_file}"\n'
+        'printf "token=%s\\nguest=%s\\n" "${LOOP_GITHUB_TOKEN_FILE-<unset>}" "${LOOP_GUEST_TEMPLATE-<unset>}" >> "'
+        f'{run_env_file}"\n'
+        'printf "LOOP_RECONCILE_BRANCH=loop/630-the-nightly-sync\\n"\n'
+        'exit "${RECONCILE_EXIT_CODE:-0}"\n'
+    )
+    reconcile_shim.chmod(0o755)
+
     return Runner(
         bin_dir=bin_dir,
         loop_dir=loop_dir,
@@ -239,6 +269,7 @@ def box_runner(tmp_path: Path) -> Runner:
         run_calls_file=run_calls_file,
         run_env_file=run_env_file,
         assert_shim=assert_shim,
+        reconcile_calls_file=reconcile_calls_file,
     )
 
 
@@ -251,11 +282,8 @@ def test_the_ssh_box_command_remains_in_the_tree_and_tested() -> None:
     assert SSH_SOURCE in BOX_SOURCES
 
 
-def test_the_product_default_box_command_is_local(monkeypatch) -> None:
-    """Single-Host is the product default. ssh.sh is the substitute an
-    instance opts into, not the fallback an unset instance gets."""
-    monkeypatch.delenv("SELECTOR_BOX_COMMAND", raising=False)
-    target = targets.Target(
+def _a_target() -> targets.Target:
+    return targets.Target(
         repo="acme/widgets",
         labels=targets.Labels(
             ready="ready-for-agent",
@@ -271,8 +299,42 @@ def test_the_product_default_box_command_is_local(monkeypatch) -> None:
         landing="propose",
         review_cap=20,
     )
-    config = dispatch.DispatchConfig.for_target(target)
+
+
+def test_the_product_default_box_command_is_local(monkeypatch) -> None:
+    """Single-Host is the product default. ssh.sh is the substitute an
+    instance opts into, not the fallback an unset instance gets."""
+    monkeypatch.delenv("SELECTOR_BOX_COMMAND", raising=False)
+    config = dispatch.DispatchConfig.for_target(_a_target())
     assert Path(config.box_command) == LOCAL_SOURCE
+
+
+def test_the_product_default_box_facts_command_is_local(monkeypatch) -> None:
+    """The box card's read has the same default as dispatch. HOST=local with
+    the ssh-based facts.sh is the `Could not resolve hostname local` the
+    window shows; facts-local.sh is what that combination is missing."""
+    monkeypatch.delenv("SELECTOR_BOX_FACTS_COMMAND", raising=False)
+    config = targets.Config.for_target(_a_target())
+    assert Path(config.box_facts_command) == FACTS_LOCAL
+
+
+def test_the_product_default_box_progress_command_is_local(monkeypatch) -> None:
+    """The watcher's read follows the same default: progress.sh SSHes to
+    SELECTOR_BOX_HOST, so an unset instance with HOST=local cannot watch."""
+    monkeypatch.delenv("SELECTOR_BOX_PROGRESS_COMMAND", raising=False)
+    config = watcher.WatchConfig.for_target(_a_target())
+    assert Path(config.progress_command) == PROGRESS_LOCAL
+
+
+def test_the_product_default_microvms_command_is_local(monkeypatch) -> None:
+    """The window's microVM list has the same default as the other box
+    reads. HOST=local with the ssh-based microvms.sh is hostname `local`."""
+    monkeypatch.delenv("SELECTOR_BOX_MICROVMS_COMMAND", raising=False)
+    import sys
+    web = Path(__file__).resolve().parents[2] / "web"
+    sys.path.insert(0, str(web))
+    import microvms
+    assert Path(microvms.DEFAULT_COMMAND) == MICROVMS_LOCAL
 
 
 @pytest.mark.parametrize("source", BOX_SOURCES)
@@ -408,6 +470,22 @@ def test_the_status_read_refuses_without_a_box(box_runner: Runner) -> None:
     assert "SELECTOR_BOX_HOST" in result.stderr
 
 
+def test_the_microvms_read_lists_over_ssh(box_runner: Runner) -> None:
+    result = box_runner.run(MICROVMS_SOURCE, **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    sent = box_runner.sent().replace("\\n", "\n")
+    assert "ls --json" in sent
+    assert "root@box.invalid" in box_runner.sent()
+
+
+def test_the_microvms_read_refuses_without_a_box(box_runner: Runner) -> None:
+    result = box_runner.run(MICROVMS_SOURCE, SELECTOR_BOX_HOST="")
+
+    assert result.returncode != 0
+    assert "SELECTOR_BOX_HOST" in result.stderr
+
+
 def test_each_export_is_its_own_line(box_runner: Runner) -> None:
     box_runner.run(SSH_SOURCE, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
 
@@ -498,6 +576,29 @@ def test_local_box_does_not_skip_credential_inventory(box_runner: Runner) -> Non
     assert result.returncode == 0, result.stderr
     dispatched = box_runner.dispatched(LOCAL_SOURCE)
     assert dispatched.assert_called, "credential inventory check was skipped"
+
+
+def test_local_box_tells_the_gate_which_agent_runs(box_runner: Runner) -> None:
+    """The gate's model row follows the instance's agent, not its default."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645",
+        **{**TARGET_ENV, "SELECTOR_BOX_AGENT": "grok"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    args = box_runner.dispatched(LOCAL_SOURCE).assert_args
+    assert "--agent" in args
+    assert args[args.index("--agent") + 1] == "grok"
+
+
+def test_local_box_gate_defaults_to_claude(box_runner: Runner) -> None:
+    """An instance naming no agent keeps the gate's historical default."""
+    result = box_runner.run(LOCAL_SOURCE, "loop/645-a-thing", "acme/gadgets#645", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    args = box_runner.dispatched(LOCAL_SOURCE).assert_args
+    assert "--agent" in args
+    assert args[args.index("--agent") + 1] == "claude"
 
 
 def test_production_credentials_cause_local_dispatch_refusal(tmp_path):
@@ -605,3 +706,77 @@ def test_local_box_drives_a_real_run_against_tmpdir(tmp_path):
         capture_output=True, text=True, check=True,
     ).stdout
     assert "WORK.txt" in pushed_tree
+
+
+# --- The reconcile verb (issue #34) ------------------------------------------
+#
+# Both sources also take `reconcile <proposal-url-or-number> [--check
+# <command>]`: the reconcile Run's way in. It reaches loop/reconcile.sh with
+# the Proposal and the Check, starts no ordinary Run, checks out no Run
+# branch, and - on local - passes the same credential gate.
+
+
+def test_local_reconcile_runs_reconcile_sh_with_proposal_and_check(
+    box_runner: Runner,
+) -> None:
+    """The reconcile verb invokes loop/reconcile.sh with the repo, the
+    Proposal and the owning issue's Check - and starts no ordinary Run."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "reconcile", "13", "--check", "make verify", **TARGET_ENV
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LOOP_RECONCILE_BRANCH=loop/630-the-nightly-sync" in result.stdout
+    calls = box_runner.reconcile_calls_file.read_text().splitlines()
+    args = shlex.split(calls[0])
+    assert args[args.index("--repo") + 1] == "/home/loop/gadgets"
+    assert args[args.index("--proposal") + 1] == "13"
+    check_at = args.index("--check") + 1
+    assert args[check_at:check_at + 2] == ["make", "verify"]
+    assert not box_runner.run_calls_file.exists()
+    dispatched = box_runner.dispatched(LOCAL_SOURCE)
+    assert dispatched.assert_called
+    assert dispatched.branch is None
+
+
+def test_local_reconcile_without_a_check_passes_none(
+    box_runner: Runner,
+) -> None:
+    result = box_runner.run(LOCAL_SOURCE, "reconcile", "13", **TARGET_ENV)
+
+    assert result.returncode == 0, result.stderr
+    calls = box_runner.reconcile_calls_file.read_text().splitlines()
+    assert "--check" not in shlex.split(calls[0])
+
+
+def test_local_reconcile_is_gated_on_the_credential_inventory(
+    box_runner: Runner,
+) -> None:
+    """A reconcile Run is a Run: the gate refuses it like any dispatch."""
+    result = box_runner.run(
+        LOCAL_SOURCE, "reconcile", "13",
+        ASSERT_CREDENTIALS_FAIL="MYSQL_PWD is set in the environment",
+        **TARGET_ENV,
+    )
+
+    assert result.returncode == 2
+    assert "credential inventory reported violations:" in result.stderr
+    assert not box_runner.reconcile_calls_file.exists()
+
+
+def test_ssh_reconcile_sends_reconcile_sh_without_checkout_or_run(
+    box_runner: Runner,
+) -> None:
+    """Across the hop the reconcile carries the Proposal and the Check to
+    loop/reconcile.sh - and fetches nothing, checks out nothing, runs no Run."""
+    result = box_runner.run(
+        SSH_SOURCE, "reconcile", "13", "--check", "make verify", **TARGET_ENV
+    )
+
+    assert result.returncode == 0, result.stderr
+    sent = box_runner.sent().replace("\\n", "\n")
+    assert "reconcile.sh" in sent
+    assert "--proposal" in sent
+    assert "--check" in sent
+    assert "checkout -B" not in sent
+    assert "run.sh" not in sent

@@ -55,6 +55,18 @@
 # that is checked out - which is what the offline suite drives, and why the flag
 # is opt-in rather than a default with a way to turn it off.
 #
+# Before either, the Run removes its own scaffolding - the Plan, the Progress
+# Log, and any kept-earlier log - in a Run-authored commit, so the branch tip is
+# merge-clean and nothing mergeable carries them (spec issue #78). Reviewers
+# read them from the branch's history instead; the proposal is pushed after.
+#
+# What the first Iteration was told, emitted on stdout at the end (#80): the
+# rendered briefing between LOOP_BRIEFING_BEGIN and LOOP_BRIEFING_END. Later
+# Iterations differ only in number, so this one rendering is the stored fact
+# the Selector journals. It carries no credentials - file paths, the checklist
+# naming the discipline skills, and the completion promise - which is what lets
+# the window show it to both roles with no redaction.
+#
 # With --notify, the Run then tells the operator it has finished (#110), because
 # the premise of the whole Contract is that he walked away and a Run he has to
 # find is a Run he had to poll for. It reports separately from the Run:
@@ -64,8 +76,8 @@
 # Nothing about it can change what the Run did. A notification that failed does
 # not move the exit code and is not written into the Progress Log - the Run is
 # the thing that happened, and telling somebody about it is not - which is also
-# why it is the last act of all, after the Progress Log has been committed and
-# pushed with the proposal.
+# why it is the last act of all, after the record has been committed, the
+# scaffolding removed, and the proposal pushed.
 
 set -euo pipefail
 
@@ -313,6 +325,13 @@ finish early.
 PROMPT
 }
 
+# The briefing Iteration 1 will receive, rendered once at Run start. Rendered
+# here rather than at the end so that what is emitted is what the Run started
+# with, even if the scripts changed under it; emitted at the end so that the
+# LOOP_RUN_* block stays the first thing on stdout. Later Iterations differ
+# only in number, so one rendering is the whole fact.
+run_briefing="$(prompt_for_iteration 1)"
+
 for ((iteration = 1; iteration <= LOOP_MAX_ITERATIONS; iteration++)); do
     elapsed=$(($(now) - run_started))
     remaining=$((LOOP_RUN_TIMEOUT_SECONDS - elapsed))
@@ -511,6 +530,52 @@ fi
 
 commit_bookkeeping "Loop: Run ended (${ended_by})"
 
+# --- What the proposal will say --------------------------------------------
+#
+# Captured here, while the scaffolding is still on the tip. The proposal runs
+# AFTER the cleanup below removes the Plan, so propose.sh cannot read the task
+# and the owning area out of it anymore - these values travel to it as
+# arguments instead. A Run started without --task-ref still names its task:
+# the Plan seed-run.sh wrote carries it.
+plan_task_line="$(loop_plan_field "${repo}/${LOOP_PLAN_PATH}" '## Task')"
+plan_task_line="${plan_task_line#\*\*}"
+plan_task_line="${plan_task_line%\*\*}"
+[[ -n ${task_ref} ]] || task_ref="${plan_task_line%% - *}"
+plan_task_title="${plan_task_line#* - }"
+plan_area="$(loop_plan_field "${repo}/${LOOP_PLAN_PATH}" '## The owning area this Run is scoped to')"
+plan_area="${plan_area#\*\*}"
+plan_area="${plan_area%\*\*}"
+
+# --- Merge-clean -----------------------------------------------------------
+#
+# The enforcement point the whole of spec issue #78 keys off: after the last
+# Iteration, the Run removes the Plan, the Progress Log, and any kept-earlier
+# log in a Run-authored commit, BEFORE the proposal is pushed. The branch tip is
+# always merge-clean - nothing mergeable carries the scaffolding - while the
+# branch's history still carries it readably, which is where reviewers read it.
+#
+# Unconditional rather than only with --propose: the tip is merge-clean whatever
+# ends the Run, and a Run that never proposes still leaves no scaffolding behind
+# for a later Seeding to trip over.
+#
+# Removed by path, never swept: an agent that left unrelated changes dirty in
+# the working tree keeps them dirty, exactly as commit_bookkeeping above keeps
+# them out of the Loop's own commits. And committed only when something was
+# staged: a Run whose scaffolding is already gone has nothing to say here.
+
+earlier_log="$(loop_earlier_log_path "${LOOP_PROGRESS_LOG_PATH}")"
+git -C "${repo}" rm --quiet --ignore-unmatch -- \
+    "${LOOP_PLAN_PATH}" "${LOOP_PROGRESS_LOG_PATH}" "${earlier_log}"
+removal_commit=""
+if ! git -C "${repo}" diff --cached --quiet; then
+    git -C "${repo}" commit --quiet --message \
+        "Loop: Remove the Run scaffolding so the branch tip is merge-clean"
+    # The commit the proposal names: the one that took the scaffolding off the
+    # tip. Set only when the cleanup committed - a Run whose scaffolding is
+    # already gone has no removal to point at.
+    removal_commit="$(git -C "${repo}" rev-parse HEAD)"
+fi
+
 # --- The proposal ----------------------------------------------------------
 #
 # The Run's only external effect, and the last thing it does. It runs on EVERY
@@ -522,13 +587,19 @@ commit_bookkeeping "Loop: Run ended (${ended_by})"
 # Its output is echoed rather than parsed. propose.sh already prints
 # LOOP_PROPOSE_* lines in the same machine-readable shape as this block, so
 # forwarding them puts the branch, the base and the pull request's URL on the
-# same stdout the ending bound is on.
+# same stdout the ending bound is on. The task, the area, the title and the
+# removal commit captured above travel as arguments, because the cleanup
+# removed the Plan propose.sh used to read them from.
 
 proposal="skipped"
 propose_output=""
 if ${propose}; then
     propose_args=(--repo "${repo}" --ended-by "${ended_by}" --exit "${exit_code}")
     [[ -n ${task_ref} ]] && propose_args+=(--task-ref "${task_ref}")
+    [[ -n ${plan_area} ]] && propose_args+=(--area "${plan_area}")
+    [[ -n ${plan_task_title} ]] && propose_args+=(--task-title "${plan_task_title}")
+    [[ -n ${removal_commit} ]] && propose_args+=(--removal-commit "${removal_commit}")
+    ${notify} && propose_args+=(--comment-follows)
 
     # Captured rather than left to stream, so that the LOOP_RUN_* block stays
     # the first thing on stdout. Stderr is not captured: a proposal that failed
@@ -546,25 +617,26 @@ if ${propose}; then
         # is the more useful fact, and LOOP_RUN_PROPOSAL below says the rest.
         ((exit_code != 0)) || exit_code=6
 
-        # The block above was written and committed BEFORE the proposal ran,
+        # The Run-ended record was written and committed BEFORE the proposal ran,
         # because the proposal pushes it and a pull request has to contain the
-        # record of the Run that produced it. So on this path the log now holds
-        # an exit code that is out of date, and the log is the artifact the Run
-        # tells a reviewer to read first. Correct it here rather than leave the
-        # two disagreeing in exactly the case the log exists for.
+        # record of the Run that produced it. So on this path history holds an
+        # exit code that is out of date. Correct it here rather than leave the
+        # two disagreeing in exactly the case the record exists for.
+        #
+        # As an empty commit rather than appended to the Progress Log: the
+        # scaffolding is gone from the tip by now, and reviving the file for one
+        # paragraph would put a Progress Log back on the branch the cleanup just
+        # took it off. The tip stays merge-clean; the correction travels in
+        # history like everything else the Run did.
         #
         # Only on failure, and not pushed again: when a proposal fails there is
         # no pull request to keep in sync - either nothing was pushed at all, or
         # the branch is up with nothing open on it. Re-running propose.sh by
         # hand, which is what that second case is for, carries this commit up
         # with it.
-        {
-            printf '\n### Proposal failed %s\n\n' "$(stamp)"
-            printf -- '- The exit code recorded above was written before the proposal ran.\n'
-            printf -- '- Ending bound: %s\n' "${ended_by}"
-            printf -- '- Exit code: %d\n\n' "${exit_code}"
-        } >>"${progress_log}"
-        commit_bookkeeping "Loop: the proposal failed (${ended_by})"
+        git -C "${repo}" commit --quiet --allow-empty \
+            --message "Loop: the proposal failed (${ended_by})" \
+            --message "The exit code in the Run-ended record was written before the proposal ran. Ending bound: ${ended_by}. Exit code: ${exit_code}."
     fi
 fi
 
@@ -576,10 +648,10 @@ fi
 #
 # It cannot: the exit code is already decided above and is not touched here, and
 # nothing below writes to the Progress Log. That is deliberate rather than
-# incidental. The log has been committed and pushed with the proposal, so a
-# commit made now would leave the branch on GitHub disagreeing with the checkout
-# on the box - and a Run's record is the Run, while whether somebody was told
-# about it is not part of what happened.
+# incidental. The record has been committed, the scaffolding removed, and the
+# tip pushed with the proposal, so a commit made now would leave the branch on
+# GitHub disagreeing with the checkout on the box - and a Run's record is the
+# Run, while whether somebody was told about it is not part of what happened.
 #
 # The surface is one substitutable command (ADR 0004). The one shipped comments
 # on the proposal, which is why --notify needs --propose: the boundary's egress
@@ -605,15 +677,21 @@ if ${notify}; then
         printf 'run.sh: the proposal produced no URL, so there is nothing to comment on.\n' >&2
     else
         notify_body="$(mktemp)"
+        # The Run's comment on its own proposal carries the same record the
+        # proposal body carries: the task, the owning area, the bound that
+        # ended the Run, and the removal commit - and it points at history,
+        # never at a file the cleanup removed from the tip.
         {
             [[ -n ${task_ref} ]] && printf -- '- Task: %s\n' "${task_ref}"
+            [[ -n ${plan_area} ]] && printf -- '- Owning area this Run was scoped to: %s\n' "${plan_area}"
             printf -- '- Ended by: %s\n' "${ended_by}"
             printf -- '- Exit code: %d\n' "${exit_code}"
             iteration_counts_line
             printf -- '- Faults: %s\n' "${fault_summary}"
+            [[ -n ${removal_commit} ]] && printf -- '- Run scaffolding removed in: %s\n' "${removal_commit}"
             printf -- '- Proposal: %s\n' "${proposal_url}"
-            printf '\nNothing is merged, deployed or applied. Read %s on this branch first.\n' \
-                "${LOOP_PROGRESS_LOG_PATH}"
+            printf "\nNothing is merged, deployed or applied. The Plan and the Progress Log as the Run left them are in the \`Loop: Run ended (%s)\` commit in this branch's history - the tip carries no Run scaffolding.\n" \
+                "${ended_by}"
         } >"${notify_body}"
 
         # Bounded, like every other thing this script waits on. The Run has
@@ -647,5 +725,11 @@ printf 'LOOP_RUN_FAULTS=%s\n' "${fault_summary}"
 printf 'LOOP_RUN_PROPOSAL=%s\n' "${proposal}"
 printf 'LOOP_RUN_NOTIFIED=%s\n' "${notified}"
 [[ -n ${propose_output} ]] && printf '%s\n' "${propose_output}"
+
+# Last, so the LOOP_RUN_* block above stays the first thing on stdout: the
+# briefing rendered at Run start, which the Selector journals (#80).
+printf 'LOOP_BRIEFING_BEGIN\n'
+printf '%s\n' "${run_briefing}"
+printf 'LOOP_BRIEFING_END\n'
 
 exit "${exit_code}"

@@ -1,5 +1,12 @@
 # {{ ansible_managed }}
+{% if tracewake_tls | default(true) | bool %}
 {{ tracewake_hostname }} {
+{% else %}
+{
+    auto_https off
+}
+:80 {
+{% endif %}
     reverse_proxy 127.0.0.1:{{ tracewake_web_port }} {
         header_up X-Forwarded-Proto {scheme}
         flush_interval -1

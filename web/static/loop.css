@@ -111,9 +111,63 @@ form.sign-out button {
 .host > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
 .host .strip { margin: 0; }
 
-/* The page's only control (#161). Paused is a page-wide operating state, so
-   its banner sits above the strip rather than pretending to be one status
-   cell among four. */
+/* MicroVMs (#97): the same strip-of-cells as the Host, naming each
+   Execution Boundary instance the box is holding. Distinct from the box
+   card (what the box IS) and from runs-in-flight (what the Journal has). */
+.microvms { margin: 1.5rem 0; }
+.microvms h2 { margin-bottom: 0.25rem; }
+.microvms > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
+.microvms .strip { margin: 0; }
+.microvms .detail { color: var(--secondary-color); }
+
+/* The Targets this instance reads issues from. Configuration, not a
+   Journal replay: the list is the stanzas in file order. */
+.targets { margin: 1.5rem 0; }
+.targets h2 { margin-bottom: 0.25rem; }
+.targets > p { color: var(--secondary-color); margin: 0 0 0.5rem; }
+.targets ul {
+  padding-left: 0;
+  list-style: none;
+  margin: 0;
+}
+.targets li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+}
+.targets li .btn { flex: 0 0 auto; }
+.targets .detail { color: var(--secondary-color); }
+.targets .alarm { color: var(--error-color); }
+.targets form.target-add {
+  margin-top: 1rem;
+  max-width: 36rem;
+}
+.targets form.target-add p { margin: 0 0 0.6rem; }
+.targets form.target-add label {
+  display: block;
+  color: var(--secondary-color);
+  font-size: 0.85em;
+}
+.targets form.target-add input { width: 100%; }
+.targets form.target-add details.target-add-more {
+  margin: 0 0 0.6rem;
+}
+.targets form.target-add details.target-add-more > summary {
+  cursor: pointer;
+  color: var(--secondary-color);
+  font-size: 0.85em;
+}
+.targets form.target-add details.target-add-more > summary::before {
+  content: "[+] ";
+}
+.targets form.target-add details.target-add-more[open] > summary::before {
+  content: "[-] ";
+}
+
+/* Pause (#161) is a page-wide operating state, so its banner sits above
+   the strip rather than pretending to be one status cell among four. */
 .pause-control {
   display: flex;
   justify-content: flex-end;
@@ -257,7 +311,7 @@ form.sign-out button {
    an overview with the long sections shut. The default marker is replaced
    with one the terminal identity would draw, and the heading stays a heading
    - the <summary> wraps it rather than replacing it. State is kept per
-   section in localStorage by loop-ui.js, because the live region is
+   section in a cookie loop-ui.js writes, because the live region is
    re-rendered whole on every Journal row (#159) and a fold that reopened on
    each swap would not be a fold. */
 details.fold > summary {
@@ -272,6 +326,92 @@ details.fold > summary::before {
   margin-right: 0.5rem;
 }
 details.fold:not([open]) > summary::before { content: "[+]"; }
+
+/* The Dashboard Account's headed-section order on `/` (#147). A control,
+   not a headed panel: closed until someone is rearranging. */
+.section-order {
+  margin: 1rem 0 1.5rem;
+}
+.section-order > summary {
+  cursor: pointer;
+  color: var(--secondary-color);
+}
+.section-order ol {
+  padding-left: 1.5rem;
+}
+.section-order li {
+  padding: 0.25rem 0;
+}
+.section-order .section-move {
+  display: inline;
+  margin-left: 0.5rem;
+}
+
+/* Accounts, decisions, and auth pages (#84). The window's second shell is
+   gone, so these pages wear the terminal identity too. terminal.css already
+   owns the forms, tables, and prompt blocks; what is left here is what those
+   pages add: the account and ADR lists, and the status words on them.
+
+   Those words stay neutral grey on purpose. The route badges on the Run
+   cards carry the meaning the operator acts on - green is the only one that
+   means "nothing to do but review" - so nothing else on any page borrows
+   those colours. An account's role and an ADR's status are read as words,
+   not glanced as colours. */
+.account-list,
+.adr-list {
+  padding-left: 0;
+}
+
+.account-list .account {
+  padding: 0.5rem 0;
+  border-bottom: 1px dashed var(--secondary-color);
+}
+
+.account-list .account:last-child {
+  border-bottom: none;
+}
+
+.account-list .account-email {
+  font-weight: 700;
+}
+
+.account-list .account-role,
+.account-list .account-deactivate {
+  display: inline;
+  margin-left: 0.75rem;
+}
+
+.account .badge,
+.adr-list .badge,
+.adr .badge {
+  font-size: 0.8em;
+  border: 1px solid var(--secondary-color);
+  color: var(--secondary-color);
+  padding: 0 0.4em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.adr-num {
+  color: var(--secondary-color);
+}
+
+.adr-list .adr-num {
+  margin-right: 0.6rem;
+}
+
+/* terminal.css styles text inputs and textareas but not selects; the
+   accounts page has one (the role picker), and an unstyled control beside
+   styled ones reads as broken rather than as native. */
+.account select {
+  border: 1px solid var(--font-color);
+  border-radius: 0;
+  background-color: var(--background-color);
+  color: var(--font-color);
+  font-family: var(--font-stack);
+  font-size: 1em;
+  padding: 0.5em;
+}
 
 /* The theme control: one button, clicked through system / light / dark.
    The dark palette below only lands when it, or the OS, asks for it. */

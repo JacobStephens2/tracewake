@@ -52,6 +52,19 @@ def test_home_renders_queue_board():
     assert "Selector Journal" in resp.text
 
 
+def test_home_page_title_is_tracewake():
+    """The tab names the product. 'The Loop' is one half of it (CONTEXT.md)."""
+    assert "<title>Tracewake</title>" in client.get("/").text
+
+
+def test_home_header_is_tracewake():
+    """The header names the product, matching the tab. 'The Loop' is one
+    half of it (CONTEXT.md)."""
+    body = client.get("/").text
+    assert '<div class="logo">TRACEWAKE</div>' in body
+    assert "THE LOOP // SELECTOR JOURNAL" not in body
+
+
 def test_clicking_pause_raises_the_banner_and_resume_clears_it(db):
     token = csrf_from(client.get("/").text)
     paused = client.post(
@@ -313,6 +326,49 @@ def test_a_dispatch_that_started_no_run_says_so(db):
     body = client.get("/").text
     assert "no Run was started" in body
     assert "ssh: no route to host" in body
+
+
+def test_a_run_card_names_the_target_it_was_dispatched_on(db):
+    """A card that only named the issue would not tell two Targets apart:
+    the same number can exist on both, and the title does not carry the
+    repository. `task_ref` is the Target's `repo` plus the issue."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(conn, "cycle.started", {"dry_run": False})
+        _dispatch_row(
+            conn, cycle,
+            issue=80,
+            title="Enroll and contract-test Grok Build",
+            url="https://example.invalid/voice-agent/80",
+            branch="loop/80-enroll-and-contract-test-grok-build",
+            task_ref="acme/voice-agent#80",
+            area="Enroll and contract-test Grok Build",
+        )
+        journal.append(
+            conn, "run.outcome",
+            {"cycle": cycle, "issue": 80, "attempt": 1,
+             "outcome": "dispatch-failed",
+             "error": "Seeding refused #80: no git identity"},
+        )
+    # The Runs section, not the raw event table: the payload dump always
+    # contains `task_ref`, which would pass this for a card that rendered
+    # nothing at all.
+    runs = client.get("/").text.split("<h2>Runs</h2>", 1)[1]
+    runs = runs.split("<h2>Cycles</h2>", 1)[0]
+    assert "acme/voice-agent" in runs
+    assert "#80" in runs
+
+
+def test_a_run_card_falls_back_to_the_cycle_target_when_task_ref_is_absent(db):
+    """A thin dispatch row still names the Target the cycle started on."""
+    with journal.connect(db) as conn:
+        cycle = journal.append(
+            conn, "cycle.started",
+            {"repo": "acme/voice-agent", "dry_run": False},
+        )
+        _dispatch_row(conn, cycle, issue=80, task_ref=None)
+    runs = client.get("/").text.split("<h2>Runs</h2>", 1)[1]
+    runs = runs.split("<h2>Cycles</h2>", 1)[0]
+    assert "acme/voice-agent" in runs
 
 
 def test_a_returned_issue_is_marked_on_the_skip_that_returned_it(db):

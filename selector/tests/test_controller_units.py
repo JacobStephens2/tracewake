@@ -209,6 +209,36 @@ OnFailure=notify-unit-failure@%n.service
         assert bad_val == "", f"Expected systemd to ignore OnFailure in [Service], got {bad_val!r}"
 
 
+def test_window_unit_can_rewrite_the_targets_file():
+    """Remove on `/` rewrites the instance's targets file.
+
+    ProtectSystem=full mounts /etc read-only, which is where INSTALL.md
+    puts that file. ReadWritePaths has to punch a hole for the directory
+    the env file lives in - templated, not a hardcoded instance path.
+    """
+    content = (SYSTEMD_DIR / "tracewake-web.service").read_text()
+    assert "ProtectSystem=full" in content
+    assert re.search(
+        r"^ReadWritePaths=\{\{\s*tracewake_env_file\s*\|\s*dirname\s*\}\}\s*$",
+        content,
+        re.M,
+    ), content
+
+
+def test_window_unit_allows_the_timer_sudo():
+    """The Start/Stop buttons run `sudo -n systemctl`. systemd's
+    NoNewPrivileges flag makes sudo refuse before sudoers is consulted,
+    with a message about containers. The window unit must not set it.
+
+    Staging keeps the flag: that process is not the live toggle.
+    """
+    content = (SYSTEMD_DIR / "tracewake-web.service").read_text()
+    assert "NoNewPrivileges=true" not in content, (
+        "tracewake-web.service must not set NoNewPrivileges=true; "
+        "the timer toggle cannot sudo through that flag"
+    )
+
+
 def test_cycle_unit_has_infinite_start_timeout():
     """Acceptance criterion 7 for issue #8:
     The unit no longer bounds a drain by its start timeout, while the

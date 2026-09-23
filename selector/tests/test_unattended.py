@@ -1,5 +1,14 @@
 """Unattended operation at the cycle's boundary (issue #156).
 
+Cycle drain decisions are in-process. This file still forks because the
+advisory lock, the per-Target fan-out, box-facts and proposal freshness are
+the entry point or production doing (ADR 0004), not Cycle decisions.
+
+Two of the forked Cycle wiring tests live here: the advisory-lock stand-down
+(`test_a_second_cycle_refuses_while_the_first_is_still_running`) and K>1
+across two Targets
+(`test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2`).
+
 Three properties a timer-driven Selector needs that a hand-run one did not,
 each asserted from outside the cycle - the commands it issued and the rows it
 wrote, never its internals:
@@ -18,10 +27,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import psycopg
-
-import events as journal_events
-import journal
 from conftest import BOX_FACTS, CYCLE, events, issue, last, one
 
 
@@ -41,7 +46,9 @@ def _nested_cycle(tmp_path, *args):
 
 
 def test_a_second_cycle_refuses_while_the_first_is_still_running(db, box, tmp_path):
-    """The timer's next firing lands in the middle of a Run. It must not
+    """Forked Cycle wiring: the advisory-lock stand-down.
+
+    The timer's next firing lands in the middle of a Run. It must not
     reason about a queue the cycle holding the process is already acting on."""
     result = box.run(
         db, [issue(645)], NESTED_CYCLE=str(_nested_cycle(tmp_path))
@@ -59,7 +66,9 @@ def test_a_second_cycle_refuses_while_the_first_is_still_running(db, box, tmp_pa
 
 
 def test_a_refused_cycle_starts_nothing_it_cannot_finish(db, box, tmp_path):
-    """It journals that it stood down and nothing else: a `cycle.started` from
+    """Still forks: the entry point's lock, not a Cycle decision.
+
+    It journals that it stood down and nothing else: a `cycle.started` from
     a cycle that never reasoned would put a card on /loop for a cycle that
     never happened."""
     box.run(db, [issue(645)], NESTED_CYCLE=str(_nested_cycle(tmp_path)))
@@ -70,7 +79,9 @@ def test_a_refused_cycle_starts_nothing_it_cannot_finish(db, box, tmp_path):
 
 
 def test_a_dry_run_is_refused_by_a_running_cycle_too(db, box, tmp_path):
-    """A dry run writes to the Journal and reads the spend a live cycle is in
+    """Still forks: the entry point's lock covers dry-run too.
+
+    A dry run writes to the Journal and reads the spend a live cycle is in
     the middle of changing, so it queues behind one like any other."""
     box.run(
         db, [issue(645)],
@@ -81,64 +92,18 @@ def test_a_dry_run_is_refused_by_a_running_cycle_too(db, box, tmp_path):
 
 
 def test_the_lock_is_released_when_the_cycle_ends(db, box, tmp_path):
-    """Two cycles one after the other are two cycles, not one and a refusal."""
+    """Still forks: the entry point's lock lifetime, not a Cycle decision.
+
+    Two cycles one after the other are two cycles, not one and a refusal."""
     box.run(db, [issue(645)])
     box.run(db, [issue(645)], dry_run=True)
     assert events(db, "cycle.skipped") == []
     assert len(events(db, "cycle.started")) == 2
 
 
-# --- The review cap, across cycles -------------------------------------------
-
-
-def test_a_paused_cycle_dispatches_nothing_and_journals_why(db, box):
-    """The flag stops the next Run, but not the cycle's explanation of what
-    it found. The timer keeps running while paused, so the Journal must say
-    why an otherwise Eligible issue stayed put."""
-    with psycopg.connect(db, autocommit=True) as conn:
-        conn.execute("UPDATE selector.control SET paused = true")
-
-    result = box.run(db, [issue(645)])
-
-    assert result.returncode == 0, result.stderr
-    assert events(db, "run.dispatched") == []
-    assert "seed " not in box.commands()
-    assert "box " not in box.commands()
-    finished = last(db, "cycle.finished")
-    assert finished["halted"] == "paused"
-    assert finished["eligible"] == [645]
-
-
-def test_resuming_allows_the_next_cycle_to_dispatch_again(db, box):
-    with psycopg.connect(db, autocommit=True) as conn:
-        conn.execute("UPDATE selector.control SET paused = true")
-    box.run(db, [issue(645)])
-
-    with psycopg.connect(db, autocommit=True) as conn:
-        conn.execute("UPDATE selector.control SET paused = false")
-    result = box.run(db, [issue(645)])
-
-    assert result.returncode == 0, result.stderr
-    assert len(events(db, "run.dispatched")) == 1
-    assert "box loop/645-the-nightly-sync-script" in box.commands()
-
-
-def test_dispatch_is_refused_and_journaled_when_review_cap_is_reached(db, box):
-    """The review cap stops dispatch before the box is reached, and journals
-    the reason and the count read."""
-    review_issues = [issue(600 + i) for i in range(20)]
-    result = box.run(db, [issue(645)], review_issues=review_issues)
-    assert result.returncode == 0, result.stderr
-    assert len(events(db, "run.dispatched")) == 0, "a Run was started"
-    assert "box " not in box.commands()
-    finished = last(db, "cycle.finished")
-    assert finished["halted"] == "review-cap-reached"
-    assert finished["awaiting_review"] == 20
-    assert finished["review_cap"] == 20
-    assert finished["eligible"] == [645]
-
-
 # --- The box card's facts ---------------------------------------------------
+#
+# Still forks: production doing (ADR 0004) observes the box.
 
 
 def test_the_box_facts_are_read_and_journaled(db, box):
@@ -202,7 +167,9 @@ def test_a_box_that_cannot_be_read_is_journaled_and_does_not_fail_the_cycle(db, 
 
 
 def test_a_dry_run_does_not_reach_the_box(db, fakes):
-    """`ssh` is on the tripwire PATH, so a dry run that read the box would be
+    """Still forks: `--dry-run` through the entry point must not reach the box.
+
+    `ssh` is on the tripwire PATH, so a dry run that read the box would be
     caught by it. A dry run reaches the tracker and nothing else.
 
     Both outcomes of the read are asserted absent, not just the successful
@@ -211,7 +178,7 @@ def test_a_dry_run_does_not_reach_the_box(db, fakes):
     pass for a dry run that reached the box and was refused - which is the
     property broken, not preserved. The same holds for the guardrail.
     """
-    result = fakes.run(db, [issue(645)])
+    result = fakes.run(db, [issue(645)], dry_run=True)
     assert result.returncode == 0, result.stderr
     assert fakes.tripped() == ""
     assert events(db, "box.observed") == []
@@ -221,46 +188,17 @@ def test_a_dry_run_does_not_reach_the_box(db, fakes):
 
 
 # --- A Cycle drains the queue (issue #8) ------------------------------------
-
-
-def test_one_cycle_dispatches_several_runs_serially(db, box):
-    """Criterion 1: One Cycle dispatches several Runs serially, routing each
-    before picking the next, and the Journal shows them under one cycle.
-    Criterion 5: One cycle summary per drain names every dispatch and the
-    reason it stopped."""
-    result = box.run(db, [issue(640), issue(645)])
-    assert result.returncode == 0, result.stderr
-
-    # Exactly one cycle
-    assert len(events(db, "cycle.started")) == 1
-    assert len(events(db, "cycle.finished")) == 1
-
-    # Dispatched both issues serially
-    dispatched_issues = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
-    assert dispatched_issues == [640, 645]
-
-    # Both picked and routed
-    picked_numbers = [e["payload"]["number"] for e in events(db, "cycle.picked")]
-    assert picked_numbers == [640, 645]
-    assert len(events(db, "issue.awaiting-review")) == 2
-
-    # Finished summary
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640, 645]
-    assert finished["picked"] == 640
-    assert finished["halted"] == "queue-empty"
-
-    # All events belong to the same cycle id
-    cycle_id = one(db, "cycle.finished")["cycle"]
-    for e in events(db):
-        if "cycle" in e["payload"] and e["payload"]["cycle"] is not None:
-            assert e["payload"]["cycle"] == cycle_id, (
-                f"event {e['kind']} has cycle {e['payload']['cycle']}, expected {cycle_id}"
-            )
+#
+# Multi-pass drain, considered vs eligible, slot ordering, and K>1 slot
+# waits live in tests/test_drain_slots.py. What remains here still forks:
+# production doing (box facts, pause between live Runs) and the entry-point
+# fan-out.
 
 
 def test_the_box_facts_are_read_before_each_dispatch_and_guardrail_once_per_cycle(db, box):
-    """The box's facts are read before each dispatch, and the Guardrail is
+    """Still forks: production doing observes the box and Guardrail (ADR 0004).
+
+    The box's facts are read before each dispatch, and the Guardrail is
     journaled once per Cycle (#14 AC 4)."""
     result = box.run(db, [issue(640), issue(645)])
     assert result.returncode == 0, result.stderr
@@ -278,7 +216,10 @@ def test_the_box_facts_are_read_before_each_dispatch_and_guardrail_once_per_cycl
 
 
 def test_pause_is_honoured_between_runs_and_does_not_cancel_run_in_flight(db, box, tmp_path):
-    """Criterion 3: Pause is honoured before each pick and never cancels a Run
+    """Still forks: pause between live Runs is production doing holding the
+    process, not a Cycle decision tested in-process.
+
+    Criterion 3: Pause is honoured before each pick and never cancels a Run
     already in flight."""
     pause_script = tmp_path / "pause-mid-run.sh"
     pause_script.write_text(
@@ -301,44 +242,9 @@ def test_pause_is_honoured_between_runs_and_does_not_cancel_run_in_flight(db, bo
     assert finished["eligible"] == [645]
 
 
-def test_cycle_ends_when_review_cap_is_reached_during_drain(db, box):
-    """Criterion 2: A Cycle ends when a cap holds."""
-    result = box.run(
-        db,
-        [issue(640), issue(645)],
-        review_issues=[issue(630)],
-        targets=[{"review_cap": 2}],
-    )
-    assert result.returncode == 0, result.stderr
-
-    dispatches = [e["payload"]["issue"] for e in events(db, "run.dispatched")]
-    assert dispatches == [640]
-
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640]
-    assert finished["halted"] == "review-cap-reached"
-    assert finished["awaiting_review"] == 2
-    assert finished["review_cap"] == 2
-    assert finished["eligible"] == [645]
-
-
-def test_cycle_ends_when_nothing_eligible_during_drain(db, box):
-    """Criterion 2: A Cycle ends when nothing is Eligible."""
-    result = box.run(db, [issue(640), issue(645, blockedBy=1)])
-    assert result.returncode == 0, result.stderr
-
-    # 640 was dispatched
-    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [640]
-    assert len(events(db, "issue.awaiting-review")) == 1
-
-    # 645 is blocked, so nothing is eligible
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640]
-    assert finished["halted"] == "none-eligible"
-    assert finished["eligible"] == []
-
-
 # --- Proposal freshness during drains (Issue #10) ---------------------------
+#
+# Still forks: production doing (ADR 0004) keeps Proposals current.
 
 def test_open_proposals_behind_base_and_mergeable_are_updated_during_drain(db, box):
     """AC 1: Each open Proposal that is behind its base and mergeable is updated
@@ -492,40 +398,10 @@ def _run_kinds(dsn):
     ]
 
 
-def test_a_leftover_in_flight_on_one_target_does_not_block_another(db, box):
-    """K>1: a leftover Run on widgets does not halt gadgets; widgets itself
-    still refuses a second Dispatch."""
-    gadgets_work = box.extra_work("work-gadgets")
-    with journal.connect(db) as conn:
-        journal.append(
-            conn,
-            *journal_events.run_dispatched(
-                cycle=None, issue=639, title=None, url=None,
-                task_ref="acme/widgets#639", attempt=1, branch=None,
-                area=None, check=None, kept_progress=None,
-            ),
-        )
-    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
-    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
-
-    result = box.run(
-        db, [],
-        targets=[{}, _gadget_target(gadgets_work)],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.2",
-    )
-    assert result.returncode == 0, result.stderr
-    assert sorted(
-        e["payload"]["issue"] for e in events(db, "run.dispatched")
-    ) == [639, 700]
-    assert any(
-        row["payload"]["halted"] == "run-in-flight"
-        for row in events(db, "cycle.finished")
-    )
-
-
 def test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2(db, box):
-    """K=2, two Targets, one Eligible each: both Runs are in flight at once,
+    """Forked Cycle wiring: K>1 across two Targets.
+
+    K=2, two Targets, one Eligible each: both Runs are in flight at once,
     and the Journal's account proves the overlap."""
     gadgets_work = box.extra_work("work-gadgets")
     box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
@@ -548,31 +424,16 @@ def test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2(db, box):
     assert _run_kinds(db)[:2] == ["run.dispatched", "run.dispatched"]
     for row in events(db, "cycle.finished"):
         assert row["payload"]["dispatches"] in ([640], [700])
-        assert row["payload"]["halted"] == "queue-empty"
-
-
-def test_two_eligible_tasks_on_one_target_never_overlap_at_any_k(db, box):
-    """Within a Target the drain stays serial, even when K would allow more."""
-    result = box.run(
-        db, [issue(640), issue(645)],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.3",
-    )
-    assert result.returncode == 0, result.stderr
-    assert [e["payload"]["issue"] for e in events(db, "run.dispatched")] == [
-        640, 645,
-    ]
-    assert _run_kinds(db) == [
-        "run.dispatched", "run.outcome",
-        "run.dispatched", "run.outcome",
-    ]
-    finished = last(db, "cycle.finished")
-    assert finished["dispatches"] == [640, 645]
-    assert finished["halted"] == "queue-empty"
+        # The canned queue still lists the dispatched issue, so the next
+        # pass is none-eligible; a tracker that dropped it would be
+        # queue-empty. Either way this Target's one Dispatch is done.
+        assert row["payload"]["halted"] in ("queue-empty", "none-eligible")
 
 
 def test_k_unset_keeps_the_serial_drain_across_targets(db, box):
-    """K unset defaults to 1: two Targets still drain one after the other,
+    """Still forks: the entry point's default K, not a Cycle decision.
+
+    K unset defaults to 1: two Targets still drain one after the other,
     and each still has its own cycle.started / cycle.finished pair."""
     gadgets_work = box.extra_work("work-gadgets")
     box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
@@ -598,86 +459,4 @@ def test_k_unset_keeps_the_serial_drain_across_targets(db, box):
     assert [row["payload"]["dispatches"] for row in finished] == [
         [640], [700],
     ]
-
-
-def test_a_third_target_waits_when_k_is_2(db, box):
-    """K caps live Dispatches, not Targets: a third Target waits for a slot."""
-    gadgets_work = box.extra_work("work-gadgets")
-    sprockets_work = box.extra_work("work-sprockets")
-    box.queue_for("acme/widgets", "ready-for-agent", [issue(640)])
-    box.queue_for("acme/gadgets", "ready-for-agent", [issue(700)])
-    box.queue_for("acme/sprockets", "ready-for-agent", [issue(800)])
-
-    result = box.run(
-        db, [],
-        targets=[
-            {},
-            _gadget_target(gadgets_work),
-            {
-                "repo": "acme/sprockets",
-                "work_repo": str(sprockets_work),
-                "box_repo": "/nonexistent/box-sprockets",
-                "token_file": "/nonexistent/token-sprockets",
-                "guest_template": "sprockets-guest:1",
-            },
-        ],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.4",
-    )
-    assert result.returncode == 0, result.stderr
-    assert sorted(
-        e["payload"]["issue"] for e in events(db, "run.dispatched")
-    ) == [640, 700, 800]
-    kinds = _run_kinds(db)
-    first_outcome = kinds.index("run.outcome")
-    assert kinds[:first_outcome].count("run.dispatched") == 2
-
-
-def test_pause_mid_parallel_drain_completes_in_flight_and_picks_nothing_more(
-    db, box, tmp_path,
-):
-    """Pause mid-drain: no new picks; in-flight Runs complete and Route."""
-    gadgets_work = box.extra_work("work-gadgets")
-    box.queue_for(
-        "acme/widgets", "ready-for-agent", [issue(640), issue(641)],
-    )
-    box.queue_for(
-        "acme/gadgets", "ready-for-agent", [issue(700), issue(701)],
-    )
-    pause_script = tmp_path / "pause-when-two-dispatched.sh"
-    pause_script.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        f"dsn={db!r}\n"
-        "for _ in $(seq 1 80); do\n"
-        "  n=$(psql \"$dsn\" -tAc "
-        "\"select count(*) from journal.events where kind = 'run.dispatched'\")\n"
-        "  if [[ ${n} -ge 2 ]]; then\n"
-        "    psql \"$dsn\" -c 'UPDATE selector.control SET paused = true'\n"
-        "    exit 0\n"
-        "  fi\n"
-        "  sleep 0.05\n"
-        "done\n"
-        "exit 1\n"
-    )
-    pause_script.chmod(0o755)
-
-    result = box.run(
-        db, [],
-        targets=[{}, _gadget_target(gadgets_work)],
-        SELECTOR_DRAIN_CONCURRENCY="2",
-        BOX_SLEEP="0.4",
-        NESTED_CYCLE=str(pause_script),
-    )
-    assert result.returncode == 0, result.stderr
-
-    dispatched = sorted(
-        e["payload"]["issue"] for e in events(db, "run.dispatched")
-    )
-    assert dispatched == [640, 700]
-    assert len(events(db, "issue.awaiting-review")) == 2
-    assert len(events(db, "run.outcome")) == 2
-    for row in events(db, "cycle.finished"):
-        assert row["payload"]["halted"] == "paused"
-        assert row["payload"]["dispatches"] in ([640], [700])
 

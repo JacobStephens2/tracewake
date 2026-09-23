@@ -332,7 +332,7 @@ class WatchConfig:
             command_env=target.environ(),
             progress_command=env(
                 "SELECTOR_BOX_PROGRESS_COMMAND",
-                str(HERE / "box-sources" / "progress.sh"),
+                str(HERE / "box-sources" / "progress-local.sh"),
             ),
             # A minute. The acceptance criterion is that an Iteration record
             # appears within about two minutes of the box writing it, and an

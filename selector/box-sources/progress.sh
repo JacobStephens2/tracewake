@@ -4,8 +4,9 @@
 #
 #   progress.sh <branch>
 #
-# The default SELECTOR_BOX_PROGRESS_COMMAND. Prints the box checkout's
-# Progress Log on stdout and exits 0 when it could be read.
+# The remote-Box SELECTOR_BOX_PROGRESS_COMMAND. An instance substitutes this
+# for progress-local.sh. Prints the box checkout's Progress Log on stdout
+# and exits 0 when it could be read.
 #
 # This is the one thing a Run makes visible while it is happening. run.sh
 # persists nothing and prints its summary only when it ends, but every

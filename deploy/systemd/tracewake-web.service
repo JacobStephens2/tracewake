@@ -1,12 +1,12 @@
 [Unit]
-Description=Tracewake's window — FastAPI + Jinja2 + HTMX
+Description=Tracewake's dashboard — FastAPI + Jinja2 + HTMX
 After=network.target postgresql.service
 
 [Service]
 User={{ tracewake_user }}
 Group={{ tracewake_group }}
 WorkingDirectory={{ tracewake_dir }}/web
-ExecStart={{ tracewake_dir }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port {{ tracewake_web_port }}
+ExecStart={{ tracewake_dir }}/web/.venv/bin/uvicorn app:app --host 127.0.0.1 --port {{ tracewake_web_port }}{% if tracewake_web_reload | default(false) | bool %} --reload{% endif %}
 
 EnvironmentFile=-{{ tracewake_env_file }}
 {% for env in tracewake_extra_env_files %}
@@ -16,10 +16,23 @@ Environment=PATH={{ tracewake_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/b
 
 Restart=on-failure
 RestartSec=3
-# hardening: read-only system, writable nowhere it doesn't need
-NoNewPrivileges=true
+{% if tracewake_web_reload | default(false) | bool %}
+# A live /loop/events stream holds the worker across --reload. systemd's
+# default stop timeout then leaves /healthz hung (issue #114).
+TimeoutStopSec=8
+KillMode=mixed
+{% endif %}
+# ProtectSystem and PrivateTmp stay. NoNewPrivileges does not: the dashboard
+# toggles the cycle timer through `sudo -n systemctl` (see
+# /etc/sudoers.d/tracewake-timer), and that flag makes sudo refuse to run
+# as root before the sudoers rule is consulted, with a warning about
+# containers.
 ProtectSystem=full
 PrivateTmp=true
+# Remove on `/` rewrites the instance's targets file. ProtectSystem=full
+# mounts /etc read-only; this is the hole for the directory that holds it
+# (the same directory as the env file).
+ReadWritePaths={{ tracewake_env_file | dirname }}
 
 [Install]
 WantedBy=multi-user.target

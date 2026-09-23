@@ -83,12 +83,12 @@ class PreviewTestCase(unittest.TestCase):
             "LAB_PREVIEW_MAX_AGE_SECONDS": str(MAX_AGE),
             "LAB_PREVIEW_OPERATOR": "jstephens",
             # No preview is running unless a test says one is.
-            "LAB_PREVIEW_STATUS_COMMAND": "/bin/false",
+            "LAB_PREVIEW_STATUS_COMMAND": "false",
             # ...and the one this run starts comes up, unless a test says it
             # does not. Separate from the command above on purpose: see the
             # script's comment on why "is one held" and "did mine come up" are
             # asked at different moments and cannot share an answer.
-            "LAB_PREVIEW_READY_COMMAND": "/bin/true",
+            "LAB_PREVIEW_READY_COMMAND": "true",
             "LAB_PREVIEW_READY_SETTLE_SECONDS": "0",
         }
         environ.update(env or {})
@@ -191,7 +191,7 @@ class TestTheLease(PreviewTestCase):
     def test_a_lease_backed_by_a_running_unit_still_says_running(self):
         self.write_lease(age_seconds=600, branch="feat/status-strip", by="vsto")
         result = self.run_script(
-            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"}
+            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "true"}
         )
         self.assertNotEqual(0, result.returncode)
         self.assertIn("already running", result.stderr)
@@ -245,7 +245,7 @@ class TestLivenessBacksTheLease(PreviewTestCase):
 
     def test_a_running_preview_with_no_lease_is_still_a_running_preview(self):
         result = self.run_script(
-            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"}
+            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "true"}
         )
         self.assertNotEqual(0, result.returncode)
         self.assertIn("--force", result.stderr)
@@ -254,7 +254,7 @@ class TestLivenessBacksTheLease(PreviewTestCase):
     def test_a_running_preview_with_an_unreadable_lease_is_refused(self):
         self.lease.write_text("{not json")
         result = self.run_script(
-            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"}
+            "feat/queue-board", env={"LAB_PREVIEW_STATUS_COMMAND": "true"}
         )
         self.assertNotEqual(0, result.returncode)
         self.assertFalse(self.restarted())
@@ -262,7 +262,7 @@ class TestLivenessBacksTheLease(PreviewTestCase):
     def test_force_still_takes_a_running_preview(self):
         result = self.run_script(
             "--force", "feat/queue-board",
-            env={"LAB_PREVIEW_STATUS_COMMAND": "/bin/true"},
+            env={"LAB_PREVIEW_STATUS_COMMAND": "true"},
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertTrue(self.restarted())
@@ -316,7 +316,7 @@ class TestItSaysStartedOnlyWhenItStarted(PreviewTestCase):
 
     def run_start_that_never_comes_up(self):
         return self.run_script(
-            "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "/bin/false"}
+            "feat/queue-board", env={"LAB_PREVIEW_READY_COMMAND": "false"}
         )
 
     def test_a_unit_that_does_not_come_up_is_not_reported_as_started(self):

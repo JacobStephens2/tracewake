@@ -15,6 +15,7 @@ Issue #4 acceptance criteria:
 from pathlib import Path
 import re
 import subprocess
+import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +24,8 @@ ROLE_DIR = ROOT / "deploy" / "ansible" / "roles" / "tracewake_controller"
 TASKS_FILE = ROLE_DIR / "tasks" / "main.yml"
 DEFAULTS_FILE = ROLE_DIR / "defaults" / "main.yml"
 DROPIN_TEMPLATE = ROLE_DIR / "templates" / "selector-cycle-selinux.conf.j2"
+SUDOERS_TEMPLATE = ROLE_DIR / "templates" / "tracewake-timer-sudoers.j2"
+LOOP_SUDOERS_TEMPLATE = ROLE_DIR / "templates" / "conductor-loop-sudoers.j2"
 
 
 def test_controller_playbook_syntax():
@@ -47,6 +50,7 @@ def test_selinux_relabel_and_dropin_logic_proven_both_ways():
     We prove this directly using Ansible's Jinja2 templating engine via python subprocess,
     reading the exact expression from tasks/main.yml.
     """
+    pytest.importorskip("jinja2", reason="Jinja2 is not importable")
     condition_expr = _extract_selinux_condition()
     script = f"""
 import sys
@@ -76,7 +80,9 @@ assert result_permissive is False, f"Expected False for permissive, got {{result
 
 print("OK")
 """
-    proc = subprocess.run(["python3", "-c", script], capture_output=True, text=True)
+    proc = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
     assert proc.returncode == 0, f"SELinux evaluation failed: {proc.stderr}\n{proc.stdout}"
     assert proc.stdout.strip() == "OK"
 
@@ -87,10 +93,40 @@ print("OK")
     assert "ExecStartPre=" in content
 
 
+def _ansible_facts_have_services() -> bool:
+    """The check-mode play indexes ansible_facts.services after service_facts.
+
+    Default fact gathering does not populate that mapping; the role's first
+    task is `service_facts`. On macOS that module is skipped, so a debug
+    probe against gathered facts would skip this test on a Host too.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ansible",
+                "-i", "localhost,",
+                "-c", "local",
+                "localhost",
+                "-m", "service_facts",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    combined = proc.stdout + proc.stderr
+    if proc.returncode != 0 or "| SKIPPED" in combined:
+        return False
+    return "| SUCCESS" in combined
+
+
 def test_playbook_check_mode_with_disabled_selinux_removes_dropin():
     """On a non-enforcing / disabled SELinux host (like Ubuntu),
     ansible-playbook skips the drop-in install and marks it absent.
     """
+    if not _ansible_facts_have_services():
+        pytest.skip("requires Linux ansible_facts.services")
     cmd = [
         "ansible-playbook",
         "-i", "localhost,",
@@ -132,6 +168,103 @@ def test_timer_gating_logic_and_notifier_unconditional():
     assert "Say which way unattended dispatch was left" in tasks_content
     assert "ENABLED - the Selector will dispatch Runs on its own" in tasks_content
     assert "installed and disabled; set tracewake_dispatch_enabled=true" in tasks_content
+
+
+def test_window_timer_toggle_has_a_scoped_sudoers_rule():
+    """The window runs as the instance's unprivileged user while the timer is
+    a system unit, so the Start/Stop buttons need a privilege path - and one
+    that names exactly the two commands on the one unit, and nothing else.
+    """
+    tasks_content = TASKS_FILE.read_text()
+    assert "/etc/sudoers.d/tracewake-timer" in tasks_content
+    assert "validate: visudo -cf %s" in tasks_content
+    assert "0440" in tasks_content
+
+    assert SUDOERS_TEMPLATE.is_file(), f"Missing sudoers template {SUDOERS_TEMPLATE}"
+    content = SUDOERS_TEMPLATE.read_text()
+    # The user is the role's, not a literal: nothing here names an instance.
+    assert "{{ tracewake_user }}" in content
+    assert "NOPASSWD:" in content
+    assert "/usr/bin/systemctl enable --now tracewake-selector-cycle.timer" in content
+    assert "/usr/bin/systemctl disable --now tracewake-selector-cycle.timer" in content
+    # Scoped: the granted rule - the one non-comment line - names no shell,
+    # no restart, no status, no start of anything else, and no ALL commands.
+    rules = [line for line in content.splitlines() if line.strip() and not line.startswith("#")]
+    assert len(rules) == 1, rules
+    rule = rules[0]
+    assert "ALL" not in rule.replace("ALL=(root)", "")
+    assert "restart" not in rule
+    assert "status" not in rule
+    assert rule.count("systemctl") == 2
+
+
+def test_cd_update_installs_the_timer_sudoers():
+    """Ansible writes /etc/sudoers.d/tracewake-timer on provision. CD
+    must keep it there too: a Host that was stood up before the rule
+    existed otherwise gets a Start button that cannot sudo, and
+    cd-update is the path a merged PR actually runs.
+    """
+    script = (ROOT / "deploy" / "cd-update.sh").read_text()
+    assert "/etc/sudoers.d/tracewake-timer" in script
+    assert "visudo" in script
+    assert "tracewake-selector-cycle.timer" in script
+
+
+def test_single_host_box_reads_have_a_scoped_sudoers_rule():
+    """Dispatch already becomes loop through local.sh. The box card, the
+    watcher and the MicroVMs widget need the same hop for facts-local.sh,
+    progress-local.sh and microvms-local.sh, or HOST=local keeps the
+    ssh-based reads and the dashboard shows hostname `local`.
+    """
+    tasks_content = TASKS_FILE.read_text()
+    assert "/etc/sudoers.d/conductor-loop" in tasks_content
+    assert "conductor-loop-sudoers.j2" in tasks_content
+    assert "validate: visudo -cf %s" in tasks_content
+
+    assert LOOP_SUDOERS_TEMPLATE.is_file(), (
+        f"Missing sudoers template {LOOP_SUDOERS_TEMPLATE}"
+    )
+    content = LOOP_SUDOERS_TEMPLATE.read_text()
+    assert "{{ tracewake_user }}" in content
+    assert "{{ tracewake_dir }}" in content
+    assert "NOPASSWD:" in content
+    assert "box-sources/local.sh *" in content
+    assert "box-sources/facts-local.sh" in content
+    assert "box-sources/progress-local.sh *" in content
+    assert "box-sources/microvms-local.sh" in content
+    rules = [
+        line for line in content.splitlines()
+        if line.strip() and not line.startswith("#") and not line.startswith("Defaults")
+    ]
+    assert len(rules) == 4, rules
+    for rule in rules:
+        assert "ALL=(loop:loop)" in rule
+        assert "SETENV" not in rule
+        assert "ALL" not in rule.replace("ALL=(loop:loop)", "")
+
+
+def test_cd_update_lets_the_window_rewrite_the_targets_file():
+    """Ansible templates ReadWritePaths into a new unit. CD must keep the
+    hole on a Host that already has ProtectSystem=full, or Remove reports
+    the file could not be written after every merge.
+    """
+    script = (ROOT / "deploy" / "cd-update.sh").read_text()
+    assert "ReadWritePaths=" in script
+    assert "ProtectSystem=full" in script
+
+
+def test_cd_update_installs_the_conductor_loop_sudoers():
+    """Ansible writes /etc/sudoers.d/conductor-loop on provision. CD must
+    keep the local status reads there too: a Host that only had local.sh
+    otherwise keeps `ssh: Could not resolve hostname local` on the box card
+    after every merge.
+    """
+    script = (ROOT / "deploy" / "cd-update.sh").read_text()
+    assert "/etc/sudoers.d/conductor-loop" in script
+    assert "facts-local.sh" in script
+    assert "progress-local.sh" in script
+    assert "microvms-local.sh" in script
+    assert "local.sh" in script
 
 
 def test_distro_neutral_postgres_and_venvs_in_role():

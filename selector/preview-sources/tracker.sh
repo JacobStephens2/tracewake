@@ -5,7 +5,8 @@
 #   tracker.sh <owner/repo> <label>
 #
 # Same contract as tracker-sources/github.sh - {"issues": [...]}, one flat
-# record per issue - and the issues are invented. A preview may run a whole
+# record per issue. `archived` is omitted, which the Cycle treats as not
+# archived. The issues are invented. A preview may run a whole
 # cycle so that what a branch does to /loop can be seen end to end; what it
 # may not do is read the real tracker, because the next thing a cycle does
 # with what it reads is dispatch a Run against it.

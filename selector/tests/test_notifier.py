@@ -422,14 +422,16 @@ def test_an_unconfigured_mail_surface_stops_the_notifier_by_name(db, notifier):
     assert notifier.subjects() == []
 
 
-def test_the_window_url_has_no_default_either(db, notifier):
-    """Where an instance publishes its window is the instance's fact too, and
+def test_the_dashboard_url_has_no_default_either(db, notifier):
+    """Where an instance publishes its dashboard is the instance's fact too, and
     it is the address a person clicks out of an email. A default would send
     the operator to somebody else's host, which is worse than no link."""
     result = notifier.run(SELECTOR_LOOP_URL="")
 
     assert result.returncode != 0
     assert "SELECTOR_LOOP_URL" in result.stderr
+    assert "where this instance's dashboard is" in result.stderr
+    assert "where this instance's window is" not in result.stderr
     assert notifier.subjects() == []
 
 

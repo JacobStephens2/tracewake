@@ -25,7 +25,8 @@
             card that does not survive: a Proposal is merged and its branch
             deleted, and a link to it would be a 404 dressed up as a working
             link. The issue and the Proposal are the two durable ones. -#}
-        <span class="detail">branch <code>{{ r.branch }}</code>
+        <span class="detail">{% if r.repo %}repo <code>{{ r.repo }}</code>
+          &middot; {% endif %}branch <code>{{ r.branch }}</code>
           &middot; owning area: {{ r.area }}
           &middot; dispatched {{ r.at }}</span>
       </p>
@@ -41,6 +42,18 @@
         <ul>
           {% for line in r.contract %}<li>{{ line }}</li>{% endfor %}
         </ul>
+      </details>
+      {% endif %}
+      {#- What the agent read (#83): the first Iteration's briefing, journaled
+          at Run start (#80). Rendered verbatim from the stored row - never
+          re-rendered from current scripts, so this is what the Run started
+          with even after they changed - and shown to both roles unredacted,
+          because it carries no credentials. Absent when the Run predates the
+          journaling: no card beats an invented one. -#}
+      {% if r.briefing %}
+      <details class="briefing" {% if r.in_flight %}open{% endif %}>
+        <summary>Iteration briefing</summary>
+        <pre>{{ r.briefing }}</pre>
       </details>
       {% endif %}
       {#- What the Run is doing, while it does it (#157). The watcher reads

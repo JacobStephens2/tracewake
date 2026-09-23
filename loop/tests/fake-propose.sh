@@ -2,7 +2,9 @@
 #
 # The scripted fake proposal command.
 #
-#   fake-propose.sh --repo <path> [--task-ref ...] [--ended-by ...] [--exit ...]
+#   fake-propose.sh --repo <path> [--task-ref ...] [--area ...] [--task-title ...]
+#                     [--ended-by ...] [--exit ...] [--removal-commit ...]
+#                     [--comment-follows]
 #
 # Satisfies exactly the contract propose.sh satisfies. Pointing
 # LOOP_PROPOSE_COMMAND here lets the suite drive a real Run through --propose
@@ -17,6 +19,20 @@ set -euo pipefail
 
 state="${FAKE_PROPOSE_STATE:?FAKE_PROPOSE_STATE must be set}"
 printf '%s\n' "$@" >"${state}"
+
+# The HEAD this invocation was asked to push, so a test can prove the proposal
+# ran after the Run's cleanup commit rather than before it: what the push would
+# have carried is the commit this names.
+repo=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    if [[ ${args[i]} == "--repo" ]]; then
+        repo="${args[i + 1]:-}"
+    fi
+done
+if [[ -n ${repo} ]]; then
+    printf 'FAKE_PROPOSE_HEAD=%s\n' "$(git -C "${repo}" rev-parse HEAD)" >>"${state}"
+fi
 
 if [[ ${FAKE_PROPOSE_BEHAVIOUR:-ok} == fail ]]; then
     printf 'fake-propose: the push failed\n' >&2

@@ -77,7 +77,7 @@ die() {
 usage() {
     cat <<'USAGE'
 assert-credentials.sh [--home <dir>] [--system-root <prefix>] [--sbx <cmd>]
-                      [--targets <file>] [--token-file <path>]
+                      [--targets <file>] [--token-file <path>] [--agent <name>]
 
 Asserts the Loop's box holds the three base credentials plus one token per
 target it is allowed to hold and none of the four families it is not.
@@ -88,6 +88,9 @@ Exits 0 when clean, 2 naming every violation, 1 when the check could not run.
   --sbx          the Execution Boundary CLI (default sbx)
   --targets      path to targets.toml declaring targets and their token files
   --token-file   path to a target's token file (may be specified multiple times)
+  --agent        the agent adapter whose subscription login counts as the
+                 model credential (default claude). An adapter with no
+                 credential inventory refuses the check rather than passing it.
   --list-env-names  print every forbidden environment variable name and exit
 
 Run it on the box, as the account a Run executes as:
@@ -105,8 +108,11 @@ USAGE
 base_allowed=(
     "signing-key|yes|dedicated SSH signing key, registered to the operator"
     "docker-identity|yes|read-only Docker PAT the Execution Boundary requires"
-    "model-credential|yes|the operator's Claude Code subscription login"
 )
+# The third base credential - the model subscription login - is appended
+# after argument parsing, because which login counts is the --agent flag's
+# whole job (an instance whose Runs use Grok holds no Claude login on
+# purpose, story 30, and the Claude row would refuse every dispatch).
 
 # --- What the box may not hold ----------------------------------------------
 #
@@ -186,6 +192,7 @@ system_root=""
 sbx_cmd="sbx"
 targets_file=""
 token_files=()
+agent="claude"
 
 while (($# > 0)); do
     case "$1" in
@@ -194,6 +201,7 @@ while (($# > 0)); do
         --sbx) sbx_cmd="${2:?--sbx needs a command}"; shift 2 ;;
         --targets) targets_file="${2:?--targets needs a path}"; shift 2 ;;
         --token-file) token_files+=("${2:?--token-file needs a path}"); shift 2 ;;
+        --agent) agent="${2:?--agent needs a name}"; shift 2 ;;
         # Every forbidden environment variable name, one per line. The offline
         # suite unsets exactly these before each run - it has to be runnable in
         # a vaulted-agent session on the orchestration VM, where several of them
@@ -214,6 +222,23 @@ while (($# > 0)); do
         *) die "unknown argument: $1" ;;
     esac
 done
+
+# The name reaches the filesystem below, so it is validated before it does:
+# lowercase letters, digits and dashes name an adapter, and anything else -
+# an empty value, a path, a flag - names nothing.
+[[ ${agent} =~ ^[a-z0-9-]+$ ]] || die "no agent adapter for '${agent}'"
+agent_adapter="${adapters_dir}/${agent}.sh"
+[[ -x ${agent_adapter} ]] || die "no agent adapter for '${agent}' - nothing to ask about its credential"
+
+# Which subscription login the inventory claims, and in what words. An
+# adapter the inventory has no credential shape for refuses here (exit 1,
+# the check could not run) rather than reporting a pass it did not earn.
+case "${agent}" in
+    claude) model_desc="the operator's Claude Code subscription login" ;;
+    grok) model_desc="the operator's Grok subscription login" ;;
+    *) die "no credential inventory for agent '${agent}'" ;;
+esac
+base_allowed+=("model-credential|yes|${model_desc}")
 
 [[ -d ${home} ]] || die "no such home directory: ${home}"
 home="$(cd -- "${home}" && pwd)"
@@ -638,46 +663,71 @@ fi
 # the layout of somebody else's JSON is a seam that breaks silently. What
 # would break is this check.
 #
-# `claude.sh` by name, and NOT the configured agent - which is a narrowness
-# worth stating rather than hiding, because `box-sources/facts.sh` does ask
-# the configured one. This whole row is Claude-specific already: the path it
-# checks is `~/.claude/.credentials.json`, hardcoded above, and the `allowed`
-# entry describes it as "the operator's Claude Code subscription login". #84
-# put a second vendor's agent on this box but not a second subscription, so
-# there is one model credential here and it is this one. Making the row
-# agent-variable means moving the path too, and that is a change to what the
-# inventory CLAIMS rather than to how it checks it.
-model_adapter="${adapters_dir}/claude.sh"
-credential_expiry=""
-if [[ -x ${model_adapter} ]]; then
-    credential_expiry="$(LOOP_CLAUDE_CONFIG_DIR="${home}/.claude" \
-        "${model_adapter}" --credential-expiry 2>/dev/null || true)"
-fi
-if [[ ! -f "${home}/.claude/.credentials.json" ]]; then
-    state[model-credential]="absent"
-    detail[model-credential]="no agent login on the box - see wizards/loop-claude-login.sh"
-elif [[ -z ${credential_expiry} ]]; then
-    # A file that is there and cannot be read is not a pass. Unknown is never
-    # green - the standard the guardrail chip already holds to - and a file
-    # nobody can say anything about is the one case where saying "held" is the
-    # reassurance rather than the check.
-    state[model-credential]="unreadable"
-    detail[model-credential]="${home}/.claude/.credentials.json holds no readable expiry"
-elif [[ "$(date -u -d "${credential_expiry}" +%s 2>/dev/null || printf 0)" -le \
-    "$(date +%s)" ]]; then
-    # Named as its own state rather than folded into absent, because they are
-    # different things to do about it: absent wants the login wizard, expired
-    # wants a renewal. A report that conflated them would send an operator to
-    # re-do a login the box already has.
-    state[model-credential]="expired"
-    detail[model-credential]="the login lapsed at ${credential_expiry} - a Run dispatched now fails at its first API call"
-else
-    # Graded on whether it works NOW, not on whether it will last. A short one
-    # is the adapter's renewal to deal with at dispatch, and a report that
-    # called it a violation would be red on a box that is fine.
-    state[model-credential]="held"
-    detail[model-credential]="${home}/.claude - expires ${credential_expiry}"
-fi
+# Which adapter's login counts was decided with --agent above; only adapters
+# with a known credential shape get there, so this case is exhaustive.
+case "${agent}" in
+    grok)
+        # The same two facts `agents/grok.sh` refuses an Iteration without:
+        # the subscription login, and a config that does not supersede it
+        # with a metered key. The path honours LOOP_GROK_HOME for the same
+        # reason the adapter does - the gate runs in the dispatch
+        # environment, which is the Run's environment for these names.
+        grok_home="${LOOP_GROK_HOME:-${home}/.grok}"
+        grok_auth="${grok_home}/auth.json"
+        grok_config="${grok_home}/config.toml"
+        if [[ ! -f ${grok_auth} ]]; then
+            state[model-credential]="absent"
+            detail[model-credential]="no agent login at ${grok_auth} - run wizards/loop-grok-login.sh"
+        elif [[ ! -r ${grok_auth} ]]; then
+            # A file that is there and cannot be read is not a pass. Unknown
+            # is never green, and a file nobody can say anything about is the
+            # one case where saying "held" is the reassurance rather than
+            # the check.
+            state[model-credential]="unreadable"
+            detail[model-credential]="${grok_auth} holds no readable login"
+        elif [[ -f ${grok_config} ]] && grep -qE '^[[:space:]]*(api_key|env_key)[[:space:]]*=' \
+            "${grok_config}"; then
+            state[model-credential]="metered"
+            detail[model-credential]="${grok_config} sets a model api_key or env_key; it resolves ahead of the subscription session and would move billing. Remove it."
+        else
+            state[model-credential]="held"
+            detail[model-credential]="${grok_home} subscription login"
+        fi
+        ;;
+    claude)
+        model_adapter="${adapters_dir}/claude.sh"
+        credential_expiry=""
+        if [[ -x ${model_adapter} ]]; then
+            credential_expiry="$(LOOP_CLAUDE_CONFIG_DIR="${home}/.claude" \
+                "${model_adapter}" --credential-expiry 2>/dev/null || true)"
+        fi
+        if [[ ! -f "${home}/.claude/.credentials.json" ]]; then
+            state[model-credential]="absent"
+            detail[model-credential]="no agent login on the box - see wizards/loop-claude-login.sh"
+        elif [[ -z ${credential_expiry} ]]; then
+            # A file that is there and cannot be read is not a pass. Unknown is never
+            # green - the standard the guardrail chip already holds to - and a file
+            # nobody can say anything about is the one case where saying "held" is the
+            # reassurance rather than the check.
+            state[model-credential]="unreadable"
+            detail[model-credential]="${home}/.claude/.credentials.json holds no readable expiry"
+        elif [[ "$(date -u -d "${credential_expiry}" +%s 2>/dev/null || printf 0)" -le \
+            "$(date +%s)" ]]; then
+            # Named as its own state rather than folded into absent, because they are
+            # different things to do about it: absent wants the login wizard, expired
+            # wants a renewal. A report that conflated them would send an operator to
+            # re-do a login the box already has.
+            state[model-credential]="expired"
+            detail[model-credential]="the login lapsed at ${credential_expiry} - a Run dispatched now fails at its first API call"
+        else
+            # Graded on whether it works NOW, not on whether it will last. A short one
+            # is the adapter's renewal to deal with at dispatch, and a report that
+            # called it a violation would be red on a box that is fine.
+            state[model-credential]="held"
+            detail[model-credential]="${home}/.claude - expires ${credential_expiry}"
+        fi
+        ;;
+esac
 
 held=0
 for row in "${allowed[@]}"; do

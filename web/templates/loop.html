@@ -2,11 +2,12 @@
 
    Everything a Journal row can change lives in _loop_live.html, which this
    page renders inline and then re-fetches whole whenever a row lands (#159).
-   What is left here is the shell's own content: the heading, and the link to
-   the history. #}
+   Headed sections, including Targets, render inside that fragment in this
+   Dashboard Account's order (#147). What is left here is the shell: the
+   heading, the rearrange control, and the link to the history. #}
 {% extends "terminal_base.html" %}
-{% block title %}The Loop{% endblock %}
-{% block logo %}THE LOOP // SELECTOR JOURNAL{% endblock %}
+{% block full_title %}Tracewake{% endblock %}
+{% block logo %}TRACEWAKE{% endblock %}
 {% block nav %}<a href="{{ history_url }}">history</a> <a href="/adr">decisions</a>{% include "_accounts_nav.html" %}{% endblock %}
 {% block main %}
     <h1>Selector Journal
@@ -17,5 +18,6 @@
        re-rendered the moment a row lands. The Runs that have already ended
        are on the <a href="{{ history_url }}">history</a>, which needs no
        tracker to render.</p>
+{% include "_section_order.html" %}
 {% include "_loop_live.html" %}
 {% endblock %}

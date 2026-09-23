@@ -72,6 +72,11 @@ if [[ -f "{dir}/fail" ]]; then
     exit 1
 fi
 printf '%s\\n' "$2" >> "{dir}/labels-asked"
+repo="${{1//\\//_}}"
+queue="{dir}/queue-$repo-$2.json"
+if [[ -f "${{queue}}" ]]; then
+    exec cat "${{queue}}"
+fi
 queue="{dir}/queue-$2.json"
 if [[ -f "${{queue}}" ]]; then
     exec cat "${{queue}}"
@@ -101,6 +106,11 @@ def tracker(tmp_path, monkeypatch):
     # suite configures a whole instance. Unreachable values: nothing in this
     # suite may reach a real box or a real forge.
     monkeypatch.setenv("SELECTOR_BOX_HOST", "root@box.invalid")
+    # The dashboard lists microVMs at request time (#97). Autouse idle, because
+    # the alternative is the real box-surface command, which means sudo and
+    # `sbx ls` from a unit test.
+    import microvms
+    monkeypatch.setattr("microvms.sample", lambda: microvms.Sample(vms=()))
     monkeypatch.setenv("SELECTOR_PROTECTED_REPO", "acme/tracewake")
     monkeypatch.setenv("SELECTOR_PROTECTED_REF", "main")
     monkeypatch.setenv("SELECTOR_SEARCH_OWNER", "acme")
@@ -110,6 +120,12 @@ def tracker(tmp_path, monkeypatch):
 
         def queue(self, label, issues):
             (directory / f"queue-{label}.json").write_text(
+                json.dumps({"issues": list(issues)})
+            )
+
+        def queue_for(self, repo, label, issues):
+            slug = repo.replace("/", "_")
+            (directory / f"queue-{slug}-{label}.json").write_text(
                 json.dumps({"issues": list(issues)})
             )
 

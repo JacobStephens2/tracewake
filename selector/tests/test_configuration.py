@@ -286,6 +286,78 @@ def test_tofu_host_is_one_ubuntu_droplet():
     )
 
 
+def test_tofu_local_host_variables_are_required():
+    """Issue #107: name, checkout and http_port are required variables with
+    no product defaults. A default would let an apply silently build
+    somebody else's local Host, and omitting a variable must fail before
+    apply - the same rule as the droplet module (issue #55)."""
+    variables = ROOT / "deploy" / "tofu" / "local" / "variables.tf"
+    assert variables.is_file(), (
+        "deploy/tofu/local/variables.tf is missing. The local provision "
+        "module declares the container name, the checkout to bind-mount, "
+        "and the host port Caddy is published on (issue #107)."
+    )
+    text = variables.read_text()
+    names = _TF_VARIABLE_HEADER.findall(text)
+    for expected in ("name", "checkout", "http_port"):
+        assert expected in names, (
+            f"deploy/tofu/local/variables.tf declares no {expected!r} "
+            "variable. All three are required (issue #107)."
+        )
+    assert tf_variable_defaults(text) == [], (
+        "deploy/tofu/local/variables.tf sets a default. Required variables "
+        "take none, so omitting one fails before apply (issue #107)."
+    )
+
+
+def test_tofu_local_host_is_one_ubuntu_container():
+    """Issue #107: applying the local module creates one Ubuntu 24.04
+    systemd container that can be a Tracewake Host. The Dockerfile is the
+    local analogue of ubuntu-24-04-x64: systemd and Python for Ansible,
+    nothing the play is supposed to install. The live apply itself is a
+    human step, so this pins the resource the apply would build."""
+    main = ROOT / "deploy" / "tofu" / "local" / "main.tf"
+    assert main.is_file(), (
+        "deploy/tofu/local/main.tf is missing. The local provision module "
+        "builds the Host container (issue #107)."
+    )
+    text = main.read_text()
+    containers = re.findall(r'resource\s+"docker_container"\s+"[^"]+"', text)
+    assert len(containers) == 1, (
+        f"deploy/tofu/local/main.tf declares {len(containers)} containers, "
+        "not one (issue #107)."
+    )
+    assert "/srv/tracewake" in text, (
+        "the local module must bind-mount the checkout at /srv/tracewake, "
+        "the Host's product directory"
+    )
+    dockerfile = ROOT / "deploy" / "tofu" / "local" / "machine" / "Dockerfile"
+    assert dockerfile.is_file(), (
+        "deploy/tofu/local/machine/Dockerfile is missing. It is the local "
+        "analogue of DigitalOcean's ubuntu-24-04-x64 image (issue #107)."
+    )
+    image = dockerfile.read_text()
+    assert re.search(r"^FROM ubuntu:24\.04\b", image, re.M), (
+        "the local machine image must be Ubuntu 24.04, the image the "
+        "Execution Boundary supports (issue #107)."
+    )
+    assert "systemd" in image, (
+        "the local machine image must run systemd, so the Host play's units "
+        "have a manager (issue #107)."
+    )
+    lowered = image.lower()
+    for forbidden in ("tracewake", "caddy", "postgresql", "docker-sbx", "ansible"):
+        assert forbidden not in lowered, (
+            f"the local machine image installs {forbidden!r}. That is the "
+            "play's job; the image is an empty Ubuntu Host (issue #107)."
+        )
+    assert "rm -rf /var/lib/apt/lists" not in image, (
+        "wiping apt lists in the image makes host.yml --check fail with "
+        "'No package matching git'. The cloud image keeps its lists; so "
+        "does this one (issue #107)."
+    )
+
+
 def test_install_and_readme_describe_only_single_host():
     """The product teaches one setup. A remote Box stays a substituted
     command in the tree; standing it up is not a second walkthrough."""
@@ -302,3 +374,135 @@ def test_install_and_readme_describe_only_single_host():
                 "a remote Box is a substituted command, not a documented "
                 "topology (issue #54)."
             )
+
+
+def test_install_describes_the_local_host():
+    """Issue #107: a laptop stands up Single-Host on Docker. INSTALL names
+    the local module and the same play; it is not a second topology."""
+    text = (ROOT / "INSTALL.md").read_text()
+    assert "deploy/tofu/local" in text, (
+        "INSTALL.md does not name deploy/tofu/local, the OpenTofu module "
+        "that creates the local Host (issue #107)."
+    )
+    assert "deploy/ansible/host.yml" in text
+    readme = (ROOT / "README.md").read_text()
+    assert "deploy/tofu" in readme, (
+        "README.md does not name deploy/tofu, where both Host machines "
+        "are provisioned (issue #107)."
+    )
+
+
+def test_install_names_the_local_host_wizard():
+    """Issue #114: standing the local Host up is a wizard, the same way
+    the droplet is wizards/host-up.sh. INSTALL names that walkthrough;
+    host-up.sh stays the droplet path."""
+    install = (ROOT / "INSTALL.md").read_text()
+    assert "wizards/local-host-up.sh" in install, (
+        "INSTALL.md does not name wizards/local-host-up.sh, the laptop "
+        "walkthrough that stands the local Host up (issue #114)."
+    )
+    readme = (ROOT / "README.md").read_text()
+    assert "local-host-up.sh" in readme, (
+        "README.md does not name local-host-up.sh next to host-up.sh "
+        "(issue #114)."
+    )
+    assert "host-up.sh" in readme
+    adr = (ROOT / "docs" / "adr" / "0031-a-local-host-is-the-same-play.md").read_text()
+    assert "wizards/host-up.sh" in adr
+    assert "local-host-up.sh" in adr, (
+        "ADR 0031 must name the laptop wizard so host-up.sh staying the "
+        "droplet path is not read as 'there is no local walkthrough' "
+        "(issue #114)."
+    )
+
+
+def test_tofu_local_host_keeps_the_journal_and_instance_files():
+    """Issue #114: recreating the container must not drop the Journal or
+    the instance files. Named volumes at /var/lib/postgresql and
+    /etc/tracewake, the same way the module already keeps the Linux venvs.
+    """
+    main = ROOT / "deploy" / "tofu" / "local" / "main.tf"
+    text = main.read_text()
+    for target in ("/var/lib/postgresql", "/etc/tracewake"):
+        assert target in text, (
+            f"the local module must keep {target} on a named volume so "
+            "recreating the container does not drop the Journal or the "
+            "instance files (issue #114)."
+        )
+        nearby = text[max(0, text.index(target) - 250):text.index(target) + 80]
+        assert 'type   = "volume"' in nearby or 'type = "volume"' in nearby, (
+            f"{target} must be a named docker volume, not a bind of a "
+            "laptop path (issue #114)."
+        )
+        assert "docker_volume." in nearby, (
+            f"{target} must source a docker_volume resource (issue #114)."
+        )
+
+
+def test_local_host_wizard_is_the_laptop_walkthrough():
+    """Issue #114: standing a local Host up is a wizard, not a paste.
+    host-up.sh stays the droplet path (ADR 0031).
+    """
+    wizard = ROOT / "wizards" / "local-host-up.sh"
+    assert wizard.is_file(), (
+        "wizards/local-host-up.sh is the laptop Host walkthrough "
+        "(issue #114)."
+    )
+    text = wizard.read_text()
+    assert "TRACEWAKE_CONF" in text, (
+        "the wizard must honour TRACEWAKE_CONF the same way "
+        "deploy/tofu/local/up.sh does (issue #114)."
+    )
+    assert "local.tfvars" in text
+    assert "local-inventory.yml" in text
+    assert "~/.config/tracewake" in text or "$HOME/.config/tracewake" in text
+    assert ".config/tracewake" in text, (
+        "the wizard must write instance facts under ~/.config/tracewake "
+        "(or TRACEWAKE_CONF), not in the tree (issue #114)."
+    )
+    for flag in (
+        "community.docker.docker",
+        "tracewake_tls: false",
+        "tracewake_manage_checkout: false",
+        "tracewake_web_reload: true",
+    ):
+        assert flag in text, (
+            f"the inventory the wizard writes must include {flag!r} "
+            "(issue #114)."
+        )
+    assert "deploy/tofu/local/up.sh" in text, (
+        "the wizard runs deploy/tofu/local/up.sh (issue #114)."
+    )
+    assert "host.yml" in text, (
+        "the wizard runs ansible-playbook against host.yml (issue #114)."
+    )
+    assert "seed-admin.py" in text, (
+        "the wizard seeds an admin via web/seed-admin.py (issue #114)."
+    )
+    assert "WINDOW_COOKIE_SECURE=0" in text, (
+        "the wizard sets WINDOW_COOKIE_SECURE=0 so a plain-HTTP dashboard "
+        "can sign in (issue #114)."
+    )
+    assert not re.search(r"(?m)^export WINDOW_COOKIE_SECURE=", text), (
+        "systemd EnvironmentFile ignores 'export KEY=value'; the instance "
+        "file must be KEY=value so the dashboard process sees "
+        "WINDOW_COOKIE_SECURE=0 (issue #114)."
+    )
+    assert "127.0.0.1" in text and "/healthz" in text, (
+        "curl http://127.0.0.1:<http_port>/healthz is the health check "
+        "the wizard waits on (issue #114)."
+    )
+
+    install = (ROOT / "INSTALL.md").read_text()
+    assert "wizards/local-host-up.sh" in install, (
+        "INSTALL.md names wizards/local-host-up.sh as the local Host "
+        "walkthrough (issue #114)."
+    )
+    readme = (ROOT / "README.md").read_text()
+    assert "local-host-up.sh" in readme, (
+        "README.md's wizards line names local-host-up.sh (issue #114)."
+    )
+    host_up = (ROOT / "wizards" / "host-up.sh").read_text()
+    assert "droplet" in host_up.lower(), (
+        "wizards/host-up.sh stays the droplet path (issue #114, ADR 0031)."
+    )

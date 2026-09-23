@@ -21,8 +21,13 @@
   ansible.builtin.file:
     path: "{{ tracewake_dir }}"
     state: directory
-    owner: "{{ tracewake_user }}"
-    group: "{{ tracewake_group }}"
+    # Check mode does not create the Controller account, so chown would fail
+    # looking up a user that only an apply creates. A bind-mounted checkout
+    # (tracewake_manage_checkout false) is the operator's tree; chowning it
+    # does not stick on Docker Desktop and would report changed forever
+    # (issue #107).
+    owner: "{{ omit if (ansible_check_mode or not (tracewake_manage_checkout | default(true) | bool)) else tracewake_user }}"
+    group: "{{ omit if (ansible_check_mode or not (tracewake_manage_checkout | default(true) | bool)) else tracewake_group }}"
     mode: '0755'
 
 - name: Check whether the product is already installed
@@ -36,12 +41,17 @@
     version: "{{ tracewake_revision }}"
     dest: "{{ tracewake_dir }}"
   become_user: "{{ tracewake_user }}"
-  when: not ansible_check_mode or tracewake_checkout.stat.exists
+  when:
+    - tracewake_manage_checkout | default(true) | bool
+    - not ansible_check_mode or tracewake_checkout.stat.exists
 
 - name: Report a first installation during check mode
   ansible.builtin.debug:
     msg: "Would clone the declared product revision into {{ tracewake_dir }}; checkout and virtualenv checks require an apply."
-  when: ansible_check_mode and not tracewake_checkout.stat.exists
+  when:
+    - tracewake_manage_checkout | default(true) | bool
+    - ansible_check_mode
+    - not tracewake_checkout.stat.exists
 
 - name: Instance configuration is readable only by the Controller
   ansible.builtin.file:

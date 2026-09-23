@@ -101,6 +101,20 @@
 
 # --- 2. Virtual environments ------------------------------------------------
 
+# A local Host bind-mounts the checkout and overlays .venv with a Docker
+# volume that starts root-owned. Production checkouts are already the
+# Controller's. Either way the venv must be writable before pip runs
+# (issue #107).
+- name: Virtualenv directories are writable by the Controller
+  ansible.builtin.file:
+    path: "{{ tracewake_dir }}/{{ item }}/.venv"
+    state: directory
+    owner: "{{ tracewake_user }}"
+    group: "{{ tracewake_group }}"
+    recurse: true
+  loop: [selector, web]
+  when: not ansible_check_mode
+
 - name: Selector virtual environment and dependencies
   ansible.builtin.pip:
     requirements: "{{ tracewake_dir }}/selector/requirements.txt"
@@ -110,7 +124,7 @@
   become_user: "{{ 'root' if ansible_check_mode else tracewake_user }}"
   when: not ansible_check_mode or tracewake_venvs.results[0].stat.exists
 
-- name: Window virtual environment and dependencies
+- name: Dashboard virtual environment and dependencies
   ansible.builtin.pip:
     requirements: "{{ tracewake_dir }}/web/requirements.txt"
     virtualenv: "{{ tracewake_dir }}/web/.venv"
@@ -223,3 +237,32 @@
          if tracewake_dispatch_enabled | bool
          else 'installed and disabled; set tracewake_dispatch_enabled=true to turn
                unattended dispatch on' }}
+
+# The dashboard's Start/Stop toggle for the timer above. The dashboard runs as
+# the instance's unprivileged user while the timer is a system unit, so without
+# this the buttons refuse with `sudo: a password is required` and say so in
+# the cell. Two commands on the one unit and nothing else - an unattended
+# agent with a broader sudo grant is an unattended agent with no boundary
+# worth the name, and the dashboard is unattended code by definition.
+- name: Let the dashboard toggle the cycle timer without a shell
+  ansible.builtin.template:
+    src: tracewake-timer-sudoers.j2
+    dest: /etc/sudoers.d/tracewake-timer
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  when: not ansible_check_mode or 'tracewake-selector-cycle.timer' in tracewake_units_on_box
+
+# The Cycle runs as the instance user; dispatch and the local box reads
+# execute as loop. Without these two read commands, a Single-Host instance
+# that sets SELECTOR_BOX_HOST=local keeps the ssh-based facts.sh and the
+# box card shows `ssh: Could not resolve hostname local`.
+- name: Let the Cycle become the Run account for dispatch and local box reads
+  ansible.builtin.template:
+    src: conductor-loop-sudoers.j2
+    dest: /etc/sudoers.d/conductor-loop
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s

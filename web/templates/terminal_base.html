@@ -1,29 +1,31 @@
 <!doctype html>
-{# The shell every terminal page wears: the factory's terminal.css identity,
-   not the lab chrome in base.html.
+{# The shell every human-viewed page wears: the factory's terminal.css
+   identity, and the only shell the window has (#84).
 
    Extracted when the second one arrived (/loop/history, #160), which is what
    the note on loop.html said to do. What lives here is what does not change
-   between them: the stylesheets, HTMX, the preview banner, the header, and
-   the script that opens the Journal stream. Each page supplies its own
-   heading and its own live region.
+   between pages: the stylesheets, HTMX, the preview banner, the header, and
+   - on the live pages - the script that opens the Journal stream. Each page
+   supplies its own heading; the live ones supply their own live region too.
 
-   Every page in this shell is live, so the stream script is unconditional -
-   a terminal page that quietly did not open it would look identical to one
-   the Selector had nothing to say to. `events_url` is therefore required of
-   every context rendering this base. #}
+   Only the live pages open the stream, so its script renders only when the
+   context carries `events_url` - a page that quietly did not open it would
+   look identical to one the Selector had nothing to say to, and a page with
+   no live region must not open a stream it never reads. #}
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}{% endblock %} // Tracewake</title>
+{# Home is the product name alone. Other pages fill `title` and the base
+   appends " // Tracewake"; `full_title` lets home skip that suffix. #}
+<title>{% block full_title %}{% block title %}{% endblock %} // Tracewake{% endblock %}</title>
+<link rel="icon" href="{{ static_base }}/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="{{ static_base }}/terminal.css">
 <link rel="stylesheet" href="{{ static_base }}/loop.css">
-{# HTMX does the swapping. Loaded here rather than inherited from base.html,
-   which these pages do not extend. Not deferred: the live region below is
-   processed on DOMContentLoaded and a deferred htmx would still be in time,
-   but the stream is opened at the foot of the body and there is no reason to
-   race it. #}
+{# HTMX does the swapping. Not deferred: the live region below is processed
+   on DOMContentLoaded and a deferred htmx would still be in time, but the
+   stream is opened at the foot of the body and there is no reason to race
+   it. #}
 <script src="{{ static_base }}/htmx.min.js"></script>
 {# The stored theme choice lands on <html> before first paint, so a dark
    visitor never sees a white flash. Everything else about the theme - the
@@ -43,8 +45,9 @@
 <div class="container">
   <header>
     <div class="logo">{% block logo %}THE LOOP{% endblock %}</div>
-    <nav aria-label="Navigation">{% block nav %}<a href="/">board</a> <a href="/history">history</a> <a href="/adr">decisions</a>{% include "_accounts_nav.html" %}{% endblock %}
+    <nav aria-label="Navigation">{% block nav %}<a href="/">board</a> <a href="/history">history</a> <a href="/adr">decisions</a> <a href="/site/lessons.html">lessons</a>{% include "_accounts_nav.html" %}{% endblock %}
       {% if account %}
+      <a href="{{ password_url }}">password</a>
       <form method="post" action="{{ logout_url }}" class="sign-out">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit">sign out</button>
@@ -57,6 +60,6 @@
 {% block main %}{% endblock %}
   </main>
 </div>
-{% include "_live_script.html" %}
+{% if events_url %}{% include "_live_script.html" %}{% endif %}
 </body>
 </html>

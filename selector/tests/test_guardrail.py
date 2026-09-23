@@ -1,5 +1,8 @@
 """The write protection over the executed paths, at the cycle's boundary (#165).
 
+These still fork because production doing is ADR 0004's substitutable-command
+seam - Cycle decisions live in-process.
+
 The Selector's own code, and the Loop scripts an apply copies to the box, run
 unattended from this repository - so they had better be no easier to change
 than the repository a Run makes Proposals against. That is a property of

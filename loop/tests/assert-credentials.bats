@@ -607,3 +607,103 @@ publish_upstream() {
     run_assert ANTHROPIC_API_KEY=sk-ant-example
     [ "$(field CREDENTIALS_VIOLATIONS)" = "1" ]
 }
+
+# --- The model credential follows the configured agent (#62) -----------------
+#
+# The inventory used to know only Claude: the model row checked
+# ~/.claude/.credentials.json by name. An instance whose Runs use Grok (story
+# 29, SELECTOR_BOX_AGENT=grok) holds no Claude login on purpose (story 30),
+# so that row refused every dispatch. --agent names the adapter whose
+# credential counts; the default stays claude, and an adapter with no
+# credential inventory is a refusal rather than a pass.
+
+write_grok_auth() {
+    mkdir -p "${BOX_HOME}/.grok"
+    printf '{"auth":"not-a-real-token"}\n' >"${BOX_HOME}/.grok/auth.json"
+    chmod 0600 "${BOX_HOME}/.grok/auth.json"
+}
+
+@test "a grok box holding its subscription login is clean" {
+    rm -rf "${BOX_HOME}/.claude"
+    write_grok_auth
+    run_assert --agent grok
+    [ "$status" -eq 0 ]
+    [ "$(field CREDENTIALS_RESULT)" = "clean" ]
+    [[ "$output" == *"[held]    model-credential"* ]]
+    [[ "$output" == *"Grok"* ]]
+}
+
+@test "naming claude explicitly keeps the claude credential" {
+    run_assert --agent claude
+    [ "$status" -eq 0 ]
+    [ "$(field CREDENTIALS_RESULT)" = "clean" ]
+    [[ "$output" == *"[held]    model-credential"* ]]
+}
+
+@test "a grok box with no subscription login is a violation naming it" {
+    rm -rf "${BOX_HOME}/.claude"
+    run_assert --agent grok
+    [ "$status" -eq 2 ]
+    [ "$(field CREDENTIALS_RESULT)" = "violations" ]
+    [[ "$output" == *"model-credential: absent"* ]]
+    [[ "$output" == *"loop-grok-login"* ]]
+}
+
+@test "a grok box whose config sets a metered key is a violation" {
+    rm -rf "${BOX_HOME}/.claude"
+    write_grok_auth
+    printf 'api_key = "grok-key-that-moves-billing"\n' >"${BOX_HOME}/.grok/config.toml"
+    run_assert --agent grok
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"model-credential"* ]]
+}
+
+@test "a grok box whose config sets the env_key spelling is a violation" {
+    rm -rf "${BOX_HOME}/.claude"
+    write_grok_auth
+    printf 'env_key = "GROK_DEPLOYMENT_KEY"\n' >"${BOX_HOME}/.grok/config.toml"
+    run_assert --agent grok
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"model-credential"* ]]
+}
+
+@test "a commented-out key in the grok config is not a credential" {
+    rm -rf "${BOX_HOME}/.claude"
+    write_grok_auth
+    printf '# api_key = "not-a-live-setting"\n' >"${BOX_HOME}/.grok/config.toml"
+    run_assert --agent grok
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[held]    model-credential"* ]]
+}
+
+@test "a grok login is not a claude credential" {
+    rm -rf "${BOX_HOME}/.claude"
+    write_grok_auth
+    run_assert
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"model-credential: absent"* ]]
+}
+
+@test "an agent name with no adapter cannot be checked" {
+    run_assert --agent stainless
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no agent adapter"* ]]
+}
+
+@test "an adapter with no credential inventory is a refusal, not a pass" {
+    run_assert --agent codex
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no credential inventory"* ]]
+}
+
+@test "an agent name that escapes the adapters directory is refused" {
+    run_assert --agent ../boundary-harness
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no agent adapter"* ]]
+}
+
+@test "an empty agent name is refused" {
+    run_assert --agent ""
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"needs a name"* ]]
+}

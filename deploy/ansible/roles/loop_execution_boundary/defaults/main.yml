@@ -37,6 +37,15 @@ loop_execution_boundary_apt_key_path: /etc/apt/keyrings/docker.asc
 # buried in a `shell:` argument is the one nobody finds when it needs moving.
 loop_execution_boundary_policy_reset_log: /tmp/sbx-policy-reset.log
 
+# The bound on `sbx policy init`, in seconds (issue #72). Without Docker
+# sign-in the init waited indefinitely - ansible sat at "Choose the egress
+# profile" with no error - so an unattended apply could hang forever. The auth
+# pre-check below fails fast with the sign-in instruction, and this is the
+# backstop behind it: even a stalled init is killed after this long rather
+# than holding the play. Named here so the bound is documented in one place
+# and the task cannot drift from it.
+loop_execution_boundary_policy_init_timeout: 120
+
 # The egress profile the boundary comes up on. `sbx` has no implicit default -
 # on a box where nothing has chosen, `sbx policy ls` answers `global network
 # policy has not been initialized` and a sandbox refuses to boot - so a daemon
@@ -184,7 +193,7 @@ loop_execution_boundary_egress_by_agent:
         ChatGPT backend routing and session management when operating under
         subscription credentials.
 
-# Four derived values, here rather than repeated inline, because each is named
+# Five derived values, here rather than repeated inline, because each is named
 # in more than one task and a second copy is a second place to be wrong. All are
 # evaluated where they are used, not where they are written: they need the uid
 # fact and the command output that tasks/main.yml produces.
@@ -283,3 +292,23 @@ loop_execution_boundary_egress_to_allow: >-
   {{ loop_execution_boundary_egress_desired
      if (loop_execution_boundary_policy_needs_reset | bool)
      else loop_execution_boundary_egress_missing }}
+
+# Whether the Loop account holds a Docker identity, read back from `sbx
+# diagnose` (issue #72). The probe task registers
+# `loop_execution_boundary_sbx_diagnose`; this is only evaluated where the
+# auth pre-check runs, so the register always exists where it is read.
+#
+# Substring matching needs the two negations first: both "not authenticated"
+# and "unauthenticated" CONTAIN "authenticated", so a bare `in` check would
+# read a missing sign-in as present - the exact wrong answer for a gate whose
+# job is to fail when nobody is signed in.
+loop_execution_boundary_sbx_authenticated: >-
+  {{ 'authenticated' in
+       ((loop_execution_boundary_sbx_diagnose.stdout | default('') +
+         loop_execution_boundary_sbx_diagnose.stderr | default('')) | lower)
+     and 'not authenticated' not in
+       ((loop_execution_boundary_sbx_diagnose.stdout | default('') +
+         loop_execution_boundary_sbx_diagnose.stderr | default('')) | lower)
+     and 'unauthenticated' not in
+       ((loop_execution_boundary_sbx_diagnose.stdout | default('') +
+         loop_execution_boundary_sbx_diagnose.stderr | default('')) | lower) }}

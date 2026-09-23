@@ -3,7 +3,7 @@
 This guide walks an operator from an empty machine to a running instance of
 Tracewake and a verified first dry-run cycle. The product teaches one setup:
 **Single-Host** (ADR 0019, ADR 0029). One Linux machine is the Host. It runs
-the Selector, the PostgreSQL Journal, the window, and the Box locally via
+the Selector, the PostgreSQL Journal, the dashboard, and the Box locally via
 `box-sources/local.sh`. Local dispatch is gated by `loop/assert-credentials.sh`.
 
 A remote Box remains possible as a substituted `SELECTOR_BOX_COMMAND`
@@ -16,10 +16,11 @@ describe standing that machine up.
 
 One machine, with both the controller's and the Box's needs:
 
-- **OS**: Linux with hardware virtualization support (`/dev/kvm` present).
-  Ubuntu 22.04 LTS or 24.04 LTS recommended. Rocky Linux 9, Debian 12+, or
-  Fedora also work for the controller half; `sbx` itself wants Ubuntu 24.04
-  or later.
+- **OS**: Linux with hardware virtualization support (`/dev/kvm` present)
+  for Runs. Ubuntu 22.04 LTS or 24.04 LTS recommended. Rocky Linux 9,
+  Debian 12+, or Fedora also work for the controller half; `sbx` itself
+  wants Ubuntu 24.04 or later. A local Host on Docker (below) does not
+  promise `/dev/kvm`: the dashboard and Selector still run.
 - **PostgreSQL**: Version 14 or higher.
 - **Python**: Version 3.9 or higher with `python3-venv` and `pip`.
 - **Git & GitHub CLI**: `git` 2.30+ and `gh` 2.40+.
@@ -83,6 +84,28 @@ Run account in your Instance's local Box command. Set `LOOP_AGENT_COMMAND` to
 the chosen adapter in that Run environment. Inventory installs the agent; it
 does not perform its subscription login or supply Instance secrets.
 
+### Local Host (Docker)
+
+The same Single-Host shape, on a laptop (issue #107, ADR 0031). OpenTofu
+creates one Ubuntu 24.04 systemd container; `deploy/ansible/host.yml` is
+still the play. Nested virtualization is not promised: the dashboard and
+Selector run; a Run may fail at the Execution Boundary until `/dev/kvm`
+exists.
+
+`wizards/local-host-up.sh` is the laptop walkthrough (issue #114). It
+writes instance facts under `~/.config/tracewake/` (or `$TRACEWAKE_CONF`),
+runs `deploy/tofu/local/up.sh` and `host.yml`, writes the Instance files
+on the container, seeds the first admin, and waits on
+`curl http://127.0.0.1:<http_port>/healthz`. `wizards/host-up.sh` stays
+the droplet path.
+
+The inventory the wizard writes is the laptop Host: `community.docker.docker`,
+`tracewake_tls: false`, `tracewake_manage_checkout: false`,
+`tracewake_web_reload: true`. A first apply may stop at `sbx` sign-in
+(`wizards/loop-sbx-login.sh`). Caddy is installed before that role, so
+`/healthz` should already answer. The cycle timer stays disabled until
+credentials exist.
+
 The manual steps below describe those components and the remaining configuration.
 
 ### Step 1: Clone Tracewake
@@ -126,7 +149,7 @@ The Selector requires a PostgreSQL database to store its append-only Journal.
 
 ### Step 3: Build Python Virtual Environments
 
-Tracewake isolates the Selector automation and the Web window in separate virtual
+Tracewake isolates the Selector automation and the dashboard in separate virtual
 environments.
 
 1. **Build the Selector environment**:
@@ -137,7 +160,7 @@ environments.
    .venv/bin/pip install -r requirements.txt
    ```
 
-2. **Build the Web window environment**:
+2. **Build the dashboard environment**:
    ```bash
    cd /srv/tracewake/web
    python3 -m venv .venv
@@ -176,6 +199,13 @@ git clone git@github.com:my-org/my-app.git /srv/workspaces/box/my-app
 
 Tracewake enforces strict credential isolation (ADR 0009, ADR 0020). Single-Host
 dispatch will not start until `loop/assert-credentials.sh` exits 0.
+
+A Host stood up with `wizards/host-up.sh` can finish Google SMTP (readable
+only by the Selector account), the agent subscription login, one fine-grained
+forge token per Target, and signing-key registration with
+`wizards/host-credentials.sh`. The sections below are the generic manual
+path; that wizard is the Single-Host walkthrough that also places the mail
+secret off the Run account.
 
 #### 1. Host GitHub Authentication
 The Selector reads issues and checks rulesets using the `gh` CLI:
@@ -285,14 +315,27 @@ Single-Host Mode (ADR 0019). `SELECTOR_BOX_COMMAND` defaults to
 export TRACEWAKE_TARGETS_FILE="/etc/tracewake/targets.toml"
 export SELECTOR_JOURNAL_DSN="dbname=selector"
 
-# Single-Host Mode (ADR 0019)
+# Single-Host Mode (ADR 0019). The reads are the `-local` siblings, not the
+# ssh-based ones: keeping `facts.sh`/`progress.sh` while the host is `local`
+# is the `ssh: Could not resolve hostname local` on the box card.
+# `SELECTOR_BOX_HOST` is read only by the ssh-based commands and is kept here
+# so substituting them back needs no new variable.
+#
+# The local reads become the Run account through sudo before reading (the
+# credential's expiry files live under its home) - beside the conductor-loop
+# rule dispatch already needs, each adds one sudoers line (visudo-checked):
+#
+#   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/facts-local.sh
+#   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/progress-local.sh *
+#   conductor ALL=(loop:loop) NOPASSWD: /srv/tracewake/selector/box-sources/microvms-local.sh
 export SELECTOR_BOX_HOST="local"
 export SELECTOR_BOX_COMMAND="box-sources/local.sh"
-export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts.sh"
-export SELECTOR_BOX_PROGRESS_COMMAND="box-sources/progress.sh"
+export SELECTOR_BOX_FACTS_COMMAND="box-sources/facts-local.sh"
+export SELECTOR_BOX_PROGRESS_COMMAND="box-sources/progress-local.sh"
+export SELECTOR_BOX_MICROVMS_COMMAND="box-sources/microvms-local.sh"
 export SELECTOR_BOX_LOOP="/srv/tracewake/loop"
 
-# Web Window URL & Mail Surface
+# Dashboard URL & Mail Surface
 export SELECTOR_LOOP_URL="http://127.0.0.1:8100"
 export SELECTOR_NOTIFY_COMMAND="/bin/true"
 
@@ -341,9 +384,9 @@ to the Journal without modifying git branches or opening pull requests.
 
 ---
 
-## 4. Starting the Web Window
+## 4. Starting the Dashboard
 
-The Web window renders the real-time Queue Board and Run history. It requires
+The dashboard renders the real-time Queue Board and Run history. It requires
 sign-in (ADR 0028). There is no registration page: seed the first admin before
 the first request.
 
@@ -366,10 +409,10 @@ the first request.
      `ready-for-human`).
    - The status strip reporting review capacity and the Guardrail chip.
    - The Run history at `http://127.0.0.1:8100/history`.
-   - **Accounts** (admins only): invite a Window Account by email. That send goes through
+   - **Accounts** (admins only): invite a Dashboard Account by email. That send goes through
      `WINDOW_MAIL_COMMAND` (`<to> <subject> [link]`, body on stdin) - the same
      substitutable-command seam as `SELECTOR_NOTIFY_COMMAND`, with the recipient
-     named because the window addresses invitees. There is no default.
+     named because the dashboard addresses invitees. There is no default.
 
 ---
 
@@ -401,3 +444,48 @@ provided in `deploy/systemd/`:
    ```
 
 Tracewake is now fully operational and draining your task queue unattended.
+
+---
+
+## 6. Continuous Deployment
+
+Every push to the default branch (which is how a merged pull request lands)
+deploys itself: `.github/workflows/deploy.yml` checks out that revision,
+SSHs to the Host as root, and pipes `deploy/cd-update.sh` into a remote
+bash. The runner sends the pushed copy, so a Host whose checkout predates
+the script still converges. The script then moves `/srv/tracewake` to the
+branch tip, refreshes both virtualenvs, re-applies the (idempotent) Journal
+schema, and restarts the dashboard and the notifier. The cycle unit is a
+oneshot behind its timer, so the next trigger picks the new tree up on its
+own. Full provisioning stays in `deploy/ansible/host.yml`; the workflow
+only rolls the deployed revision forward. A checkout with local
+modifications to tracked files stops the deploy loudly rather than
+resetting an operator hotfix away.
+
+The workflow needs one repository variable and two repository secrets
+(Settings > Secrets and variables > Actions). The Host's address is
+configuration, not code: nothing in the workflow or in `cd-update.sh` names
+any particular host.
+
+| Name | Kind | Contents |
+| --- | --- | --- |
+| `TRACEWAKE_SSH_HOST` | Variable | The Host to deploy: its DNS name or IP |
+| `TRACEWAKE_SSH_KEY` | Secret | Private ed25519 key whose public half is in the Host's `/root/.ssh/authorized_keys` |
+| `TRACEWAKE_SSH_KNOWN_HOSTS` | Secret | Output of `ssh-keyscan <host>`, verified against the Host's `/etc/ssh/ssh_host_ed25519_key.pub` |
+
+Point the workflow at a Host with (here `<host>` is the Host's DNS name or IP):
+
+```bash
+gh variable set TRACEWAKE_SSH_HOST --body "<host>"
+ssh-keygen -t ed25519 -C "github-actions-tracewake-deploy" -N "" -f /tmp/tw-deploy-key
+ssh root@<host> 'cat >> /root/.ssh/authorized_keys' < /tmp/tw-deploy-key.pub
+ssh-keyscan -t ed25519 <host> > /tmp/tw-known-hosts
+gh secret set TRACEWAKE_SSH_KEY < /tmp/tw-deploy-key
+gh secret set TRACEWAKE_SSH_KNOWN_HOSTS < /tmp/tw-known-hosts
+shred -u /tmp/tw-deploy-key /tmp/tw-deploy-key.pub
+```
+
+A checkout that is never deployed straight from GitHub (an instance that
+advances its serving tree some other way) leaves `TRACEWAKE_SSH_HOST` unset:
+the workflow then fails closed naming the variable rather than SSHing
+anywhere.

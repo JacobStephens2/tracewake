@@ -146,6 +146,19 @@ def _run_context(cycle, issue, attempt, branch, task_ref):
             "branch": branch, "task_ref": task_ref}
 
 
+def repo_of(task_ref: str | None) -> str | None:
+    """The Target repository a `task_ref` names.
+
+    `task_ref` is `owner/name#number` - the stanza's `repo` key, then the
+    issue. The repository is the part before `#`. A thin row with no
+    `task_ref`, or one written before there was one, has none to name.
+    """
+    if not task_ref:
+        return None
+    repo = task_ref.split("#", 1)[0]
+    return repo or None
+
+
 def run_dispatched(*, cycle, issue, title, url, task_ref, attempt, branch,
                    area, check, kept_progress):
     """The in-flight lock: journaled before the box is reached, and the row
@@ -183,6 +196,25 @@ def run_contract(*, cycle, issue, attempt, branch, task_ref, run_started,
     payload = _run_context(cycle, issue, attempt, branch, task_ref)
     payload.update({"run_started": run_started, "contract": contract})
     return RUN_CONTRACT, payload
+
+
+RUN_BRIEFING = "run.briefing"
+
+
+def run_briefing(*, cycle, issue, attempt, branch, task_ref, iteration,
+                 briefing):
+    """The first Iteration's rendered briefing, as the box emitted it.
+
+    Persisted once per Run (#80): later Iterations differ only in number, so
+    this one rendering is the stored fact of what the agent read, provable
+    after the scripts change instead of vanishing with the scratch files. It
+    carries no credentials - the task reference in the context, and file
+    paths, the checklist and the completion promise in the text - which is
+    what lets the window show it to both roles with no redaction.
+    """
+    payload = _run_context(cycle, issue, attempt, branch, task_ref)
+    payload.update({"iteration": iteration, "briefing": briefing})
+    return RUN_BRIEFING, payload
 
 
 def run_watch_failed(*, cycle, issue, attempt, branch, task_ref, error):
@@ -272,6 +304,8 @@ GUARDRAIL_OBSERVED = "guardrail.observed"
 GUARDRAIL_UNREADABLE = "guardrail.unreadable"
 PROPOSAL_UPDATED = "proposal.updated"
 PROPOSAL_UPDATE_FAILED = "proposal.update-failed"
+PROPOSAL_RECONCILED = "proposal.reconciled"
+PROPOSAL_RECONCILE_FAILED = "proposal.reconcile-failed"
 TARGET_UNENROLLED = "target.unenrolled"
 
 
@@ -312,8 +346,8 @@ def cycle_finished(*, cycle, considered, eligible, skipped, picked=None,
                    dispatches=None, halted, in_flight, awaiting_review,
                    review_cap, returned, dry_run):
     """The cycle summary: what was read, what survived, every dispatch made,
-    and - when `halted` names a cap or the pause - why nothing more was
-    dispatched."""
+    and - when `halted` names a cap, the pause, or an archived Target - why
+    nothing more was dispatched."""
     if dispatches is None:
         dispatches = [picked] if picked is not None else []
     elif picked is None and dispatches:
@@ -425,6 +459,58 @@ def proposal_update_failed(*, cycle, proposal, error, url=None, number=None, iss
     if issue is not None:
         payload["issue"] = issue
     return PROPOSAL_UPDATE_FAILED, payload
+
+
+def proposal_reconciled(*, cycle, proposal, url=None, number=None, issue=None,
+                        branch=None):
+    """A conflicting Proposal a reconcile Run brought up to date.
+
+    Journaled only after the Run verified the merged branch and pushed it to
+    the Proposal: a reconcile that resolved the conflicts but reds the suite
+    is not reconciled, and the row must never read as though it were.
+    `branch` is the Proposal's working branch as the box reported it.
+    """
+    num = number if number is not None else (proposal if isinstance(proposal, int) else None)
+    prop = proposal if proposal is not None else number
+    payload = {"cycle": cycle, "proposal": prop}
+    if num is not None:
+        payload["number"] = num
+    if url is not None:
+        payload["url"] = url
+    if issue is not None:
+        payload["issue"] = issue
+    if branch is not None:
+        payload["branch"] = branch
+    return PROPOSAL_RECONCILED, payload
+
+
+def proposal_reconcile_failed(*, cycle, proposal, error, url=None, number=None,
+                              issue=None, branch=None, added_label=None,
+                              removed_label=None):
+    """A reconcile Run that left the Proposal conflicting, or a Proposal the
+    Selector could not reconcile without inventing the resolution.
+
+    The Proposal remains un-merged; the owning issue is escalated to
+    `ready-for-human` alongside this row, and `added_label`/`removed_label`
+    name the swap that escalation performed. A tracker that refused the
+    escalation is the same kind with the refusal in `error` and no labels.
+    """
+    num = number if number is not None else (proposal if isinstance(proposal, int) else None)
+    prop = proposal if proposal is not None else number
+    payload = {"cycle": cycle, "proposal": prop, "error": error}
+    if num is not None:
+        payload["number"] = num
+    if url is not None:
+        payload["url"] = url
+    if issue is not None:
+        payload["issue"] = issue
+    if branch is not None:
+        payload["branch"] = branch
+    if added_label is not None:
+        payload["added_label"] = added_label
+    if removed_label is not None:
+        payload["removed_label"] = removed_label
+    return PROPOSAL_RECONCILE_FAILED, payload
 
 
 def target_unenrolled(*, owner, label, repos, new, dry_run=False):
@@ -715,6 +801,10 @@ class RunDispatched:
     check: str | None
     kept_progress: object
 
+    @property
+    def repo(self) -> str | None:
+        return repo_of(self.task_ref)
+
 
 def run_dispatched_record(row) -> RunDispatched:
     payload = _payload_of(row, RUN_DISPATCHED)
@@ -793,6 +883,33 @@ def run_contract_record(row) -> ContractRow:
         task_ref=payload.get("task_ref"),
         run_started=payload.get("run_started"),
         contract=payload.get("contract"),
+    )
+
+
+@dataclass(frozen=True)
+class BriefingRow:
+    """The Run's first Iteration briefing, one row per Run."""
+
+    id: int | None
+    at: object
+    cycle: int | None
+    issue: int | None
+    attempt: int | None
+    branch: str | None
+    task_ref: str | None
+    iteration: int | None
+    briefing: str | None
+
+
+def run_briefing_record(row) -> BriefingRow:
+    payload = _payload_of(row, RUN_BRIEFING)
+    return BriefingRow(
+        id=row.get("id"), at=row.get("at"),
+        cycle=payload.get("cycle"), issue=payload.get("issue"),
+        attempt=payload.get("attempt"), branch=payload.get("branch"),
+        task_ref=payload.get("task_ref"),
+        iteration=payload.get("iteration"),
+        briefing=payload.get("briefing"),
     )
 
 
@@ -947,6 +1064,60 @@ def proposal_update_failed_record(row) -> ProposalUpdateFailed:
         error=payload.get("error"),
         url=payload.get("url"),
         issue=payload.get("issue"),
+    )
+
+
+@dataclass(frozen=True)
+class ProposalReconciled:
+    id: int | None
+    at: object
+    cycle: int | None
+    proposal: int | str | None
+    url: str | None
+    issue: int | None
+    branch: str | None
+
+
+@dataclass(frozen=True)
+class ProposalReconcileFailed:
+    id: int | None
+    at: object
+    cycle: int | None
+    proposal: int | str | None
+    error: str | None
+    url: str | None
+    issue: int | None
+    branch: str | None
+    added_label: str | None
+    removed_label: str | None
+
+
+def proposal_reconciled_record(row) -> ProposalReconciled:
+    payload = _payload_of(row, PROPOSAL_RECONCILED)
+    return ProposalReconciled(
+        id=row.get("id"),
+        at=row.get("at"),
+        cycle=payload.get("cycle"),
+        proposal=payload.get("proposal"),
+        url=payload.get("url"),
+        issue=payload.get("issue"),
+        branch=payload.get("branch"),
+    )
+
+
+def proposal_reconcile_failed_record(row) -> ProposalReconcileFailed:
+    payload = _payload_of(row, PROPOSAL_RECONCILE_FAILED)
+    return ProposalReconcileFailed(
+        id=row.get("id"),
+        at=row.get("at"),
+        cycle=payload.get("cycle"),
+        proposal=payload.get("proposal"),
+        error=payload.get("error"),
+        url=payload.get("url"),
+        issue=payload.get("issue"),
+        branch=payload.get("branch"),
+        added_label=payload.get("added_label"),
+        removed_label=payload.get("removed_label"),
     )
 
 

@@ -1,5 +1,8 @@
 """What the Selector does to the issue once the Run has ended (issue #155).
 
+These still fork because production doing is ADR 0004's substitutable-command
+seam - Cycle decisions live in-process.
+
 Dispatch (#154) ends the moment the box hands back a summary. This is the half
 after that: the Run's ending bound and the Proposal's checks decide which
 queue the issue lands in, and the operator finds out by reading the issue
@@ -150,6 +153,27 @@ def test_the_red_comment_links_the_proposal_it_is_about(db, box):
     assert "https://github.invalid/acme/widgets/pull/12" in comment_bodies(box)[0]
 
 
+def test_the_red_comment_points_at_the_branch_history(db, box):
+    """The failing names say what happened; the branch history says where the
+    record is - the tip is merge-clean since #79."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(RED_CHECKS)
+    box.run(db, [issue(645)])
+    body = comment_bodies(box)[0]
+    assert one(db, "run.outcome")["branch"] in body
+    assert "history" in body
+
+
+def test_a_red_proposal_never_reaches_the_review_queue(db, box):
+    """Unverified work is not reviewable, with or without a comment saying
+    so: the route and the comment travel together."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(RED_CHECKS)
+    box.run(db, [issue(645)])
+    assert events(db, "issue.awaiting-review") == []
+    assert len(comment_bodies(box)) == 1
+
+
 def test_the_red_route_is_journaled_with_the_failing_checks(db, box):
     box.run_summary(CLEAN_RUN)
     box.checks(RED_CHECKS)
@@ -225,6 +249,97 @@ def test_the_give_up_comment_says_what_happened(db, box, dispatch):
     assert "ready-for-human" in body
 
 
+def test_the_give_up_comment_names_the_draft_proposal(db, box, dispatch):
+    """A failed Run is learnable from the issue alone: the draft Proposal the
+    failed attempt left behind is named on the issue, so the operator never
+    opens a Proposal just to learn a Run failed."""
+    dispatch(db, 645, outcome="agent-failed")
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)], BOX_EXIT=4)
+    body = comment_bodies(box)[0]
+    assert "https://github.invalid/acme/widgets/pull/13" in body
+
+
+def test_the_give_up_comment_points_at_the_branch_history(db, box, dispatch):
+    """Since #79 the tip is merge-clean, so the comment points at the branch's
+    history rather than at files the tip no longer carries."""
+    dispatch(db, 645, outcome="agent-failed")
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)], BOX_EXIT=4)
+    body = comment_bodies(box)[0]
+    branch = last(db, "run.outcome")["branch"]
+    assert branch in body
+    assert "history" in body
+
+
+def test_a_give_up_with_no_proposal_still_names_the_branch(db, box, dispatch):
+    """Nothing to link, but still somewhere to look: the branch history holds
+    the Run's record even when no Proposal exists."""
+    dispatch(db, 645, outcome="iteration-cap")
+    box.run_summary(NO_PROPOSAL_RUN)
+    box.run(db, [issue(645)])
+    bodies = comment_bodies(box)
+    assert len(bodies) == 1
+    assert "left no Proposal" in bodies[0]
+    assert last(db, "run.outcome")["branch"] in bodies[0]
+    assert "history" in bodies[0]
+
+
+def test_a_failed_run_with_a_proposal_is_never_routed_to_review(
+    db, box, dispatch
+):
+    """Routing judgment, pinned: a Run the Contract cut short goes to the
+    human even when it left a draft Proposal and CI would call it green. The
+    checks are not even read - there is nothing to review whatever they say."""
+    dispatch(db, 645, outcome="agent-failed")
+    box.run_summary(FAILED_RUN)
+    box.checks(GREEN_CHECKS)
+    result = box.run(db, [issue(645)], BOX_EXIT=4)
+    assert result.returncode == 0, result.stderr
+    assert checks_calls(box) == 0
+    assert relabels(box) == [("645", "ready-for-human", "ready-for-agent")]
+    assert events(db, "issue.awaiting-review") == []
+    assert one(db, "issue.given-up")["outcome"] == "agent-failed"
+
+
+def test_a_first_failure_with_a_proposal_is_retried_without_review(
+    db, box
+):
+    """The same judgment on the first attempt: retry, no comment, no review
+    queue - even holding a draft Proposal with green checks scripted."""
+    box.run_summary(FAILED_RUN)
+    box.checks(GREEN_CHECKS)
+    result = box.run(db, [issue(645)], BOX_EXIT=4)
+    assert result.returncode == 0, result.stderr
+    assert relabels(box) == []
+    assert comment_bodies(box) == []
+    assert events(db, "issue.awaiting-review") == []
+    assert one(db, "issue.retrying")["outcome"] == "agent-failed"
+
+
+def test_a_failed_runs_open_draft_does_not_block_its_retry(db, box):
+    """#102. A failed Run still proposes. The leftover draft is the branch
+    the retry continues, not an in-flight lock: the next Cycle dispatches
+    without anyone closing that draft."""
+    leftover = {
+        "number": 13,
+        "url": "https://github.invalid/acme/widgets/pull/13",
+        "state": "OPEN",
+        "isDraft": True,
+    }
+    box.run_summary(FAILED_RUN)
+    box.run(db, [issue(645)], BOX_EXIT=4)
+    result = box.run(db, [issue(645, proposals=[leftover])], BOX_EXIT=4)
+    assert result.returncode == 0, result.stderr
+    assert last(db, "run.outcome")["attempt"] == 2
+    assert last(db, "run.outcome")["ended_by"] == "agent-failed"
+    skipped = [
+        e["payload"] for e in events(db, "issue.skipped")
+        if e["payload"]["number"] == 645
+    ]
+    assert skipped == []
+
+
 def test_the_give_up_is_journaled(db, box, dispatch):
     dispatch(db, 645, outcome="agent-failed")
     box.run_summary(FAILED_RUN)
@@ -276,13 +391,6 @@ def test_a_third_dispatch_is_refused_even_if_the_give_up_swap_failed(
     assert "box " not in box.commands()
 
 
-def test_the_exhausted_issue_is_skipped_with_its_reason(db, box, dispatch):
-    dispatch(db, 645, outcome="agent-failed")
-    dispatch(db, 645, outcome="agent-failed")
-    box.run(db, [issue(645)])
-    assert one(db, "issue.skipped")["reason"] == "attempts-exhausted"
-
-
 # --- A Run that proposed nothing ---------------------------------------------
 
 
@@ -328,6 +436,24 @@ def test_the_unsettled_comment_says_the_checks_did_not_finish(db, box):
     assert "did not finish" in comment_bodies(box)[0]
 
 
+def test_the_unsettled_comment_points_at_the_branch_history(db, box):
+    box.run_summary(CLEAN_RUN)
+    box.checks(PENDING_CHECKS)
+    box.run(db, [issue(645)], SELECTOR_CHECKS_TIMEOUT_SECONDS=0)
+    body = comment_bodies(box)[0]
+    assert "https://github.invalid/acme/widgets/pull/12" in body
+    assert one(db, "run.outcome")["branch"] in body
+    assert "history" in body
+
+
+def test_a_pending_proposal_never_reaches_the_review_queue(db, box):
+    box.run_summary(CLEAN_RUN)
+    box.checks(PENDING_CHECKS)
+    box.run(db, [issue(645)], SELECTOR_CHECKS_TIMEOUT_SECONDS=0)
+    assert events(db, "issue.awaiting-review") == []
+    assert len(comment_bodies(box)) == 1
+
+
 # --- Bookkeeping the tracker refused -----------------------------------------
 
 
@@ -343,6 +469,32 @@ def test_a_route_github_refuses_is_journaled_and_pages(db, box):
     assert failed["issue"] == 645
     assert failed["label"] == "awaiting-review"
     assert "error" in failed
+
+
+def test_a_successful_proposal_left_on_the_handover_queue_is_not_retried(
+    db, box
+):
+    """#102. A leftover draft is only the retry's branch when the attempt
+    failed. A Proposal that finished and whose label swap failed is still
+    in flight: retrying it would dispatch a second Run on work already
+    proposed for review."""
+    leftover = {
+        "number": 12,
+        "url": "https://github.invalid/acme/widgets/pull/12",
+        "state": "OPEN",
+        "isDraft": True,
+    }
+    box.run_summary(CLEAN_RUN)
+    box.checks(GREEN_CHECKS)
+    box.run(db, [issue(645)], ISSUE_EXIT=1)
+    result = box.run(db, [issue(645, proposals=[leftover])])
+    assert result.returncode == 0, result.stderr
+    assert last(db, "run.outcome")["attempt"] == 1
+    skipped = {
+        e["payload"]["number"]: e["payload"]["reason"]
+        for e in events(db, "issue.skipped")
+    }
+    assert skipped[645] == "proposal-open"
 
 
 def test_a_route_that_failed_still_recorded_the_run(db, box):
@@ -441,6 +593,26 @@ def test_the_no_checks_comment_says_it_is_not_the_same_as_passing(db, box):
     body = comment_bodies(box)[0]
     assert "no check ran against it" in body
     assert "not the same as passing" in body
+
+
+def test_the_no_checks_comment_points_at_the_branch_history(db, box):
+    box.run_summary(CLEAN_RUN)
+    box.checks(NO_CHECKS)
+    box.run(db, [issue(645)])
+    body = comment_bodies(box)[0]
+    assert "https://github.invalid/acme/widgets/pull/12" in body
+    assert one(db, "run.outcome")["branch"] in body
+    assert "history" in body
+
+
+def test_a_proposal_with_no_checks_is_commented_not_just_relabeled(db, box):
+    """Every terminal route off an unverified Run leaves a comment: the swap
+    alone would take the issue out of the queue with nothing saying why."""
+    box.run_summary(CLEAN_RUN)
+    box.checks(NO_CHECKS)
+    box.run(db, [issue(645)])
+    assert events(db, "issue.awaiting-review") == []
+    assert len(comment_bodies(box)) == 1
 
 
 def test_every_comment_the_selector_posts_is_signed(db, box):

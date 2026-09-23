@@ -285,6 +285,35 @@ setup() {
     [[ "$(progress_log)" == *"Discipline skills: /only-this-one when it matters"* ]]
 }
 
+@test "the Run emits its first Iteration's briefing for the Journal" {
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+    [ "$(agent_invocations)" -eq 3 ]
+
+    # The machine-readable block still leads: the briefing rides last.
+    [[ "${lines[0]}" == "LOOP_RUN_ENDED_BY=iteration-cap" ]]
+
+    briefing="$(sed -n '/^LOOP_BRIEFING_BEGIN$/,/^LOOP_BRIEFING_END$/p' <<<"$output" | sed '1d;$d')"
+    [ -n "$briefing" ]
+    [[ "$briefing" == *"You are Iteration 1 of at most 3"* ]]
+
+    # Later Iterations differ only in number: the last prompt handed out,
+    # with its number set back to 1, is this same text.
+    last_prompt="$(cat "${FAKE_AGENT_STATE}.prompt")"
+    [[ "$last_prompt" == *"You are Iteration 3 of at most 3"* ]]
+    [[ "$briefing" == "${last_prompt//You are Iteration 3 /You are Iteration 1 }" ]]
+
+    # The safe content the window may show both roles: file paths, the
+    # checklist, and the completion promise - and no host path that could
+    # carry a credential with it.
+    [[ "$briefing" == *"PLAN.md"* ]]
+    [[ "$briefing" == *"PROGRESS.md"* ]]
+    [[ "$briefing" == *"LOOP: WORK COMPLETE"* ]]
+    [[ "$briefing" != *"${BATS_TEST_TMPDIR}"* ]]
+}
+
 @test "the Plan and the Progress Log are committed" {
     export FAKE_AGENT_BEHAVIOURS="commit"
 
@@ -308,6 +337,97 @@ setup() {
 
     # The dirt is still dirt, visible to whoever reviews the Run.
     [[ "$(git -C "${REPO}" status --porcelain)" == *"work.txt"* ]]
+}
+
+# --- Merge-clean -----------------------------------------------------------
+#
+# Spec issue #78: a Run ends with its scaffolding gone from the branch tip. The
+# Plan, the Progress Log and any kept-earlier log are removed in a Run-authored
+# commit before the proposal is pushed; reviewers read them from history.
+
+@test "a finished Run's tip carries no Plan and no Progress Log, but the history does" {
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    [ ! -e "${REPO}/PLAN.md" ]
+    [ ! -e "${REPO}/PROGRESS.md" ]
+    [ -z "$(git -C "${REPO}" status --porcelain)" ]
+
+    [[ "$(git_log)" == *"Loop: Remove the Run scaffolding so the branch tip is merge-clean"* ]]
+
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    [ -n "${ended}" ]
+    [[ "$(git -C "${REPO}" show "${ended}:PROGRESS.md")" == *"Ended by: iteration-cap"* ]]
+    [[ "$(git -C "${REPO}" show "${ended}:PLAN.md")" == *"three small things"* ]]
+}
+
+@test "a kept-earlier log is removed from the tip and kept in history" {
+    printf '# Earlier Progress Logs\n' >"${REPO}/PROGRESS-earlier.md"
+    git -C "${REPO}" add -A
+    git -C "${REPO}" commit --quiet --message "Keep the previous attempt's Progress Log"
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    [ ! -e "${REPO}/PROGRESS-earlier.md" ]
+    [ ! -e "${REPO}/PLAN.md" ]
+    [ ! -e "${REPO}/PROGRESS.md" ]
+
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    [[ "$(git -C "${REPO}" show "${ended}:PROGRESS-earlier.md")" == *"Earlier Progress Logs"* ]]
+}
+
+@test "the cleanup removes the scaffolding under the Contract's own paths" {
+    export LOOP_PLAN_PATH="docs/plan.md"
+    export LOOP_PROGRESS_LOG_PATH="docs/progress.md"
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    mkdir -p "${REPO}/docs"
+    git -C "${REPO}" mv PLAN.md docs/plan.md
+    git -C "${REPO}" mv PROGRESS.md docs/progress.md
+    printf '# Earlier Progress Logs\n' >"${REPO}/docs/progress-earlier.md"
+    git -C "${REPO}" add -A
+    git -C "${REPO}" commit --quiet --message "Move the Run's state"
+
+    run_the_loop
+    [ "$status" -eq 0 ]
+
+    [ ! -e "${REPO}/docs/plan.md" ]
+    [ ! -e "${REPO}/docs/progress.md" ]
+    [ ! -e "${REPO}/docs/progress-earlier.md" ]
+}
+
+@test "the proposal is pushed after the cleanup, not before it" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+
+    # The scripted proposal records the HEAD it was asked to push. If it saw
+    # the cleanup commit, the push carried the merge-clean tip.
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [ -n "${cleanup}" ]
+    [[ "$(proposed_with)" == *"FAKE_PROPOSE_HEAD=${cleanup}"* ]]
+}
+
+@test "a failed proposal corrects the record without reviving the scaffolding" {
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    export FAKE_PROPOSE_BEHAVIOUR=fail
+
+    run_the_loop --propose
+    [ "$status" -eq 6 ]
+    [[ "$output" == *"LOOP_RUN_PROPOSAL=failed"* ]]
+
+    [ ! -e "${REPO}/PLAN.md" ]
+    [ ! -e "${REPO}/PROGRESS.md" ]
+    [ -z "$(git -C "${REPO}" status --porcelain)" ]
+    [[ "$(git_log)" == *"Loop: the proposal failed (iteration-cap)"* ]]
 }
 
 # --- Preflight -------------------------------------------------------------
@@ -387,7 +507,12 @@ setup() {
 
     run_the_loop
     [ "$status" -eq 0 ]
-    [[ "$(cat "${REPO}/docs/progress.md")" == *"Ended by: iteration-cap"* ]]
+    # The Run ends merge-clean, so the record is read from history: the
+    # Run-ended commit's tree is the last one that carries the scaffolding.
+    ended="$(git -C "${REPO}" log --format='%H' --grep='Loop: Run ended' | head -n 1)"
+    [[ "$(git -C "${REPO}" show "${ended}:docs/progress.md")" == *"Ended by: iteration-cap"* ]]
+    [ ! -e "${REPO}/docs/progress.md" ]
+    [ ! -e "${REPO}/docs/plan.md" ]
     [ ! -e "${REPO}/PROGRESS.md" ]
 }
 
@@ -444,6 +569,96 @@ setup() {
     export FAKE_AGENT_BEHAVIOURS="commit"
     run_the_loop --propose --task-ref "owner/name#648"
     [[ "$(proposed_with)" == *"owner/name#648"* ]]
+}
+
+seed_a_tasked_plan() {
+    # A Plan in seed-run.sh's shape, so the Run has a task reference, a title
+    # and an owning area to hand the proposal after the cleanup removes it.
+    cat >"${REPO}/PLAN.md" <<'PLAN'
+# Plan
+
+## Task
+
+**owner/name#648 - Three small things**
+
+## The owning area this Run is scoped to
+
+**dashboards and reports**
+
+## Acceptance criteria
+
+- [ ] task 1
+PLAN
+    git -C "${REPO}" add -A
+    git -C "${REPO}" commit --quiet --message "Seed the Run"
+}
+
+@test "the proposal is told the task, the area and the removal commit" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+    # No --task-ref on the command line: the Run reads the Plan before the
+    # cleanup removes it, so the proposal still names the task.
+    [[ "$(proposed_with)" == *"--task-ref"* ]]
+    [[ "$(proposed_with)" == *"owner/name#648"* ]]
+    [[ "$(proposed_with)" == *"--area"* ]]
+    [[ "$(proposed_with)" == *"dashboards and reports"* ]]
+    [[ "$(proposed_with)" == *"Three small things"* ]]
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [ -n "${cleanup}" ]
+    [[ "$(proposed_with)" == *"--removal-commit"* ]]
+    [[ "$(proposed_with)" == *"${cleanup}"* ]]
+}
+
+@test "the Run tells the proposal a comment follows when it will notify" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose --notify
+    [ "$status" -eq 0 ]
+    [[ "$(proposed_with)" == *"--comment-follows"* ]]
+}
+
+@test "a Run that will not notify promises no comment" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose
+    [ "$status" -eq 0 ]
+    [[ "$(proposed_with)" != *"--comment-follows"* ]]
+}
+
+@test "the Run's comment on its own proposal carries the same record" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=1
+    export FAKE_AGENT_BEHAVIOURS="commit"
+    run_the_loop --propose --notify
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=sent"* ]]
+    [[ "$(notified_with)" == *"owner/name#648"* ]]
+    [[ "$(notified_with)" == *"dashboards and reports"* ]]
+    [[ "$(notified_with)" == *"iteration-cap"* ]]
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [[ "$(notified_with)" == *"${cleanup}"* ]]
+    [[ "$(notified_with)" == *"Loop: Run ended (iteration-cap)"* ]]
+    [[ "$(notified_with)" == *"carries no Run scaffolding"* ]]
+    [[ "$(notified_with)" != *"\`PROGRESS.md\`"* ]]
+}
+
+@test "the comment on a bound-ended Run carries the same record" {
+    seed_a_tasked_plan
+    export LOOP_MAX_ITERATIONS=4
+    export FAKE_AGENT_BEHAVIOURS="commit noop noop"
+    run_the_loop --propose --notify
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"LOOP_RUN_NOTIFIED=sent"* ]]
+    [[ "$(notified_with)" == *"consecutive-noops"* ]]
+    [[ "$(notified_with)" == *"owner/name#648"* ]]
+    [[ "$(notified_with)" == *"dashboards and reports"* ]]
+    cleanup="$(git -C "${REPO}" log --format='%H' --grep='Loop: Remove the Run scaffolding' | head -n 1)"
+    [[ "$(notified_with)" == *"${cleanup}"* ]]
 }
 
 @test "a Run that went wrong still proposes - a failed Run is a result" {

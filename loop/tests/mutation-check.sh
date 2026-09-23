@@ -4,6 +4,10 @@
 #
 #   tests/mutation-check.sh [--only <script>] [bats-command]
 #
+# `--only` names a subject script (run.sh, agents/grok.sh), not a mutation.
+# Named-entry filtering is a Selector-table concern; this grain is already
+# one script, one suite, one mutations file.
+#
 # Deliberately breaks one thing at a time - a bound of the Termination Contract
 # in run.sh, a guard in the credential inventory - runs that script's suite
 # against the broken copy, and reports how many tests went red. Anything whose
@@ -29,6 +33,7 @@ subjects=(
     "assert-credentials.sh|tests/assert-credentials.bats|tests/credential-mutations.py"
     "seed-run.sh|tests/seed-run.bats|tests/seed-mutations.py"
     "propose.sh|tests/propose.bats|tests/propose-mutations.py"
+    "reconcile.sh|tests/reconcile.bats|tests/reconcile-mutations.py"
     "pr-sources/github.sh|tests/pr-source.bats|tests/pr-mutations.py"
     "notify-sources/github-pr-comment.sh|tests/notify-source.bats|tests/notify-mutations.py"
     "boundary-harness.sh|tests/boundary.bats|tests/boundary-harness-mutations.py"

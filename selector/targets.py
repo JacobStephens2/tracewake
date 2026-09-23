@@ -427,6 +427,162 @@ class Instance:
         )
 
 
+HERE = Path(__file__).resolve().parent
+
+# How many Dispatches one Cycle may hold at once (issue #37). Serial is the
+# established behavior, so the default is 1; zero or negative is not a drain
+# and is refused at preflight. Review Cap, not this number, remains the
+# throughput bound (ADR 0021 as amended).
+DRAIN_CONCURRENCY_VAR = "SELECTOR_DRAIN_CONCURRENCY"
+DEFAULT_DRAIN_CONCURRENCY = 1
+
+
+@dataclass(frozen=True)
+class Config:
+    """One cycle's configuration: the target it works, and the instance it
+    works it from.
+
+    The two halves are deliberately one object. Everything below `target` is
+    the instance - the same for every repository this controller works - and
+    the target carries what differs: its labels, who may hand work over on
+    it, its checkouts, its token, its guest image, its review cap and what a
+    finished Run does with its work. A second target is a second `Config`
+    around the same instance values, which is what makes it a stanza rather
+    than a second controller (issue #3).
+
+    The target's own fields are read through properties rather than copied,
+    so there is one spelling of "the review label" and a Config cannot be
+    built that disagrees with the stanza it came from.
+    """
+
+    target: Target
+    tracker_command: str
+    box_facts_command: str
+    box_facts_timeout_seconds: int
+    guardrail_command: str
+    guardrail_timeout_seconds: int
+    board_timeout_seconds: int
+    guardrail_trees: tuple[GuardrailTree, ...]
+    drain_concurrency: int
+
+    @property
+    def task_repo(self) -> str:
+        return self.target.repo
+
+    @property
+    def label(self) -> str:
+        return self.target.labels.ready
+
+    @property
+    def needs_info_label(self) -> str:
+        return self.target.labels.needs_info
+
+    @property
+    def review_label(self) -> str:
+        return self.target.labels.review
+
+    @property
+    def human_label(self) -> str:
+        return self.target.labels.human
+
+    @property
+    def allowlist(self) -> tuple[str, ...]:
+        return self.target.labeler_allowlist
+
+    @property
+    def review_cap(self) -> int:
+        return self.target.review_cap
+
+    @classmethod
+    def for_target(cls, target: Target) -> "Config":
+        env = os.environ.get
+        return cls(
+            target=target,
+            tracker_command=env(
+                "SELECTOR_TRACKER_COMMAND", str(HERE / "tracker-sources" / "github.sh")
+            ),
+            box_facts_command=env(
+                "SELECTOR_BOX_FACTS_COMMAND",
+                str(HERE / "box-sources" / "facts-local.sh"),
+            ),
+            # Short on purpose. This is a status read, and a status read that
+            # can hold a cycle open is worse than one that goes missing: the
+            # dispatch behind it is what the cycle is for.
+            box_facts_timeout_seconds=int(
+                env("SELECTOR_BOX_FACTS_TIMEOUT_SECONDS", "60")
+            ),
+            guardrail_command=env(
+                "SELECTOR_GUARDRAIL_COMMAND",
+                str(HERE / "guardrail-sources" / "protection.sh"),
+            ),
+            # One `gh api` call and one walk of the deployed tree, on a cycle
+            # that has work to do: the same reasoning as the box read above.
+            guardrail_timeout_seconds=int(
+                env("SELECTOR_GUARDRAIL_TIMEOUT_SECONDS", "30")
+            ),
+            # Shorter still, and for a sharper version of the same reason: the
+            # queue board's tracker reads happen inside a page request. Three
+            # of them against a live GitHub queue took about three seconds when
+            # this was measured, so ten seconds is a tracker that is broken
+            # rather than slow - and a column saying so beats a page that
+            # hangs.
+            board_timeout_seconds=int(
+                env("SELECTOR_BOARD_TIMEOUT_SECONDS", "10")
+            ),
+            guardrail_trees=load_guardrail_trees(),
+            drain_concurrency=_drain_concurrency(),
+        )
+
+
+    @classmethod
+    def load(cls, repo: str | None = None) -> tuple["Config", ...]:
+        """Every target this cycle is to work, configured.
+
+        The preflight (issue #3): it raises `NotConfigured` naming the
+        missing value, and it is called before the tracker command is run, so
+        a half-configured instance stops without having read or written
+        anything.
+
+        Both halves, and the instance first. An instance value that is absent
+        is not caught by the script that reads it until the cycle has already
+        read the queue, seeded a branch and pushed it - `observe_box` treats a
+        box it cannot read as a status failure and carries on, by design - so
+        checking it here is what makes "before any tracker read" true of the
+        instance and not only of the targets.
+        """
+        Instance.from_env()
+        _drain_concurrency()
+        return tuple(
+            cls.for_target(target)
+            for target in select(load(), repo)
+        )
+
+
+def _drain_concurrency() -> int:
+    """How many Dispatches this Cycle may hold at once.
+
+    Unset defaults to 1, which is today's serial drain. Zero or negative is
+    a configuration error: a cap of nothing is a paused instance, and pausing
+    has its own control. Named at preflight like every other instance value.
+    """
+    raw = os.environ.get(DRAIN_CONCURRENCY_VAR, str(DEFAULT_DRAIN_CONCURRENCY))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise NotConfigured(
+            f"{DRAIN_CONCURRENCY_VAR} is {raw!r}, which is not a positive"
+            " whole number. It names how many Dispatches a Cycle may hold"
+            " at once."
+        ) from None
+    if value < 1:
+        raise NotConfigured(
+            f"{DRAIN_CONCURRENCY_VAR} is {value}, and a concurrency of less"
+            f" than 1 is not a drain: {DRAIN_CONCURRENCY_VAR} names how many"
+            " Dispatches a Cycle may hold at once."
+        )
+    return value
+
+
 def overlaid(overlay: dict[str, str] | None) -> dict[str, str] | None:
     """This process's environment with a target's values laid over it.
 
@@ -495,6 +651,204 @@ def load(path: Path | None = None) -> tuple[Target, ...]:
     return targets
 
 
+def _literal(value: Any) -> str:
+    """One TOML value, quoted the way a stanza is written by hand."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_literal(item) for item in value) + "]"
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _dump(remaining: tuple[Target, ...]) -> str:
+    """The remaining stanzas as TOML, or a comment when there are none.
+
+    An empty instance is a file with no `[[target]]`, not a deleted file:
+    the variable still names something readable, and the next load is the
+    same refusal a Cycle already journals at preflight.
+    """
+    if not remaining:
+        return (
+            "# No [[target]] stanzas. A Cycle refuses at preflight until one"
+            " is declared.\n"
+        )
+    chunks = []
+    for target in remaining:
+        lines = [
+            "[[target]]",
+            f"repo = {_literal(target.repo)}",
+            f"work_repo = {_literal(str(target.work_repo))}",
+            f"box_repo = {_literal(target.box_repo)}",
+            f"token_file = {_literal(target.token_file)}",
+            f"guest_template = {_literal(target.guest_template)}",
+            f"labeler_allowlist = {_literal(target.labeler_allowlist)}",
+        ]
+        if target.review_cap != DEFAULT_REVIEW_CAP:
+            lines.append(f"review_cap = {_literal(target.review_cap)}")
+        if target.landing != LANDING_MODES[0]:
+            lines.append(f"landing = {_literal(target.landing)}")
+        renamed = {
+            key: getattr(target.labels, key)
+            for key in DEFAULT_LABELS
+            if getattr(target.labels, key) != DEFAULT_LABELS[key]
+        }
+        if renamed:
+            lines.append("")
+            lines.append("[target.labels]")
+            lines += [f"{key} = {_literal(value)}" for key, value in renamed.items()]
+        chunks.append("\n".join(lines) + "\n")
+    return "\n".join(chunks)
+
+
+def _write(path: Path, remaining: tuple[Target, ...]) -> None:
+    """Replace the targets file atomically with the remaining stanzas."""
+    text = _dump(remaining)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        if path.exists():
+            tmp.chmod(path.stat().st_mode)
+        else:
+            tmp.chmod(0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise NotConfigured(
+            f"{TARGETS_FILE_VAR} names {path}, which could not be written: {exc}"
+        ) from exc
+
+
+def _existing(where: Path) -> tuple[Target, ...]:
+    """The targets already declared, or none.
+
+    A missing file or a file with no `[[target]]` is an empty instance,
+    which is what add() writes into. A file that exists and is malformed
+    is not: overwriting it would hide the diagnosis.
+    """
+    if not where.exists():
+        return ()
+    try:
+        return load(where)
+    except NotConfigured as exc:
+        try:
+            document = tomllib.loads(where.read_bytes().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+            raise exc
+        if document.get("target"):
+            raise exc
+        return ()
+
+
+def _short_name(repo: str) -> str:
+    """The last path component of `owner/name`, which is what the Host's
+    checkouts and token files are named after."""
+    return repo.rsplit("/", 1)[-1]
+
+
+def _rename_path(value: str, old: str, new: str) -> str:
+    """Replace the source Target's short name in a path, or empty.
+
+    Only the final component is rewritten: a parent directory that
+    happens to match the name (`/home/loop/loop`) stays put. A path
+    that does not carry the name is not reused — two Targets sharing
+    a checkout or a token is the failure this exists to prevent.
+    """
+    if not old:
+        return ""
+    parent, sep, last = value.rpartition("/")
+    if last == old:
+        renamed = new
+    elif old in last:
+        renamed = last.replace(old, new, 1)
+    else:
+        return ""
+    return parent + sep + renamed
+
+
+def draft(repo: str, source: Target) -> dict[str, Any]:
+    """A stanza for `repo`, filled from an existing Target.
+
+    Path fields that carry the source's short name have it substituted.
+    guest_template and labeler_allowlist are copied: they are facts
+    about the instance, not about the repository. No host path is
+    invented — a layout the instance has never declared stays blank.
+    """
+    old = _short_name(source.repo)
+    new = _short_name(repo)
+    return {
+        "repo": repo,
+        "work_repo": _rename_path(str(source.work_repo), old, new),
+        "box_repo": _rename_path(source.box_repo, old, new),
+        "token_file": _rename_path(source.token_file, old, new),
+        "guest_template": source.guest_template,
+        "labeler_allowlist": list(source.labeler_allowlist),
+    }
+
+
+def _fill_from_last(stanza: dict[str, Any], current: tuple[Target, ...]) -> dict[str, Any]:
+    """Blank required fields, filled from the last declared Target.
+
+    A submitted value wins. A layout the last Target does not
+    demonstrate stays blank, and Target.load refuses it by name.
+    """
+    repo = stanza.get("repo") or ""
+    if not repo or not current:
+        return stanza
+    filled = draft(str(repo), current[-1])
+    merged = dict(filled)
+    for key, value in stanza.items():
+        if value:
+            merged[key] = value
+    return merged
+
+
+def add(stanza: dict[str, Any], path: Path | None = None) -> tuple[Target, ...]:
+    """Enroll one Target: append its stanza, leave the rest in file order.
+
+    The Host's checkouts and token files are not created. Adding a Target
+    is putting it on the Cycle's list, not provisioning the machine it
+    will run on. Blank path, guest, and allowlist fields are filled from
+    the last declared Target, so a second enrollment may name only the
+    repository.
+    """
+    where = path or targets_file()
+    current = _existing(where)
+    incoming = Target.load(
+        _fill_from_last(stanza, current),
+        where=str(where),
+        index=len(current) + 1,
+    )
+    if incoming.repo in {target.repo for target in current}:
+        raise NotConfigured(
+            f"{where} already declares {incoming.repo}. Two stanzas for one"
+            " repository would be two review caps and two work checkouts for"
+            " one queue."
+        )
+    remaining = current + (incoming,)
+    _write(where, remaining)
+    return remaining
+
+
+def remove(repo: str, path: Path | None = None) -> tuple[Target, ...]:
+    """Unenroll one Target: drop its stanza, leave the rest in file order.
+
+    The Host's checkouts and token files stay put. Removing a Target is
+    taking it off the Cycle's list, not cleaning the machine it ran on.
+    """
+    where = path or targets_file()
+    current = load(where)
+    remaining = tuple(target for target in current if target.repo != repo)
+    if len(remaining) == len(current):
+        raise _unknown_repo(repo, current)
+    _write(where, remaining)
+    return remaining
+
+
 def select(targets: tuple[Target, ...], repo: str | None) -> tuple[Target, ...]:
     """The targets a cycle is to work: all of them, or the one named.
 
@@ -507,7 +861,11 @@ def select(targets: tuple[Target, ...], repo: str | None) -> tuple[Target, ...]:
     for target in targets:
         if target.repo == repo:
             return (target,)
-    raise NotConfigured(
+    raise _unknown_repo(repo, targets)
+
+
+def _unknown_repo(repo: str, declared: tuple[Target, ...]) -> NotConfigured:
+    return NotConfigured(
         f"no target declares repo = {repo!r}. Declared: "
-        + ", ".join(target.repo for target in targets)
+        + ", ".join(target.repo for target in declared)
     )

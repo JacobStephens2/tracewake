@@ -1,5 +1,11 @@
 """Dispatch at its boundary: real cycle.py and real git, faked everything else.
 
+These still fork because production doing is ADR 0004's substitutable-command
+seam - Cycle decisions live in-process. Two of the forked Cycle wiring tests
+live here: the happy drain (`test_the_whole_dispatch_sequence_is_issued`) and
+a failing Cycle's exit code
+(`test_a_box_that_starts_no_run_fails_the_cycle_loudly`).
+
 Same rule as the cycle suite - nothing here reads Selector internals. Each
 test runs the real `cycle.py` as a subprocess against a canned queue and
 observes only what a dispatch can be seen to do from outside: which commands
@@ -47,6 +53,7 @@ from conftest import (
     CLEAN_RUN,
     CYCLE,
     FAILED_RUN,
+    RUN_BRIEFING_TEXT,
     SELECTOR,
     _script,
     events,
@@ -61,6 +68,7 @@ from conftest import (
 
 
 def test_the_whole_dispatch_sequence_is_issued(db, box):
+    """Forked Cycle wiring: a happy drain through the runner."""
     result = box.run(db, [issue(645)])
     assert result.returncode == 0, result.stderr
     log = box.commands()
@@ -152,6 +160,55 @@ def test_the_runs_stdout_summary_is_captured_into_the_journal(db, box):
     assert outcome["attempt"] == 1
 
 
+def test_the_runs_first_briefing_is_journaled(db, box):
+    """Issue #80. The box emits the first Iteration's rendered briefing and
+    the Selector journals it as a vocabulary-owned payload - the stored fact
+    of what the agent read, provable after the scripts change."""
+    box.run(db, [issue(645)])
+    briefing = one(db, "run.briefing")
+    assert briefing["issue"] == 645
+    assert briefing["attempt"] == 1
+    assert briefing["branch"] == "loop/645-the-nightly-sync-script"
+    assert briefing["task_ref"] == "acme/widgets#645"
+    assert briefing["iteration"] == 1
+    assert briefing["briefing"] == RUN_BRIEFING_TEXT
+
+
+def test_the_briefing_row_precedes_the_outcome_and_carries_no_credentials(
+        db, box):
+    """Journaled before the outcome, so the rows read in the order the Run
+    happened them - and safe for the window to show both roles."""
+    box.run(db, [issue(645)])
+    kinds = [row["kind"] for row in events(db)]
+    assert kinds.index("run.briefing") < kinds.index("run.outcome")
+    payload = one(db, "run.briefing")
+    assert set(payload) == {"cycle", "issue", "attempt", "branch",
+                            "task_ref", "iteration", "briefing"}
+    text = payload["briefing"]
+    assert "PLAN.md" in text
+    assert "LOOP: WORK COMPLETE" in text
+    for secret in ("ghp_", "github_pat_", "TOKEN", "PRIVATE KEY"):
+        assert secret not in text
+
+
+def test_a_box_that_predates_the_briefing_journals_no_briefing_row(db, box):
+    """An old box emits no block: the dispatch still succeeds, journaling
+    nothing for it rather than failing."""
+    box.run_summary(CLEAN_RUN.split("LOOP_BRIEFING_BEGIN")[0])
+    result = box.run(db, [issue(645)])
+    assert result.returncode == 0, result.stderr
+    assert events(db, "run.briefing") == []
+    assert one(db, "run.outcome")["ended_by"] == "iteration-cap"
+
+
+def test_a_dispatch_that_started_no_run_journals_no_briefing(db, box):
+    """No Run, no briefing: a box that never connected leaves no stored
+    fact behind."""
+    box.run_summary("ssh: no route\n")
+    box.run(db, [issue(645)], BOX_EXIT=255)
+    assert events(db, "run.briefing") == []
+
+
 def test_the_dispatch_row_carries_what_the_run_was_seeded_from(db, box):
     box.run(db, [issue(645)])
     dispatched = one(db, "run.dispatched")
@@ -175,7 +232,9 @@ def test_a_run_that_ended_on_a_bound_is_not_a_selector_failure(db, box):
 
 
 def test_a_box_that_starts_no_run_fails_the_cycle_loudly(db, box):
-    """An SSH that never connected prints no LOOP_RUN_ENDED_BY. That absence
+    """Forked Cycle wiring: a failing Cycle's exit code.
+
+    An SSH that never connected prints no LOOP_RUN_ENDED_BY. That absence
     is the discriminator: a Run that ended badly reported a bound, and a
     dispatch that never happened cannot."""
     box.run_summary("ssh: connect to host loop.etadventures.com port 22: No route\n")
@@ -379,18 +438,6 @@ def test_keeping_a_progress_log_is_journaled(db, box):
 # --- The loud skip ----------------------------------------------------------
 
 
-def test_a_missing_section_issue_is_commented_on_and_swapped_to_needs_info(db, box):
-    body = "## Owning area\n\nThe nightly sync script\n"
-    result = box.run(db, [issue(645, body=body)])
-    assert result.returncode == 0, result.stderr
-    log = box.commands()
-    assert "issue acme/widgets comment 645" in log
-    assert "issue acme/widgets relabel 645 needs-info ready-for-agent" in log
-    assert log.index("comment 645") < log.index("relabel 645"), (
-        "a swap with no comment takes the issue out of the queue silently"
-    )
-
-
 def test_the_comment_names_the_gap_and_the_way_back(db, box):
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)])
@@ -412,21 +459,6 @@ def test_the_return_is_journaled(db, box):
     assert one(db, "cycle.finished")["returned"] == [645]
 
 
-def test_a_return_the_tracker_refused_is_journaled_and_pages(db, box):
-    """Story 31, applied to the loud skip: an issue the Selector could not
-    hand back is still sitting in the queue with nothing on it saying why, and
-    a cycle that exited 0 for that would leave the operator with a silence
-    that looks exactly like an empty queue."""
-    body = "## Owning area\n\nThe nightly sync script\n"
-    result = box.run(db, [issue(645, body=body)], ISSUE_EXIT=1)
-
-    assert result.returncode == 1, result.stdout
-    failed = one(db, "issue.return-failed")
-    assert failed["number"] == 645
-    assert "error" in failed
-    assert events(db, "issue.returned") == []
-
-
 def test_a_returned_issue_does_not_stop_a_later_one_being_dispatched(db, box):
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body), issue(648)])
@@ -434,17 +466,8 @@ def test_a_returned_issue_does_not_stop_a_later_one_being_dispatched(db, box):
     assert one(db, "run.dispatched")["issue"] == 648
 
 
-def test_an_issue_is_returned_even_when_a_cap_halts_the_cycle(db, box, dispatch):
-    """Handing work back is not spending a Run. An issue the Selector will
-    never seed should not wait for a free budget to be told so."""
-    dispatch(db, 640, outcome=None)
-    body = "## Owning area\n\nThe nightly sync script\n"
-    box.run(db, [issue(645, body=body)])
-    assert one(db, "issue.returned")["number"] == 645
-    assert one(db, "cycle.finished")["halted"] == "run-in-flight"
-
-
 def test_a_dry_run_hands_nothing_back(db, box):
+    """Still forks: production doing must no-op under `--dry-run` (ADR 0004)."""
     body = "## Owning area\n\nThe nightly sync script\n"
     box.run(db, [issue(645, body=body)], dry_run=True)
     log = box.commands()
@@ -456,31 +479,13 @@ def test_a_dry_run_hands_nothing_back(db, box):
 
 
 def test_a_dry_run_dispatches_nothing(db, box):
+    """Still forks: production doing must no-op under `--dry-run` (ADR 0004)."""
     box.run(db, [issue(645)], dry_run=True)
     log = box.commands()
     assert "seed " not in log
     assert "box " not in log
     assert box.remote_branches() == ["master"]
     assert not events(db, "run.dispatched")
-
-
-def test_a_return_github_refuses_is_journaled_and_pages(db, box):
-    """Story 31: the Selector's own failures reach the operator. An issue
-    still sitting in the queue with nothing on it saying why is exactly the
-    silence the loud skip exists to prevent."""
-    body = "## Owning area\n\nThe nightly sync script\n"
-    result = box.run(db, [issue(645, body=body)], ISSUE_EXIT=1)
-    assert result.returncode != 0
-    assert not events(db, "issue.returned")
-    assert one(db, "issue.return-failed")["number"] == 645
-
-
-def test_only_a_missing_section_is_shouted_at(db, box):
-    """Every other skip is quiet. A blocked issue commented on every half hour
-    is a queue nobody reads."""
-    box.run(db, [issue(646, blockedBy=1), issue(635, openSubIssues=2)])
-    assert "issue " not in box.commands()
-    assert not events(db, "issue.returned")
 
 
 # --- The Seeding command, unfaked -------------------------------------------

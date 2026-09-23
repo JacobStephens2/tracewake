@@ -42,10 +42,18 @@
 # re-apply is a comparison instead of a re-run. `signed-by` is templated from
 # the variable above rather than repeating the literal, so the key task and this
 # one cannot disagree about where the key is.
+#
+# Architecture follows the Host. The droplet is amd64; a local Host on Apple
+# Silicon is arm64. Hardcoding amd64 is what broke the latter (issue #107).
+# A lookup on a map with those two keys fails loudly on anything else.
+- name: Docker apt architecture for this Host
+  ansible.builtin.set_fact:
+    loop_execution_boundary_apt_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts.architecture] }}"
+
 - name: Docker's apt repository
   ansible.builtin.apt_repository:
     repo: >-
-      deb [arch=amd64 signed-by={{ loop_execution_boundary_apt_key_path }}]
+      deb [arch={{ loop_execution_boundary_apt_arch }} signed-by={{ loop_execution_boundary_apt_key_path }}]
       https://download.docker.com/linux/ubuntu noble stable
     filename: docker   # /etc/apt/sources.list.d/docker.sources, replacing nothing else
     state: present
@@ -106,6 +114,14 @@
 # unprivileged `loop` account. Group membership is the vendor's documented
 # prerequisite ("User account in the kvm group") and is the whole of what `loop`
 # gains - it is still not in sudo, and /dev/kvm is not a path to the host.
+#
+# The stock Ubuntu container image has no kvm group; the cloud image does.
+# Declare it so a local Host still applies (issue #107).
+- name: The kvm group the Execution Boundary needs
+  ansible.builtin.group:
+    name: kvm
+    system: true
+
 - name: The Loop's account can open /dev/kvm
   ansible.builtin.user:
     name: loop
@@ -272,8 +288,13 @@
       Declare its hosts there, each with a `need:` saying what breaks without it,
       before pointing the role at it.
 
+# Ansible's sudo invocation can give sbx a terminal on stdin. On an
+# uninitialized store that starts an interactive spinner instead of returning
+# the error the guard below expects (observed hanging for over 3.5 hours).
+# Read stdin from /dev/null so the fresh-box path fails immediately, while
+# preserving stdout for posture parsing. The redirect requires `shell`.
 - name: Read the boundary's current egress posture
-  ansible.builtin.command: sbx policy ls --json
+  ansible.builtin.shell: sbx policy ls --json </dev/null
   become: true
   become_user: loop
   register: loop_execution_boundary_policy_state
@@ -325,6 +346,62 @@
                  else 'nothing to do') }}
   changed_when: false
 
+# Issue #72: without Docker sign-in `sbx policy init` waits indefinitely -
+# ansible sat at "Choose the egress profile" with no error while `sbx`
+# re-read the absent auth metadata. So before anything below touches the
+# policy store, the play probes the sign-in state and fails promptly with the
+# recovery step. This runs BEFORE the reset on purpose: clearing the store
+# merely to discover nobody is signed in would destroy a posture that was
+# fine, and recovery must never reset an existing store just to recover
+# authentication.
+#
+# `sbx diagnose` is the signal because it reports authentication and daemon
+# health independently - `sbx policy ls` on a fresh box answers "has not been
+# initialized" even after a good login, so it cannot distinguish the two
+# (see wizards/loop-sbx-login.sh stage 3). `failed_when: false` here because
+# the assertion below owns the failure message; a diagnose that cannot run is
+# read as "not signed in" by the same gate.
+#
+# The one command task besides the posture read that runs under `--check`,
+# for the same reason: it only READS. Skipping it would let a dry run bless
+# a box whose init is about to fail.
+- name: Check the boundary's sign-in state before touching the policy store
+  ansible.builtin.shell: sbx diagnose </dev/null
+  become: true
+  become_user: loop
+  register: loop_execution_boundary_sbx_diagnose
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  # Bounded like the init below it: a read that should return in seconds, and
+  # a stall here must fail into the sign-in message rather than hold the play.
+  # A timeout reads as "not signed in" through `failed_when: false` above.
+  timeout: "{{ loop_execution_boundary_policy_init_timeout }}"
+  when: >-
+    (not ansible_check_mode or
+     (loop_boundary_files.results[1].stat.exists and
+      ansible_facts.getent_passwd['loop'] is not none))
+    and (loop_execution_boundary_policy_needs_init | bool)
+
+# Fails the play - before the reset, before the init - when the store needs
+# choosing and nobody is signed in. On an already-initialized box with no
+# drift this is skipped entirely: a lapsed sign-in there is not this role's
+# to police, and failing would block applies that touch nothing.
+- name: The boundary is signed in before the policy store is touched
+  ansible.builtin.assert:
+    that: loop_execution_boundary_sbx_authenticated | bool
+    fail_msg: >-
+      The Loop account is not signed in to Docker, so `sbx policy init`
+      cannot proceed and the play is stopping instead of hanging. Sign in
+      first by running wizards/loop-sbx-login.sh with LOOP_HOST set to this
+      box (e.g. LOOP_HOST=<host> ./wizards/loop-sbx-login.sh), then re-apply.
+      `sbx diagnose` on the box is the next read if the sign-in disagrees.
+  when: >-
+    (not ansible_check_mode or
+     (loop_boundary_files.results[1].stat.exists and
+      ansible_facts.getent_passwd['loop'] is not none))
+    and (loop_execution_boundary_policy_needs_init | bool)
+
 # `sbx policy init` refuses to run twice, so moving an already-initialized box
 # means clearing the store first. This is the destructive step in the role and
 # the reason applies are an operator action: `reset` stops the daemon and, with
@@ -345,11 +422,10 @@
 # ansible's pipe. The exit status is still `reset`'s own, so a real failure
 # still fails the task, and the log is on the box if one ever does.
 #
-# Only this task needs it. Every other `sbx` command in this role runs with a
-# daemon already up - the unit started it, or the restart below did - so none of
-# them spawns anything. The read task above is the one to be careful with if
-# these are ever reordered: it needs its stdout, so it must stay after the task
-# that guarantees a daemon is running.
+# Only this task redirects output. Every other `sbx` command in this role runs
+# with a daemon already up - the unit started it, or the restart below did - so
+# none of them spawns anything. If these tasks are reordered, the posture read
+# must stay after the task that guarantees a daemon is running: it needs stdout.
 - name: Clear the policy store so the profile can be re-chosen
   ansible.builtin.shell: >-
     sbx policy reset --force
@@ -402,12 +478,22 @@
 
 # Deny by default. On a rebuilt box this is the only one of these tasks that
 # fires, because nothing has been chosen and the reset has nothing to clear.
+#
+# Bounded and stdin-detached (issue #72). The auth pre-check above is the fast
+# path - it fails before this runs when nobody is signed in - and this is the
+# backstop: `timeout` kills a stalled init after
+# `loop_execution_boundary_policy_init_timeout` seconds so an unattended apply
+# can never hang indefinitely, and `</dev/null` keeps `sbx` from seeing
+# ansible's terminal and starting an interactive spinner instead of failing.
+# `shell` rather than `command` for the redirect, the same reason the posture
+# read above is `shell`.
 - name: Choose the egress profile
-  ansible.builtin.command: "sbx policy init {{ loop_execution_boundary_policy_profile }}"
+  ansible.builtin.shell: "sbx policy init {{ loop_execution_boundary_policy_profile }} </dev/null"
   become: true
   become_user: "{{ 'root' if ansible_check_mode else 'loop' }}"
   when: loop_execution_boundary_policy_needs_init | bool
   changed_when: true
+  timeout: "{{ loop_execution_boundary_policy_init_timeout }}"
 
 # And then the allowlist, in one command rather than one per host: `sbx policy
 # allow network` takes a comma-separated list and writes a separate rule per

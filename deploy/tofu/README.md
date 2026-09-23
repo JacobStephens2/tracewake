@@ -20,6 +20,10 @@ tofu apply -var-file=...
 Omitting any variable fails before apply. `tofu output host_ip` gives the
 address the DNS wizard points the hostname at.
 
+A laptop Host is the sibling module [`local/`](local/): the same Ubuntu
+24.04 machine, as a Docker container, configured by the same play
+(issue #107, ADR 0031).
+
 ## Shape
 
 The size and region must offer nested virtualization: `sbx` boots a

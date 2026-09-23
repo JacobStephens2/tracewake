@@ -1,7 +1,7 @@
-"""Window accounts: passwords, sessions, cookies, CSRF, roles, invites, reset
+"""Dashboard accounts: passwords, sessions, cookies, CSRF, roles, invites, reset
 (issues #38, #40, #41, #43, ADR 0028).
 
-Queries live here rather than in the Journal writer: the window is the only
+Queries live here rather than in the Journal writer: the dashboard is the only
 reader and writer of `web.accounts` / `web.sessions` / `web.account_tokens`.
 The connection is the Journal's, because the tables sit in the same postgres
 (ADR 0015).
@@ -55,7 +55,7 @@ class NotAuthorised(Exception):
 
 
 def refuse() -> HTMLResponse:
-    """The one refusal the window returns for a control the caller cannot use."""
+    """The one refusal the dashboard returns for a control the caller cannot use."""
     return HTMLResponse("not authorised", status_code=403)
 
 
@@ -83,6 +83,10 @@ class ResetInvalid(Exception):
     """The reset token is missing, used, or past its expiry."""
 
 
+class PasswordInvalid(Exception):
+    """The password change failed validation."""
+
+
 @dataclass(frozen=True)
 class Account:
     id: int
@@ -103,6 +107,10 @@ class RequireRole:
     Callable-instance, attached router-wide so a control added to that
     router is gated without a per-route reminder (issue #40).
     """
+
+    @property
+    def __globals__(self):
+        return self.__call__.__globals__
 
     def __init__(self, role: str):
         self.role = role
@@ -172,6 +180,7 @@ def sign_in_location(request: Request, next_url: str = "/") -> str:
 def is_public(path: str) -> bool:
     return (
         path == "/healthz"
+        or path == "/favicon.ico"
         or path == "/sign-in"
         or path == "/forgot"
         or path.startswith("/static/")
@@ -525,6 +534,51 @@ def consume_reset(token: str, password: str) -> int:
     return account_id
 
 
+def change_password(
+    account_id: int,
+    current_password: str,
+    new_password: str,
+    current_token_hash: Optional[str] = None,
+) -> None:
+    """Change an account's password.
+
+    Verifies current_password against the stored hash.
+    Refuses empty new_password.
+    Updates web.accounts with the new argon2id hash.
+    Deletes other sessions for this account.
+    """
+    if not new_password:
+        raise PasswordInvalid("A new password is required.")
+    with _tx() as conn:
+        existing = conn.execute(
+            "SELECT password_hash FROM web.accounts WHERE id = %s",
+            (account_id,),
+        ).fetchone()
+        if existing is None or existing[0] is None:
+            raise PasswordInvalid("Account not found or has no password.")
+        stored_hash = existing[0]
+        ok, _ = verify_password(current_password, stored_hash)
+        if not ok:
+            raise PasswordInvalid("Current password is incorrect.")
+        new_hash = hash_password(new_password)
+        conn.execute(
+            "UPDATE web.accounts SET password_hash = %s WHERE id = %s",
+            (new_hash, account_id),
+        )
+        if current_token_hash:
+            conn.execute(
+                "DELETE FROM web.sessions"
+                " WHERE account_id = %s AND token_hash != %s",
+                (account_id, current_token_hash),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM web.sessions"
+                " WHERE account_id = %s",
+                (account_id,),
+            )
+
+
 def list_accounts() -> list[dict]:
     with journal.connect() as conn:
         rows = conn.execute(
@@ -551,6 +605,26 @@ def set_role(account_id: int, role: str) -> None:
         conn.execute(
             "UPDATE web.accounts SET role = %s WHERE id = %s",
             (role, account_id),
+        )
+
+
+def load_section_order(account_id: int) -> list[str] | None:
+    """The Dashboard Account's headed-section order on `/`, or None for the default."""
+    with journal.connect() as conn:
+        row = conn.execute(
+            "SELECT section_order FROM web.accounts WHERE id = %s",
+            (account_id,),
+        ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return list(row[0])
+
+
+def save_section_order(account_id: int, keys: list[str]) -> None:
+    with journal.connect() as conn:
+        conn.execute(
+            "UPDATE web.accounts SET section_order = %s WHERE id = %s",
+            (keys, account_id),
         )
 
 

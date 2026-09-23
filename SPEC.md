@@ -58,7 +58,12 @@ Tracewake does not continuously poll tracker state transitions. Instead:
    performed by an operator listed in the target's `labeler_allowlist` (configured in
    `targets.toml`). An issue labeled by an unknown user is skipped with reason
    `labeler-not-allowlisted`.
-4. **The Issue Contract**: The issue body must satisfy the contract:
+4. **Archived repositories are not work**: GitHub makes an archived repository
+   read-only. The tracker adapter reports that fact and lists no issues; the
+   owner-wide search excludes archived repositories; a Cycle that still sees
+   the flag journals `halted: repository-archived` and does not dispatch,
+   comment, relabel, or refresh Proposals.
+5. **The Issue Contract**: The issue body must satisfy the contract:
    - `## Acceptance criteria` (**required**): A markdown section containing bulleted
      criteria. This section is parsed at Seeding and copied verbatim into the agent's
      Plan. An issue lacking this section triggers a **Loud Skip** (`missing-section`):
@@ -168,7 +173,9 @@ operates under a formal **Termination Contract** (ADR 0007):
 4. **Retry Semantics**: If a Run is cut short by `run-clock`, `consecutive-noops`, or
    agent failure on its first attempt, the Selector leaves the issue in the queue with
    its `ready` label intact. On the next cycle, it is dispatched again on the **same
-   branch**, preserving previous progress in `PROGRESS-earlier.md`.
+   branch**, preserving previous progress in `PROGRESS-earlier.md`. A failed Run still
+   proposes; that leftover draft stays open and does not make the issue ineligible
+   (#102). The retry continues the same head and reuses the existing Proposal.
 5. **Two-Attempt Limit**: If a second attempt also terminates without a successful
    proposal, the issue is routed to `ready-for-human`. Nothing is dispatched a third
    time (`attempts-exhausted`). Blind exponential retry loops are barred.
@@ -219,8 +226,16 @@ In Tracewake, **the human operator exclusively lands work**:
    (`proposal.updated`).
 3. **Conflict Visibility**: If a Proposal encounters merge conflicts (`CONFLICTING` or
    `DIRTY`), Tracewake refuses to force-update it. The Proposal is flagged on the Queue
-   Board with a visual conflict badge, signalling to the operator that manual resolution
-   or a reconcile Run is required.
+   Board with a visual conflict badge.
+4. **Reconcile Runs** (ADR 0030): A conflicting Proposal is not left to rot. During
+   each drain pass, the Selector dispatches a reconcile Run for it on the box: the base
+   branch is merged into the Proposal branch inside the microVM boundary, conflicts are
+   resolved there, the merged branch is verified against the owning issue's Check
+   suite, and only then is the Proposal branch pushed - never force-pushed, and never
+   merged to the default branch. Success is journaled once (`proposal.reconciled`).
+   A reconcile that cannot resolve the conflicts or reds the suite leaves the Proposal
+   un-merged and escalates the owning issue to `ready-for-human`
+   (`proposal.reconcile-failed`).
 
 ---
 
@@ -270,7 +285,7 @@ Tracewake keeps configuration strictly **outside the target repository**:
    repository remains completely agnostic of Tracewake's existence.
 2. **Two-Tier External Configuration**:
    - **Instance Configuration** (`tracewake.env`): Instance-wide environment variables
-     defining the database Journal DSN, box execution command (SSH or local), window URL,
+     defining the database Journal DSN, box execution command (SSH or local), dashboard URL,
      notification command, guardrail write-protection rules, and operational timeouts.
    - **Target Declarations** (`targets.toml`): A structured TOML file defining one
      `[[target]]` stanza per repository worked:
@@ -304,7 +319,7 @@ Tracewake establishes five clear, predictable interaction surfaces across the
 
 1. **The Handover**: The operator specifies acceptance criteria and adds `ready-for-agent`.
    No further human intervention is required until the Run completes.
-2. **The Queue Board** (`/` on the web window): A five-column real-time board
+2. **The Queue Board** (`/` on the dashboard): A five-column real-time board
    representing the entire queue state:
    - `eligible`: Issues meeting all criteria, ordered lowest-number first.
    - `blocked`: Issues gated by open dependencies, sub-issues, or missing sections.

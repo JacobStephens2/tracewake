@@ -14,7 +14,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 LOOP_PLAYBOOK = ROOT / "deploy" / "ansible" / "loop.yml"
-BOX_PLAYBOOK = ROOT / "deploy" / "ansible" / "box.yml"
 GUEST_ROLE_DIR = ROOT / "deploy" / "ansible" / "roles" / "loop_guest_template"
 GUEST_TASKS_FILE = GUEST_ROLE_DIR / "tasks" / "main.yml"
 GUEST_DEFAULTS_FILE = GUEST_ROLE_DIR / "defaults" / "main.yml"
@@ -26,14 +25,6 @@ CREDENTIALS_TASKS_FILE = CREDENTIALS_ROLE_DIR / "tasks" / "main.yml"
 def test_loop_playbook_syntax():
     """`ansible-playbook --syntax-check` passes for loop.yml."""
     cmd = ["ansible-playbook", "--syntax-check", str(LOOP_PLAYBOOK)]
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-    assert proc.returncode == 0, f"Playbook syntax check failed: {proc.stderr}\n{proc.stdout}"
-
-
-def test_box_playbook_exists_and_syntax():
-    """`ansible-playbook --syntax-check` passes for box.yml (AC 1 & 5)."""
-    assert BOX_PLAYBOOK.exists(), "deploy/ansible/box.yml does not exist"
-    cmd = ["ansible-playbook", "--syntax-check", str(BOX_PLAYBOOK)]
     proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
     assert proc.returncode == 0, f"Playbook syntax check failed: {proc.stderr}\n{proc.stdout}"
 

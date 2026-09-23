@@ -1,0 +1,25 @@
+{# MicroVMs on the dashboard (#97). Live instances of the Execution Boundary
+   the box is holding right now. Sampler failure degrades this widget, not
+   the board. An Iteration's microVM is destroyed when the Iteration ends,
+   so "none running" is the ordinary idle state, not a missing read. #}
+<details class="fold microvms" data-fold="microvms"{% if folds.microvms %} open{% endif %} data-microvms="{% if microvms.ok %}ok{% else %}degraded{% endif %}">
+  <summary><h2>MicroVMs</h2></summary>
+  <p>The Execution Boundary instances the box is holding right now. An
+     Iteration's microVM is destroyed when the Iteration ends.</p>
+  {% if not microvms.ok %}
+  <p class="detail">{{ microvms.error }}</p>
+  {% elif not microvms.vms %}
+  <p class="detail">none running.</p>
+  {% else %}
+  <section class="strip strip-microvms">
+    {% for vm in microvms.vms %}
+    <div class="cell">
+      <span class="cell-label"><code>{{ vm.name }}</code></span>
+      <span class="cell-value">{{ vm.status }}</span>
+      <span class="detail">agent {{ vm.agent }}
+        &middot; <code>{{ vm.workspace }}</code></span>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+</details>

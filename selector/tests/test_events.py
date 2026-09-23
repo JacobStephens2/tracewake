@@ -303,6 +303,7 @@ def test_a_dispatch_row_is_the_in_flight_lock_and_says_what_was_started():
     record = events.run_dispatched_record(row(kind, payload))
     assert record.area == "the guest image"
     assert record.branch == "loop/312-x"
+    assert record.repo == "acme/widgets"
 
 
 def test_an_iteration_row_takes_the_parsers_record_whole():
@@ -330,6 +331,38 @@ def test_the_contract_row_carries_the_boxs_own_terms():
     assert set(payload) == set(RUN_CONTEXT) | {"run_started", "contract"}
     record = events.run_contract_record(row(kind, payload))
     assert record.contract == ["Iterations: 10", "Run clock: 90m"]
+
+
+def test_the_briefing_row_carries_the_first_iterations_rendering():
+    kind, payload = events.run_briefing(
+        **RUN_CONTEXT, iteration=1, briefing="You are Iteration 1 of at most 5.")
+    assert kind == "run.briefing"
+    assert set(payload) == set(RUN_CONTEXT) | {"iteration", "briefing"}
+    record = events.run_briefing_record(row(kind, payload))
+    assert record.iteration == 1
+    assert record.briefing == "You are Iteration 1 of at most 5."
+    assert record.task_ref == "acme/widgets#312"
+
+
+def test_the_briefing_payload_names_only_credential_free_facts():
+    # What the window may show both roles with no redaction: the run's
+    # context and the rendered text - and nothing else.
+    _, payload = events.run_briefing(
+        **RUN_CONTEXT, iteration=1, briefing="Read PLAN.md.")
+    assert set(payload) == {"cycle", "issue", "attempt", "branch",
+                            "task_ref", "iteration", "briefing"}
+
+
+def test_a_briefing_reader_refuses_a_row_of_the_wrong_kind():
+    import pytest
+    with pytest.raises(ValueError):
+        events.run_briefing_record(row("run.outcome", {"issue": 1}))
+
+
+def test_a_sparse_briefing_row_reads_as_a_record_with_gaps():
+    record = events.run_briefing_record(row("run.briefing", {"issue": 9001}))
+    assert record.issue == 9001
+    assert record.briefing is None
 
 
 def test_a_watch_failure_is_one_row_naming_the_error():
@@ -506,6 +539,55 @@ def test_proposal_updated_and_failed_events_and_records():
     assert rec_f.error == "GitHub refused update-branch"
     assert rec_f.url == "https://github.invalid/acme/widgets/pull/13"
     assert rec_f.issue == 631
+
+
+def test_proposal_reconciled_and_failed_events_and_records():
+    kind, payload = events.proposal_reconciled(
+        cycle=7, proposal=13, url="https://github.invalid/acme/widgets/pull/13",
+        issue=631, branch="loop/631-the-nightly-sync")
+    assert kind == "proposal.reconciled"
+    assert payload["cycle"] == 7
+    assert payload["proposal"] == 13
+    assert payload["number"] == 13
+    assert payload["url"] == "https://github.invalid/acme/widgets/pull/13"
+    assert payload["issue"] == 631
+    assert payload["branch"] == "loop/631-the-nightly-sync"
+
+    rec = events.proposal_reconciled_record(row(kind, payload, id=101))
+    assert rec.id == 101
+    assert rec.cycle == 7
+    assert rec.proposal == 13
+    assert rec.url == "https://github.invalid/acme/widgets/pull/13"
+    assert rec.issue == 631
+    assert rec.branch == "loop/631-the-nightly-sync"
+
+    kind_f, payload_f = events.proposal_reconcile_failed(
+        cycle=7, proposal=14, error="the suite went red after the merge",
+        url="https://github.invalid/acme/widgets/pull/14", issue=632,
+        branch="loop/632-the-nightly-sync",
+        added_label="ready-for-human", removed_label="awaiting-review")
+    assert kind_f == "proposal.reconcile-failed"
+    assert payload_f["cycle"] == 7
+    assert payload_f["proposal"] == 14
+    assert payload_f["number"] == 14
+    assert payload_f["error"] == "the suite went red after the merge"
+    assert payload_f["url"] == "https://github.invalid/acme/widgets/pull/14"
+    assert payload_f["issue"] == 632
+    assert payload_f["branch"] == "loop/632-the-nightly-sync"
+    assert payload_f["added_label"] == "ready-for-human"
+    assert payload_f["removed_label"] == "awaiting-review"
+
+    rec_f = events.proposal_reconcile_failed_record(
+        row(kind_f, payload_f, id=102))
+    assert rec_f.id == 102
+    assert rec_f.cycle == 7
+    assert rec_f.proposal == 14
+    assert rec_f.error == "the suite went red after the merge"
+    assert rec_f.url == "https://github.invalid/acme/widgets/pull/14"
+    assert rec_f.issue == 632
+    assert rec_f.branch == "loop/632-the-nightly-sync"
+    assert rec_f.added_label == "ready-for-human"
+    assert rec_f.removed_label == "awaiting-review"
 
 
 # --- Unenrolled-Target warning (#39) ----------------------------------------

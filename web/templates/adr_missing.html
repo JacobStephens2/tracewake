@@ -1,10 +1,8 @@
-{% extends "base.html" %}
-{% block title %}not found — decisions{% endblock %}
-{% block content %}
-<header>
-  <p class="eyebrow">404</p>
-  <h1>No such decision</h1>
-  <p class="lede">There is no ADR <code>{{ slug }}</code>.
-  <a href="/adr">See all decisions.</a></p>
-</header>
+{% extends "terminal_base.html" %}
+{% block title %}No such decision // Decisions{% endblock %}
+{% block logo %}TRACEWAKE // DECISIONS{% endblock %}
+{% block main %}
+    <h1>No such decision</h1>
+    <p>There is no ADR <code>{{ slug }}</code>.
+       <a href="/adr">See all decisions.</a></p>
 {% endblock %}

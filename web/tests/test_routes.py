@@ -46,8 +46,7 @@ def test_events_route_is_configured():
 def test_lessons_nav_link_resolves_to_the_essay():
     """The nav's "lessons" link, the /site mount, and the essay filename
     must agree: a rename in site/ that the nav does not follow lands the
-    reader on the wrong document. (/adr wears base.html; the board wears
-    the terminal shell, which carries no lessons link.)"""
+    reader on the wrong document."""
     import re
 
     body = client.get("/adr").text

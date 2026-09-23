@@ -37,7 +37,7 @@ holds, and the reason is the string journaled with it:
 | `labeler-not-allowlisted` | the most recent `ready-for-agent` labeling on the timeline was not by an allowlisted operator - the Handover is the label, so the labeler is who is trusted |
 | `blocked-by-open-dependency` | native tracker edges report open blockers. Prose "Blocked by" text is deliberately not read |
 | `has-open-sub-issues` | a parent spec is not a unit of work |
-| `proposal-open` | an open pull request closes it: the issue is in flight |
+| `proposal-open` | an open pull request closes it: the issue is in flight. Not the leftover draft of a failed attempt that still has retry budget (#102): that draft is the branch the retry continues |
 | `attempts-exhausted` | already dispatched `MAX_ATTEMPTS` times (one automatic retry) |
 | `missing-section` | the label promises an `Acceptance criteria` section and it is absent or empty |
 
@@ -53,9 +53,21 @@ as "what did it?".
 
 **Proposal freshness** (ADR 0023). During each drain, every open Proposal that
 is behind its base and mergeable is brought up to date via `SELECTOR_ISSUE_COMMAND`
-`update-branch` and journaled once (`proposal.updated`). Conflicting Proposals
-are not updated and are displayed as conflicting on the board. A forge refusal
+`update-branch` and journaled once (`proposal.updated`). A forge refusal
 is journaled (`proposal.update-failed`) without failing or halting any dispatch.
+
+**Reconcile Runs** (ADR 0030, issue #34). A conflicting Proposal is not updated
+and is displayed as conflicting on the board - and during the same drain, the
+Selector dispatches a reconcile Run for it through the box command's
+`reconcile` verb (`box-sources/local.sh` or `ssh.sh`), which runs
+`loop/reconcile.sh` on the box: merge the base into the Proposal branch
+inside the microVM boundary, resolve conflicts through the agent adapter,
+verify the merged branch against the owning issue's Check, and push the
+Proposal branch - never forced. Success is journaled once
+(`proposal.reconciled`); a reconcile that cannot resolve or reds the suite
+comments on the owning issue, swaps it to `ready-for-human`, and journals
+`proposal.reconcile-failed`. One reconcile per Proposal per drain; none while
+paused, and none on a Target already holding a Run.
 
 **Unenrolled-Target warning** (issue #39). Each Cycle also runs one owner-wide
 search for the Handover label, diffs the repositories found against the
@@ -64,6 +76,15 @@ appearing gap is one notice through the existing notification surface; a
 standing gap journals without mailing again. The search is warn-only: it
 never enrolls a Target and never writes to any tracker. `SELECTOR_SEARCH_OWNER`
 is required instance configuration; there is no default that names an account.
+Archived repositories are excluded from the search: a Handover label on one
+is not a gap the operator can enroll, and GitHub has made the repository
+read-only.
+
+**Archived repositories.** GitHub makes an archived repository read-only. The
+tracker command reports `archived: true` and an empty issue list. A Cycle that
+still sees the flag journals `halted: repository-archived` and does not
+dispatch, comment, relabel, refresh Proposals, or reconcile. The queue board
+reads the same empty list.
 
 **Pause.** `/loop` is the flag's only writer. A paused Selector still runs its
 timer, reads the queue, applies Eligibility and journals the cycle; it stops
@@ -129,7 +150,7 @@ address or a command have no default at all:
 | `TRACEWAKE_TARGETS_FILE` | required | the targets file |
 | `SELECTOR_BOX_HOST` | required | where the box is, as `ssh` takes it |
 
-| `SELECTOR_LOOP_URL` | required | where this instance publishes its window |
+| `SELECTOR_LOOP_URL` | required | where this instance publishes its dashboard |
 | `SELECTOR_NOTIFY_COMMAND` | required | the mail surface (see below) |
 | `SELECTOR_PROTECTED_REPO` | required | the repository holding the guardrail's rules |
 | `SELECTOR_PROTECTED_REF` | required | the ref the executed paths are deployed from |
@@ -145,11 +166,13 @@ address or a command have no default at all:
 | `SELECTOR_BOX_COMMAND` | `box-sources/local.sh` | the box, and the Run on it. `box-sources/ssh.sh` is the remote-Box substitute |
 | `SELECTOR_ISSUE_COMMAND` | `issue-sources/github.sh` | comments and label swaps |
 | `SELECTOR_COMMAND_TIMEOUT_SECONDS` | `300` | git, Seeding, tracker writes |
-| `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `7200` | backstop for a wedged Run |
+| `SELECTOR_DISPATCH_TIMEOUT_SECONDS` | `23400` | backstop for a wedged Run |
 | `SELECTOR_CHECKS_TIMEOUT_SECONDS` | `900` | how long a Proposal's checks may stay pending |
 | `SELECTOR_CHECKS_POLL_SECONDS` | `30` | how often they are re-read while pending |
-| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts.sh` | the box, read for the status card |
+| `SELECTOR_BOX_FACTS_COMMAND` | `box-sources/facts-local.sh` | the box, read for the status card. `box-sources/facts.sh` is the remote-Box substitute |
 | `SELECTOR_BOX_FACTS_TIMEOUT_SECONDS` | `60` | how long that status read may take |
+| `SELECTOR_BOX_MICROVMS_COMMAND` | `box-sources/microvms-local.sh` | the box's microVMs, listed for the dashboard. `box-sources/microvms.sh` is the remote-Box substitute |
+| `SELECTOR_BOX_MICROVMS_TIMEOUT_SECONDS` | `10` | how long that list may take |
 | `SELECTOR_GUARDRAIL_COMMAND` | `guardrail-sources/protection.sh` | the write protection over the executed paths, read |
 | `SELECTOR_GUARDRAIL_TIMEOUT_SECONDS` | `30` | how long that read may take |
 | `SELECTOR_BOARD_TIMEOUT_SECONDS` | `10` | how long one of the queue board's tracker reads may take |
@@ -173,10 +196,16 @@ per-target values across the hop rather than reading them -
 `LOOP_GITHUB_TOKEN_FILE` and `LOOP_GUEST_TEMPLATE` - because what consumes
 them is the Run. `box-sources/local.sh` (ADR 0019) shares `SELECTOR_BOX_REPO`,
 `SELECTOR_BOX_LOOP`, `LOOP_GITHUB_TOKEN_FILE` and `LOOP_GUEST_TEMPLATE`, requires
-no `SELECTOR_BOX_HOST`, and gates dispatch on `loop/assert-credentials.sh`.
+no `SELECTOR_BOX_HOST`, and gates dispatch on `loop/assert-credentials.sh`,
+telling the gate which agent's subscription login counts (`SELECTOR_BOX_AGENT`,
+`claude`).
 `box-sources/facts.sh` shares the first, second and fourth of ssh.sh's,
 and adds `SELECTOR_BOX_AGENT` (`claude`) - which adapter it asks for the guest
-template.
+template. Single-Host instances read through `box-sources/facts-local.sh`
+instead (ADR 0019): the same `LOOP_BOX_*` lines with no hop and no
+`SELECTOR_BOX_HOST`, becoming the Run account through sudo before reading -
+keeping `facts.sh` while the host is `local` is the `ssh: Could not resolve
+hostname local` on the box card.
 
 `guardrail-sources/protection.sh` shares none of those - it reaches GitHub and
 this checkout rather than the box - and reads five of its own:
@@ -254,7 +283,7 @@ Configuration:
 
 | variable | default | what it is |
 | --- | --- | --- |
-| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress.sh` | the box's Progress Log, read |
+| `SELECTOR_BOX_PROGRESS_COMMAND` | `box-sources/progress-local.sh` | the box's Progress Log, read. `box-sources/progress.sh` is the remote-Box substitute |
 | `SELECTOR_WATCH_INTERVAL_SECONDS` | `60` | how often |
 | `SELECTOR_WATCH_TIMEOUT_SECONDS` | `30` | how long one read may take |
 | `SELECTOR_WATCH_CLOCK_SKEW_SECONDS` | `300` | how far the box's clock may sit behind this one |
@@ -264,7 +293,10 @@ Configuration:
 (`PROGRESS.md`, relative to the checkout). It is handed the Run's branch and
 deliberately does not check it out or fetch it: the box is running a Run in
 that checkout, and a watcher that touched its working tree would be a window
-reaching through the glass.
+reaching through the glass. Single-Host instances watch through
+`box-sources/progress-local.sh` instead (ADR 0019): the same Progress Log
+semantics with no hop and no `SELECTOR_BOX_HOST`, under the same Run-account
+transition as the local facts read.
 
 Three properties, each of them a way this could have gone wrong unattended:
 
@@ -366,7 +398,7 @@ are the same thing:
 | --- | --- |
 | eligible | `ready-for-agent`, and Eligible. Lowest first, so the top card is what the next cycle picks |
 | blocked | `ready-for-agent`, and not - each card carrying the reason string the cycle would journal for it, and a blocked card naming the open issues that block it |
-| in-flight | an open Proposal, or a dispatch the Selector has journaled no outcome for |
+| in-flight | an open Proposal that is not a leftover failed-attempt draft inside the retry budget, or a dispatch the Selector has journaled no outcome for |
 | `awaiting-review` | a green Proposal is open and waiting on the operator |
 | `ready-for-human` | the Selector gave up, or the checks went red |
 
@@ -380,7 +412,9 @@ which is what a `/loop` request now costs, and why the bound is ten seconds
 rather than the minute a cycle would allow.
 
 **The in-flight column has two sources, deliberately.** One is the tracker's:
-an issue with an open Proposal, which is `cycle.eligibility`'s `proposal-open`.
+an issue with an open Proposal, which is `cycle.eligibility`'s `proposal-open`
+- except a leftover draft from a failed attempt still inside the retry budget
+(#102), which Eligibility treats as Eligible so the next Cycle can retry.
 The other is the Journal's: a dispatch with no outcome, which is the Selector's
 own in-flight lock and exists *before* any Proposal does. Per-issue Eligibility
 has no in-flight concept at all - the cycle halts on the lock rather than
@@ -389,7 +423,7 @@ the issue a Run is working right now as the next thing to pick, which is the
 one card on the page an operator would act on wrongly. This is the page reading
 one more Journal fact, not the page deciding work: nothing about the column
 changes what any cycle does, and ADR 0015's rule is that the tracker remains
-the only work source, not that the window may only read one source.
+the only work source, not that the dashboard may only read one source.
 
 The columning is `cycle.eligibility`, imported. Two of the things it decides
 on are not on the tracker at all - the retry budget and the in-flight lock are
@@ -454,6 +488,9 @@ Flipping it is a one-line reviewable change - the shape ADR 0014 already asks
 for when widening the labeler allowlist - and the play prints which way it left
 the timer. Out of band it is `sudo systemctl enable --now tracewake-selector-cycle.timer`.
 Setting it back to `false` stops a running timer, not merely a future one.
+The dashboard offers the same toggle to admin accounts on the status strip -
+Start and Stop beside the next-cycle cell - through a sudoers rule the role
+installs that names exactly those two commands on the one unit.
 
 **The gate is flipped and the timer is running** (#261, 2026-08-30): it fired
 unattended at 23:30:52 the same evening, journalled the cycle and declined to
@@ -518,8 +555,9 @@ of it and journaled the lot - so its record is the cycle summary, with
 and has no summary to carry the reason, so it needs a row of its own.
 
 **The box card.** Once per cycle - not in a dry run, which still reaches the
-tracker and nothing else - `box-sources/facts.sh` reads four facts off the
-box over SSH and they are journaled as `box.observed`:
+tracker and nothing else - `box-sources/facts-local.sh` reads four facts off
+the box (or `facts.sh` over SSH, when an instance substitutes it) and they
+are journaled as `box.observed`:
 
 | fact | why it is on the card |
 | --- | --- |
@@ -560,7 +598,7 @@ review budget is read through `cycle.review_budget` - the same function the cap
 is enforced with - because two readings that could disagree would be a
 strip that reassures about a cap it is not the one reading. The next-cycle
 cell reads `systemctl show` on the timer through `SELECTOR_TIMER_COMMAND`
-(default: `systemctl show selector-cycle.timer`; the one substitutable command
+(default: `systemctl show tracewake-selector-cycle.timer`; the one substitutable command
 the page owns rather than `cycle.py`, and the seam the dashboard suite drives)
 and says so loudly when the timer is not active. So does the Selector cell
 itself, which reads `stopped - nothing will start a cycle` rather than `idle`:
@@ -936,11 +974,12 @@ Detection precedes notification, or the mail is a guess.
   operator. This is the half of the work
   the box deliberately cannot do - its token holds no Issues permission at
   all - so every write to the tracker happens here.
-- `box-sources/facts.sh` - the default `SELECTOR_BOX_FACTS_COMMAND`: one SSH
+- `box-sources/facts.sh` - the remote-Box `SELECTOR_BOX_FACTS_COMMAND`: one SSH
   hop that reads what the box is holding - the Loop scripts' hash, the guest
   template its adapter would build, the installed agent version - and prints
   them as `LOOP_BOX_*=value` lines. Read-only, holds no credential, starts
-  nothing.
+  nothing. An instance substitutes this; INSTALL does not describe that
+  topology.
 - `guardrail-sources/protection.sh` - the default
   `SELECTOR_GUARDRAIL_COMMAND`: one `gh api` read of the rules on the ref the
   executed paths are deployed from, and one `git` comparison of the deployed
@@ -953,9 +992,17 @@ Detection precedes notification, or the mail is a guess.
   thread that polls the box for the length of a Run. It journals
   `run.iteration`, `run.contract` and `run.watch-failed` and nothing else, and
   it never raises into the dispatch it is watching.
-- `box-sources/progress.sh` - the default `SELECTOR_BOX_PROGRESS_COMMAND`: one
+- `box-sources/progress.sh` - the remote-Box `SELECTOR_BOX_PROGRESS_COMMAND`: one
   SSH hop that `cat`s the box checkout's Progress Log. Read-only, holds no
-  credential, touches no working tree.
+  credential, touches no working tree. An instance substitutes this.
+- `box-sources/facts-local.sh` - the default `SELECTOR_BOX_FACTS_COMMAND`
+  (ADR 0029): the same `LOOP_BOX_*` lines as `facts.sh` with no hop, becoming
+  the Run account through sudo before reading. Keeping `facts.sh` while the
+  host is `local` is the `ssh: Could not resolve hostname local` on the box
+  card.
+- `box-sources/progress-local.sh` - the default
+  `SELECTOR_BOX_PROGRESS_COMMAND` (ADR 0029): the same Progress Log read with
+  no hop, under the same transition.
 - `box-sources/local.sh` - the default `SELECTOR_BOX_COMMAND` (ADR 0029):
   executes a Run on this Host without an SSH hop, gated by
   `loop/assert-credentials.sh` (ADR 0019). Refuses dispatch naming the
@@ -1000,26 +1047,45 @@ Detection precedes notification, or the mail is a guess.
   the unix socket, zero credentials.
 - `testdb.py` - the shared throwaway-test-database harness: create a random
   database, apply `schema.sql`, drop it afterwards. Used by this suite and by
-  `web/tests/` (the window's side). Needs a Postgres role matching
+  `web/tests/` (the dashboard's side). Needs a Postgres role matching
   the OS user with CREATEDB. It also keeps the books on its own residue, for
   the reason in **Throwaway databases that outlive their run** below.
-- `tests/` - suites at their boundaries. `test_events.py` drives the
+- `tests/` - suites at their boundaries. Cycle decisions are in-process:
+  `test_drain.py`, `test_drain_eligibility.py`, `test_drain_halts.py` and
+  `test_drain_slots.py` call the Cycle with a canned queue, a recording
+  doing and a real Journal. The fixture has one runner. The forked Cycle
+  suite is six wiring tests: a happy drain
+  (`test_dispatch.py::test_the_whole_dispatch_sequence_is_issued`), a
+  failing Cycle's exit code
+  (`test_dispatch.py::test_a_box_that_starts_no_run_fails_the_cycle_loudly`),
+  K greater than one across two Targets
+  (`test_unattended.py::test_two_eligible_tasks_on_different_targets_overlap_when_k_is_2`),
+  `--dry-run`
+  (`test_cycle.py::test_dry_run_touches_nothing_but_the_journal`), the
+  advisory-lock stand-down
+  (`test_unattended.py::test_a_second_cycle_refuses_while_the_first_is_still_running`),
+  and the preflight refusal
+  (`test_cycle.py::test_a_missing_required_value_stops_the_cycle_before_the_tracker`).
+  Anything else that still forks is the entry point or production doing
+  (ADR 0004), and says so in its docstring.
+  `test_events.py` drives the
   vocabulary directly - every constructor's key set, every reader's
   normalization of every era of row, the naming rules - and holds the sweep
   that fails when a kind literal ships outside `events.py`.
   `test_journal.py` is the
   Journal against the real engine: NOTIFY asserted by a live listener,
-  mutation blocked by the guard triggers, ordering. `test_cycle.py` runs the
-  real `cycle.py --dry-run` against canned queue states, reading only the
-  commands it issued and the rows it wrote - plus a tripwire PATH (`gh`,
-  `git`, `ssh`, `seed-run.sh` shimmed to log and fail) that makes "a dry run
-  touches nothing but the Journal" a checked property of every scenario.
-  `test_unattended.py` is #156's three properties at the same boundary: a
-  second cycle standing down while one is in flight (driven by running a real
-  nested `cycle.py` from inside the fake box, which is the only moment two can
-  meet), the fifth dispatch of a day refused from Journal history alone, and
-  the box's facts read and journaled.
-  `test_dispatch.py` runs the same real `cycle.py` with the dispatch commands
+  mutation blocked by the guard triggers, ordering.
+  `test_cycle.py` is the entry point around those six: tracker-command
+  failure shapes, `--target`, Config from the targets file, the
+  unenrolled-Target search, extra preflight names - plus the dry-run
+  tripwire and the preflight refusal. A tripwire PATH (`gh`, `git`, `ssh`,
+  `seed-run.sh` shimmed to log and fail) makes "a dry run touches nothing
+  but the Journal" a checked property.
+  `test_unattended.py` still forks for the lock, the per-Target fan-out,
+  box-facts and proposal freshness: a second cycle standing down while one
+  is in flight is driven by running a real nested `cycle.py` from inside
+  the fake box, which is the only moment two can meet.
+  `test_dispatch.py` is production doing with the dispatch commands
   scripted and **git real**, against a bare repository in a tmpdir: the
   branch, the push and the retry case are asserted against what actually
   ended up on a remote. Its fake box also reads the Journal while it is
@@ -1048,7 +1114,7 @@ Detection precedes notification, or the mail is a guess.
   against real databases on the real instance, including a second process
   driven through `throwaway_db()` to stand in for a concurrent run.
 
-The window is `web`'s `/loop` page, which imports `journal.py` from
+The dashboard is `web`'s `/loop` page, which imports `journal.py` from
 here and renders at request time.
 
 ### Throwaway databases that outlive their run (#178)
@@ -1228,22 +1294,31 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```
 
-Tests skip (not fail) when the local Postgres is unreachable.
+Tests skip (not fail) when the local Postgres is unreachable, and when a
+Host-only facility is missing (`ansible_facts.services`, systemd). A macOS
+checkout is expected green; those proofs run on the Host or the Ubuntu
+check-mode container in `deploy/ansible/tests/README.md`.
 
 Then the mutation check, which is the suite's own grade:
 
 ```bash
 tests/mutation-check.sh          # one suite run per mutation
+tests/mutation-check.sh --only highest-picked-first --only blockers-ignored
+tests/mutation-check.sh --only labeler-not-checked /path/to/python
 ```
 
-**Budget hours, not minutes.** This said "~6 minutes" when there were a dozen
-mutations and the suites ran in seconds. There are now 119 entries in
-`tests/selector-mutations.py`, and the suite each
-one re-runs takes one to two minutes, so a whole run is measured in hours -
-long enough that a build usually runs the entries it added and their
-neighbours by hand, and the whole set is a thing to start and walk away from.
-Doing that by hand means copying the loop out of this script, which is a gap
-worth closing (a `--only <name>...` argument) and one nobody has closed yet.
+**Budget hours, not minutes.** A full run re-runs each entry's suite (one to
+two minutes each, hundreds of entries) and is measured in hours. `--only
+<name>` runs exactly those table entries, each against the suite the entry
+names, with the same restore-on-exit and one-run-at-a-time (flock) guarantees.
+Repeat `--only` for each name so the optional python interpreter stays the
+last positional. A name that is not in the table is refused, named on stderr,
+and nothing is mutated.
+
+The Loop's `tests/mutation-check.sh --only` names a **subject script**
+(`run.sh`, `agents/grok.sh`), not a mutation. That grain is already one file,
+one suite, one mutations list; named-entry filtering is a Selector-table
+concern because this table mixes many files and suites in one run.
 
 It breaks one guard at a time - the allowlist, each Eligibility clause, each
 cap, the fence-aware section reader, the tracker's failure path, and now each

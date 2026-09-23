@@ -73,11 +73,11 @@ _DEFAULT_CREDENTIAL_WARN_HOURS = 336.0
 # silent about stays silent, which is the whole point of #280.
 _DEFAULT_MAX_AGE_HOURS = 72.0
 
-# Deliberately no default for the window's URL: where an instance's window is
-# published is a fact about that instance, not about Tracewake (issue #3). A
-# notice that linked to somebody else's host would be worse than one with no
-# link, so an unset value stops the notifier by name at start rather than
-# mailing a wrong address.
+# Deliberately no default for the dashboard's URL: where an instance's
+# dashboard is published is a fact about that instance, not about Tracewake
+# (issue #3). A notice that linked to somebody else's host would be worse
+# than one with no link, so an unset value stops the notifier by name at
+# start rather than mailing a wrong address.
 
 
 @dataclass(frozen=True)
@@ -97,7 +97,7 @@ class NoticeConfig:
             loop_url=(
                 env("SELECTOR_LOOP_URL")
                 or targets.missing(
-                    "SELECTOR_LOOP_URL", "where this instance's window is"
+                    "SELECTOR_LOOP_URL", "where this instance's dashboard is"
                 )
             ),
             max_age_hours=float(

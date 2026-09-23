@@ -1,4 +1,4 @@
-"""Tracewake's window — the front door of an instance.
+"""Tracewake's dashboard — the front door of an instance.
 
 Built with FastAPI + Jinja2 + HTMX: server renders HTML, HTMX swaps in
 server-rendered fragments, no client-side framework and no build step. The
@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -24,24 +25,24 @@ from zoneinfo import ZoneInfo
 import markdown as md
 import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 BASE = Path(__file__).resolve().parent
-# The repository root. The window renders the project it is part of - the
+# The repository root. The dashboard renders the project it is part of - the
 # ADRs, the lessons page, the notes - so the project is one directory up
 # from `web/` rather than a sibling checkout to be found.
 PROJECT = BASE.parent
 ADR_DIR = PROJECT / "docs" / "adr"
 
 # The Selector Journal's writer/reader module lives with the Selector; this
-# app is its window (ADR 0015), so import it from there rather than forking
+# app is its dashboard (ADR 0015), so import it from there rather than forking
 # the SQL.
 sys.path.insert(0, str(PROJECT / "selector"))
 import board as queue_board  # noqa: E402
 import control  # noqa: E402
-import cycle  # noqa: E402
+import drain  # noqa: E402
 import events  # noqa: E402
 import journal  # noqa: E402
 import targets  # noqa: E402
@@ -49,10 +50,11 @@ import targets  # noqa: E402
 import preview  # noqa: E402
 import auth  # noqa: E402
 import host  # noqa: E402
+import microvms  # noqa: E402
 import mail  # noqa: E402
 
 # Named for the product, not for the host it is published on: where an
-# instance publishes its window is a fact about that instance (issue #3),
+# instance publishes its dashboard is a fact about that instance (issue #3),
 # and it is carried in SELECTOR_LOOP_URL where a notice needs it.
 app = FastAPI(title="Tracewake")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
@@ -96,6 +98,93 @@ def _path(request: Request, route: str) -> str:
     return request.scope.get("root_path", "").rstrip("/") + route
 
 
+# Headed sections on `/`. True is the markup default (`open` on the
+# details). Cycles starts shut as the deep history; Targets starts shut
+# so the queue is the page (#122).
+FOLD_DEFAULTS = {
+    "targets": False,
+    "strip": True,
+    "host": True,
+    "microvms": True,
+    "queue": True,
+    "runs": True,
+    "cycles": False,
+    "events": True,
+}
+FOLD_COOKIE = "fold"
+SECTION_ORDER_DEFAULT = tuple(FOLD_DEFAULTS)
+SECTION_HEADINGS = {
+    "targets": "Targets",
+    "strip": "The status strip",
+    "host": "The host",
+    "microvms": "MicroVMs",
+    "queue": "The queue",
+    "runs": "Runs",
+    "cycles": "Cycles",
+    "events": "Every event",
+}
+
+
+def _resolve_section_order(chosen: list[str] | None) -> list[str]:
+    """A complete order of headed sections.
+
+    Known keys keep the offered sequence; anything else is ignored so a
+    hand-edited row cannot invent a section. Keys the row omits (a new
+    panel, a partial save) append in the markup default (#147).
+    """
+    default = list(SECTION_ORDER_DEFAULT)
+    if not chosen:
+        return default
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for key in chosen:
+        if key in FOLD_DEFAULTS and key not in seen:
+            ordered.append(key)
+            seen.add(key)
+    for key in default:
+        if key not in seen:
+            ordered.append(key)
+    return ordered
+
+
+def _section_order(request: Request) -> list[str]:
+    account = getattr(request.state, "account", None)
+    raw = None
+    if account is not None:
+        raw = auth.load_section_order(account.id)
+    return _resolve_section_order(raw)
+
+
+def _section_order_view(order: list[str]) -> list[dict]:
+    n = len(order)
+    return [
+        {
+            "key": key,
+            "heading": SECTION_HEADINGS[key],
+            "up": i > 0,
+            "down": i < n - 1,
+        }
+        for i, key in enumerate(order)
+    ]
+
+
+def _folds(request: Request) -> dict[str, bool]:
+    """The visitor's last open/shut per headed section (#123).
+
+    A JS-writable cookie, not localStorage: the server never sees
+    localStorage, so a reload and an hx-get would both come back with
+    the markup defaults. Unknown keys and values are ignored so a
+    hand-edited cookie cannot invent a section or inject markup.
+    """
+    chosen = dict(FOLD_DEFAULTS)
+    raw = request.cookies.get(FOLD_COOKIE) or ""
+    for part in raw.split("|"):
+        key, sep, value = part.partition(":")
+        if sep and key in FOLD_DEFAULTS and value in ("open", "closed"):
+            chosen[key] = value == "open"
+    return chosen
+
+
 def _page(request: Request, name: str, context: dict, **kwargs):
     """Render a page with whatever every page needs.
 
@@ -113,6 +202,7 @@ def _page(request: Request, name: str, context: dict, **kwargs):
             "csrf_token": session.csrf_token if session else "",
             "logout_url": _path(request, "/logout"),
             "accounts_url": _path(request, "/accounts"),
+            "password_url": _path(request, "/password"),
             "account": account,
             "can_control": account is not None and account.role == "admin",
             **context,
@@ -289,14 +379,14 @@ def accounts_invite(
         return _accounts_page(request, error=str(exc))
     link = _token_url(request, "invite", raw)
     body = (
-        f"You have been invited to this Tracewake window as {role}.\n\n"
+        f"You have been invited to this Tracewake dashboard as {role}.\n\n"
         f"Set your password at:\n{link}\n\n"
         "This link works once and expires in about 72 hours.\n"
     )
     try:
         mail.send(
             to=email.strip().lower(),
-            subject="You're invited to this Tracewake window",
+            subject="You're invited to this Tracewake dashboard",
             link=link,
             body=body,
         )
@@ -353,7 +443,7 @@ def forgot_post(request: Request, email: str = Form("")):
     if raw:
         link = _token_url(request, "reset", raw)
         body = (
-            "A password reset was requested for this Tracewake window.\n\n"
+            "A password reset was requested for this Tracewake dashboard.\n\n"
             f"Set a new password at:\n{link}\n\n"
             "This link works once and expires in about an hour. "
             "If you did not request it, you can ignore this.\n"
@@ -361,7 +451,7 @@ def forgot_post(request: Request, email: str = Form("")):
         try:
             mail.send(
                 to=email.strip().lower(),
-                subject="Reset your Tracewake window password",
+                subject="Reset your Tracewake dashboard password",
                 link=link,
                 body=body,
             )
@@ -445,6 +535,45 @@ def invite_redeem(
     return response
 
 
+@app.get("/password", response_class=HTMLResponse)
+def password_form(request: Request):
+    account = getattr(request.state, "account", None)
+    if account is None:
+        raise auth.NotAuthorised()
+    saved = request.query_params.get("saved") == "1"
+    return _page(request, "password.html", {
+        "error": None,
+        "saved": saved,
+    })
+
+
+@app.post("/password", dependencies=[Depends(require_csrf)])
+def password_post(
+    request: Request,
+    current_password: str = Form(""),
+    new_password: str = Form(""),
+):
+    account = getattr(request.state, "account", None)
+    if account is None:
+        raise auth.NotAuthorised()
+    session = getattr(request.state, "session", None)
+    token_hash = session.token_hash if session else None
+    try:
+        auth.change_password(
+            account.id,
+            current_password,
+            new_password,
+            current_token_hash=token_hash,
+        )
+    except auth.PasswordInvalid as exc:
+        return _page(request, "password.html", {
+            "error": str(exc),
+            "saved": False,
+        })
+    root = request.scope.get("root_path", "") or ""
+    return RedirectResponse(root + "/password?saved=1", status_code=303)
+
+
 @app.get("/adr", response_class=HTMLResponse)
 async def adr_index(request: Request):
     return _page(request, "adr_index.html", {"adrs": _all_adrs()})
@@ -522,7 +651,7 @@ def _cycles(rows: list[dict]) -> list[dict]:
 
     A cycle's events all carry the id of its `cycle.started` row in
     `payload.cycle`, so the grouping is the Journal's own, not a guess made
-    here. This page is a window and a scribe: it re-renders what the Selector
+    here. This page is a dashboard and a scribe: it re-renders what the Selector
     decided and decides nothing itself (ADR 0015) - and what each row holds is
     the vocabulary's knowledge, read through its records rather than re-guessed
     here as key tuples.
@@ -590,7 +719,7 @@ ROUTE_KINDS = set(ROUTE_NAMES)
 # rather than a set union rebuilt per event.
 RUN_KINDS = ROUTE_KINDS | {
     events.RUN_DISPATCHED, events.RUN_OUTCOME, events.RUN_ITERATION,
-    events.RUN_WATCH_FAILED, events.RUN_CONTRACT,
+    events.RUN_WATCH_FAILED, events.RUN_CONTRACT, events.RUN_BRIEFING,
 }
 
 
@@ -606,6 +735,11 @@ def _runs(rows: list[dict]) -> list[dict]:
     guessing at it.
     """
     cards: dict[tuple, dict] = {}
+    cycle_repos = {
+        row["id"]: (row.get("payload") or {}).get("repo")
+        for row in rows
+        if row["kind"] == events.CYCLE_STARTED
+    }
     for row in rows:  # newest first
         kind = row["kind"]
         payload = row["payload"] or {}
@@ -665,6 +799,14 @@ def _runs(rows: list[dict]) -> list[dict]:
             # can differ, and a panel showing the wrong one would reassure
             # about bounds nothing is enforcing.
             card["contract"] = events.run_contract_record(row).contract
+        elif kind == events.RUN_BRIEFING:
+            # What the agent read (#80/#83): the first Iteration's rendered
+            # briefing, journaled at Run start. Read verbatim from the stored
+            # row and never re-rendered from current scripts, so what the card
+            # shows is what the Run started with even after the scripts
+            # changed. Shown to both roles unredacted: it carries no
+            # credentials, only paths, the checklist and the promise.
+            card["briefing"] = events.run_briefing_record(row).briefing
         elif kind == events.RUN_WATCH_FAILED:
             # Said once per Run by the watcher, and shown, because a Run with
             # no Iterations on its card and a Run whose Progress Log could not
@@ -682,6 +824,7 @@ def _runs(rows: list[dict]) -> list[dict]:
                 url=record.url,
                 branch=record.branch,
                 task_ref=record.task_ref,
+                repo=record.repo or cycle_repos.get(record.cycle),
                 area=record.area,
                 check=record.check,
                 attempt=record.attempt,
@@ -728,19 +871,36 @@ def _runs(rows: list[dict]) -> list[dict]:
 # next, how much of today's budget is left, and what the box it dispatches to
 # is holding.
 #
-# None of it is computed here. The budget is read through `cycle.spend` - the
+# None of it is computed here. The budget is read through `drain.spend` - the
 # same function the Selector enforces the cap with, so the page cannot
 # reassure about a cap it is not the one reading - and the box facts are
-# replayed from the Journal row the cycle wrote. The page stays a window.
+# replayed from the Journal row the cycle wrote. The page still decides no work.
 
 # `systemctl show` on the timer, as one substitutable command. A read, no
 # privilege, and overridable so the strip can be driven in tests without a
-# systemd on the other end.
-TIMER_UNIT = "selector-cycle.timer"
+# systemd on the other end. The name is the unit ansible installs and the
+# sudoers rule grants - a leftover `selector-cycle.timer` is a Start button
+# that enables nothing, or a command sudoers will not match.
+TIMER_UNIT = "tracewake-selector-cycle.timer"
 TIMER_PROPERTIES = ("ActiveState", "NextElapseUSecRealtime")
 # Short: this runs inside a request. A systemd that is not answering must make
 # the cell say so rather than hold the page open.
 TIMER_TIMEOUT_SECONDS = 5
+
+# Longer: enabling a timer starts it, which is a state change rather than a
+# read, but still one this request waits on. Thirty seconds is the same bound
+# the watcher gives a Progress Log read: long enough for a loaded systemd,
+# short enough that a wedged control does not hold the page open.
+TIMER_CONTROL_TIMEOUT_SECONDS = 30
+
+# What runs the toggle below. `sudo -n systemctl` because the dashboard runs as
+# the instance's unprivileged user while the timer is a system unit: without
+# the ansible role's sudoers drop-in this refuses cleanly (`sudo: a password
+# is required`), which the cell then says. `SELECTOR_TIMER_CONTROL_COMMAND`
+# names a different one whole - tests drive the toggle without a systemd
+# through it, and a dashboard running as root would set it to `systemctl`.
+TIMER_CONTROL_COMMAND = "sudo -n systemctl"
+TIMER_CONTROL_COMMAND_ENV = "SELECTOR_TIMER_CONTROL_COMMAND"
 
 
 def _timer() -> dict:
@@ -782,6 +942,46 @@ def _timer() -> dict:
     }
 
 
+# `enable --now` starts a stopped timer and keeps it started across reboots;
+# `disable --now` stops a running one and keeps it stopped. The toggle is the
+# pair, because a start that did not survive a reboot would leave the next
+# outage reading exactly like this one.
+TIMER_VERBS = {"start": "enable", "stop": "disable"}
+
+
+def _timer_control(action: str) -> str | None:
+    """Start or stop the cycle timer. Returns the error, or None.
+
+    Total, like the timer read: a control that cannot run - a bad action, no
+    sudoers rule, no systemd, a wedged daemon - is a sentence in the cell,
+    never an exception and never a 500.
+    """
+    verb = TIMER_VERBS.get(action)
+    if verb is None:
+        return f"unknown timer action {action!r}"
+    command = shlex.split(
+        os.environ.get(TIMER_CONTROL_COMMAND_ENV, TIMER_CONTROL_COMMAND)
+    )
+    try:
+        done = subprocess.run(
+            [*command, verb, "--now", TIMER_UNIT],
+            capture_output=True, text=True,
+            timeout=TIMER_CONTROL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip()
+        if not detail:
+            return f"exit {done.returncode}"
+        # Every line: sudo's useful sentence is not always the last one.
+        # With NoNewPrivileges set it names the flag, then a container
+        # warning; keeping only the last line is how Start timer hid the
+        # cause behind "if sudo is running in a container".
+        return " ".join(detail.splitlines())
+    return None
+
+
 def _newest(rows: list[dict], kinds: tuple, reader):
     """The newest of a status read's two rows, whichever kind it is.
 
@@ -818,7 +1018,7 @@ def _box(rows: list[dict]) -> dict | None:
     however long the page sat open - and wrong in the reassuring direction,
     which is the failure #260 is about.
 
-    That is not the guardrail chip's rule being broken. `cycle.py` grades the
+    That is not the guardrail chip's rule being broken. `doing.py` grades the
     guardrail because whether the paths are protected is a judgement with
     rejected alternatives in it; whether an instant has passed is not.
     """
@@ -876,7 +1076,7 @@ def _guardrail(rows: list[dict]) -> dict | None:
     The box card's rule, turned up one notch by `stale`: a chip is a claim
     about the present, and this one is only as good as the cycle that took it.
 
-    The verdict itself is NOT computed here. `cycle.py` decided it when it
+    The verdict itself is NOT computed here. `doing.py` decided it when it
     read the guardrail, and a page that graded the facts a second time would
     be a second opinion about whether the Selector is protected, with no way
     to tell which of the two had been reviewed.
@@ -945,7 +1145,7 @@ _ReadT = TypeVar("_ReadT")
 
 def _read_journal(
     read: Callable[[psycopg.Connection], _ReadT], default: _ReadT
-) -> tuple[_ReadT, "cycle.Spend | None", str | None]:
+) -> tuple[_ReadT, "drain.Spend | None", str | None]:
     """One read of the Journal: what `read` asks of it, and what has been spent.
 
     Both pages start here, so "the Journal is down" is one sentence written
@@ -962,7 +1162,7 @@ def _read_journal(
     """
     try:
         with journal.connect() as conn:
-            return read(conn), cycle.spend(conn), None
+            return read(conn), drain.spend(conn), None
     except psycopg.Error as exc:
         return default, None, f"journal unavailable: {exc}"
 
@@ -986,21 +1186,21 @@ def _loop_rows(conn) -> tuple[list[dict], bool]:
     return journal.events(conn), control.is_paused(conn)
 
 
-def _config() -> tuple["cycle.Config | None", str | None]:
-    """The first declared target's configuration, or why there is none.
+def _configs() -> tuple[tuple["targets.Config", ...] | None, str | None]:
+    """Every declared target's configuration, or why there is none.
 
-    The window renders one target today - `/` growing a target switcher is
-    the board's own ticket - so it takes the first stanza in the targets
-    file. What it must not do is fail: an instance whose configuration is
-    missing or malformed is exactly when somebody opens the page, so the
-    refusal is carried as a sentence into the board's columns rather than
-    raised as a 500 (issue #3).
+    The queue board columns every stanza, each card naming its Target, so
+    two repositories sharing an issue number stay distinguishable. The
+    Targets section lists the same stanzas, because that is what a Cycle
+    reads. What this must not do is fail: an instance whose configuration
+    is missing or malformed is exactly when somebody opens the page, so
+    the refusal is carried as a sentence into the board's columns rather
+    than raised as a 500 (issue #3).
     """
     try:
-        configs = cycle.Config.load()
+        return targets.Config.load(), None
     except targets.NotConfigured as exc:
         return None, str(exc)
-    return configs[0], None
 
 
 def _gib(n: int) -> str:
@@ -1015,7 +1215,7 @@ def _gib(n: int) -> str:
     return f"{value:.1f} GiB"
 
 
-def _host(spend: "cycle.Spend | None") -> dict:
+def _host(spend: "drain.Spend | None") -> dict:
     """The Host's headroom, plus how many Runs the Journal has in flight.
 
     Sampler failure is a degraded widget, never a missing board: the queue
@@ -1048,16 +1248,44 @@ def _host(spend: "cycle.Spend | None") -> dict:
     }
 
 
-def _loop_context(request: Request) -> dict:
-    """Everything the live region renders, read now.
+def _microvms() -> dict:
+    """The Box's currently running microVMs.
 
-    One reader for both routes. The page and the fragment it updates to are
-    the same HTML by construction rather than by two handlers being kept in
-    step - a fragment that drifted from the page would show one thing on load
-    and another the moment a row landed, which is the failure a live page has
-    that a static one cannot.
+    Sampler failure is a degraded widget, never a missing board: the queue
+    is the page, and an `sbx ls` that failed is not a reason to hide it.
     """
-    config, unconfigured = _config()
+    unknown: dict = {"ok": False, "vms": (), "error": None}
+    try:
+        facts = microvms.sample()
+    except Exception as exc:
+        return {**unknown, "error": str(exc)}
+    return {
+        "ok": True,
+        "error": None,
+        "vms": [
+            {
+                "name": vm.name,
+                "agent": vm.agent,
+                "status": vm.status,
+                "workspace": vm.workspace,
+            }
+            for vm in facts.vms
+        ],
+    }
+
+
+def _loop_context(request: Request) -> dict:
+    """Everything the home page renders, read now.
+
+    One reader for the page and the live fragment. The Targets list is
+    configuration and lives on the shell; everything a Journal row can
+    change lives in the fragment. They share this dict so a key the
+    fragment ignores is still one spelling, not a second handler to keep
+    in step - a fragment that drifted from the page would show one thing
+    on load and another the moment a row landed.
+    """
+    configs, unconfigured = _configs()
+    config = configs[0] if configs else None
     empty: tuple[list[dict], bool] = ([], False)
     (events, paused), spend, error = _read_journal(_loop_rows, empty)
     view = [
@@ -1077,20 +1305,29 @@ def _loop_context(request: Request) -> dict:
     # is down does not make the queue unknowable, and a tracker that is down
     # does not hide the history.
     board_view = (
-        queue_board.board(config, spend) if config
+        queue_board.combined(configs, spend) if configs
         else queue_board.unconfigured(unconfigured)
     )
     host_view = _host(spend)
-    review_col = next(
-        (c for c in board_view.get("columns", []) if c.get("key") == "awaiting-review"),
-        None,
-    )
-    budget = cycle.review_budget(
+    microvms_view = _microvms()
+    # Review capacity is per Target. The strip reports the first stanza,
+    # snapshotted before later Targets were merged in: a second Target's
+    # review queue must not spend the first's cap, and a later Target's
+    # tracker failure must not make the first's capacity unknown.
+    review_col = board_view.get("first_review")
+    if review_col is None:
+        review_col = next(
+            (c for c in board_view.get("columns", [])
+             if c.get("key") == "awaiting-review"),
+            None,
+        )
+    budget = drain.review_budget(
         config,
         review=review_col["cards"] if review_col and not review_col.get("error") else None,
         error=review_col.get("error") if review_col else None,
         timeout=config.board_timeout_seconds if config else None,
     )
+    order = _section_order(request)
     return {
         "events": view,
         "cycles": _cycles(events),
@@ -1102,6 +1339,9 @@ def _loop_context(request: Request) -> dict:
         "guardrail": _guardrail(events),
         "board": board_view,
         "host": host_view,
+        "microvms": microvms_view,
+        "targets": tuple(c.task_repo for c in configs) if configs else (),
+        "unconfigured": unconfigured,
         "paused": paused if error is None else None,
         "state": (
             _selector_state(runs, budget, timer, paused)
@@ -1117,6 +1357,20 @@ def _loop_context(request: Request) -> dict:
         "history_url": _path(request, "/history"),
         "pause_url": _path(request, "/loop/pause"),
         "resume_url": _path(request, "/loop/resume"),
+        "timer_start_url": _path(request, "/loop/timer/start"),
+        "timer_stop_url": _path(request, "/loop/timer/stop"),
+        "target_remove_url": _path(request, "/loop/targets/remove"),
+        "target_add_url": _path(request, "/loop/targets/add"),
+        # Set by the toggle below when the control fails; the cell says it.
+        # None on every other render, so the template needs no default.
+        "timer_error": None,
+        "target_error": None,
+        **_target_form(configs),
+        "folds": _folds(request),
+        "section_order": order,
+        "section_order_view": _section_order_view(order),
+        "section_move_url": _path(request, "/loop/sections/move"),
+        "rearrange": request.query_params.get("rearrange") == "1",
     }
 
 
@@ -1170,6 +1424,31 @@ def loop_redirect(request: Request):
     return RedirectResponse(_path(request, "/"), status_code=307)
 
 
+@app.post("/loop/sections/move", dependencies=[Depends(require_csrf)])
+def move_section(
+    request: Request,
+    key: str = Form(""),
+    direction: str = Form(""),
+):
+    """Swap one headed section with its neighbour for this Dashboard Account.
+
+    Not an instance control: a reader may rearrange their own view. Unknown
+    keys and a move off the end of the list are no-ops, then the page
+    reloads with the rearrange list still open (#147).
+    """
+    account = getattr(request.state, "account", None)
+    if account is None:
+        raise auth.NotAuthorised()
+    order = _section_order(request)
+    if key in order and direction in ("up", "down"):
+        i = order.index(key)
+        j = i - 1 if direction == "up" else i + 1
+        if 0 <= j < len(order):
+            order[i], order[j] = order[j], order[i]
+            auth.save_section_order(account.id, order)
+    return RedirectResponse(_path(request, "/?rearrange=1"), status_code=303)
+
+
 @app.get("/loop/live", response_class=HTMLResponse)
 def loop_live(request: Request):
     """The live region on its own, for the swap (#159).
@@ -1208,6 +1487,164 @@ def pause_selector(request: Request):
 @controls.post("/loop/resume", response_class=HTMLResponse)
 def resume_selector(request: Request):
     return _set_selector_paused(request, False)
+
+
+def _set_timer(request: Request, action: str):
+    """Start or stop the cycle timer and return the live region it changes.
+
+    The region is re-read after the control runs, so a start that worked
+    shows the timer active and a stop shows it down - the cell reports what
+    systemd now holds, not what was asked of it. A control that failed keeps
+    the old reading and says why, in the cell.
+    """
+    error = _timer_control(action)
+    context = _loop_context(request)
+    context["timer_error"] = error
+    return _page(request, "_loop_live.html", context)
+
+
+@controls.post("/loop/timer/start", response_class=HTMLResponse)
+def start_timer(request: Request):
+    return _set_timer(request, "start")
+
+
+@controls.post("/loop/timer/stop", response_class=HTMLResponse)
+def stop_timer(request: Request):
+    return _set_timer(request, "stop")
+
+
+def _target_form(configs: tuple["targets.Config", ...] | None) -> dict:
+    """The Add form's pre-fill and path hints, from the last declared Target.
+
+    A second Target is a repository name. guest_template and the
+    allowlist are instance facts and arrive filled. Path placeholders
+    show the last Target's layout with `name` standing in for the
+    short name the operator is about to type. Nothing is invented:
+    a layout the instance has never declared stays blank.
+    """
+    last = configs[-1].target if configs else None
+    if last is None:
+        return {"target_draft": {}, "target_hints": {}}
+    hinted = targets.draft("owner/name", last)
+    return {
+        "target_draft": {
+            "guest_template": last.guest_template,
+            "labeler_allowlist": ", ".join(last.labeler_allowlist),
+        },
+        "target_hints": {
+            "work_repo": hinted["work_repo"],
+            "box_repo": hinted["box_repo"],
+            "token_file": hinted["token_file"],
+        },
+    }
+
+
+def _targets_changed(
+    request: Request,
+    error: str | None,
+    draft: dict[str, str] | None = None,
+):
+    """Reload `/` after a Target list change, or return the section with why not."""
+    if error is None:
+        response = HTMLResponse("")
+        response.headers["HX-Redirect"] = _path(request, "/")
+        return response
+    context = _loop_context(request)
+    context["target_error"] = error
+    shown = dict(context.get("target_draft") or {})
+    incoming = draft or {}
+    for key, value in incoming.items():
+        if value or key == "repo":
+            shown[key] = value
+    context["target_draft"] = shown
+    return _page(request, "_targets.html", context)
+
+
+@controls.post("/loop/targets/remove", response_class=HTMLResponse)
+def remove_target(request: Request, repo: str = Form("")):
+    """Unenroll one Target.
+
+    The stanza is dropped from the targets file; Host checkouts and token
+    files stay put. Success reloads the home page so the queue board
+    matches the remaining list (or the unconfigured state). A failure
+    is a sentence on the section, not a 500: an instance whose file
+    cannot be written is exactly when somebody is looking at this list.
+    """
+    repo = repo.strip()
+    if not repo:
+        error = "No Target was named."
+    else:
+        try:
+            targets.remove(repo)
+            error = None
+        except targets.NotConfigured as exc:
+            error = str(exc)
+    return _targets_changed(request, error)
+
+
+def _stanza_from_form(
+    repo: str,
+    work_repo: str,
+    box_repo: str,
+    token_file: str,
+    guest_template: str,
+    labeler_allowlist: str,
+) -> dict:
+    """The submitted fields as a stanza `Target.load` will validate.
+
+    `labeler_allowlist` is typed as names separated by commas or newlines,
+    because a bare string is the dangerous TOML spelling and this form
+    must not reproduce it.
+    """
+    return {
+        "repo": repo.strip(),
+        "work_repo": work_repo.strip(),
+        "box_repo": box_repo.strip(),
+        "token_file": token_file.strip(),
+        "guest_template": guest_template.strip(),
+        "labeler_allowlist": [
+            name.strip()
+            for name in labeler_allowlist.replace("\n", ",").split(",")
+            if name.strip()
+        ],
+    }
+
+
+@controls.post("/loop/targets/add", response_class=HTMLResponse)
+def add_target(
+    request: Request,
+    repo: str = Form(""),
+    work_repo: str = Form(""),
+    box_repo: str = Form(""),
+    token_file: str = Form(""),
+    guest_template: str = Form(""),
+    labeler_allowlist: str = Form(""),
+):
+    """Enroll one Target.
+
+    The stanza is appended to the targets file; Host checkouts and token
+    files are not created. Blank fields are filled from the last declared
+    Target, so a second enrollment is a repository name. Success reloads
+    the home page so the queue board matches the list. A failure is a
+    sentence on the section, with the submitted values still in the form.
+    """
+    draft = {
+        "repo": repo,
+        "work_repo": work_repo,
+        "box_repo": box_repo,
+        "token_file": token_file,
+        "guest_template": guest_template,
+        "labeler_allowlist": labeler_allowlist,
+    }
+    try:
+        targets.add(_stanza_from_form(
+            repo, work_repo, box_repo, token_file,
+            guest_template, labeler_allowlist,
+        ))
+        error = None
+    except targets.NotConfigured as exc:
+        error = str(exc)
+    return _targets_changed(request, error, draft if error else None)
 
 
 app.include_router(controls)
@@ -1308,6 +1745,13 @@ async def loop_events(request: Request):
             "Connection": "keep-alive",
         },
     )
+
+
+@app.get("/favicon.ico")
+def favicon():
+    """Browsers ask here even when the shell names the SVG. Public, because
+    the tab of the sign-in page is a visitor with no session."""
+    return FileResponse(BASE / "static" / "favicon.svg", media_type="image/svg+xml")
 
 
 @app.get("/healthz", response_class=HTMLResponse)
