@@ -12,6 +12,14 @@
     group: root
     mode: '0755'
 
+- name: Directory for other sites' Caddy blocks, which the play never writes
+  ansible.builtin.file:
+    path: /etc/caddy/sites
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
 - name: HTTPS Dashboard with an unbuffered live stream
   ansible.builtin.template:
     src: Caddyfile.j2
