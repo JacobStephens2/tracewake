@@ -76,6 +76,10 @@ Point DNS at the Host and allow inbound ports 80 and 443 for Caddy's automatic
 certificate issuance. Keep the Dashboard port private. Caddy forwards the
 original scheme; the existing sign-in gate protects the public Dashboard.
 
+The play owns `/etc/caddy/Caddyfile` and rewrites it on every apply. To serve
+another site from the same Caddy, put its block in its own file under
+`/etc/caddy/sites/` with a `.caddy` extension; the Caddyfile imports them all.
+
 The play leaves the dispatch timer disabled (`tracewake_dispatch_enabled: false`).
 Complete the credentials, Instance files, admin seeding, and first dry-run Cycle
 below before enabling it. The Controller account (`conductor`) and Run account

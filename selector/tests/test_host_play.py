@@ -85,6 +85,16 @@ def test_caddyfile_can_serve_http_without_acme():
     assert ":80 {" in text
 
 
+def test_caddyfile_imports_other_sites_the_play_never_writes():
+    """The play rewrites /etc/caddy/Caddyfile on every apply, so another
+    site on the same Host must live in a file the play never writes."""
+    template = ROOT / "deploy/ansible/roles/tracewake_proxy/templates/Caddyfile.j2"
+    assert "import /etc/caddy/sites/*.caddy" in template.read_text(), (
+        "Caddyfile.j2 must import /etc/caddy/sites/*.caddy so a hand-added "
+        "site survives the next apply."
+    )
+
+
 def test_host_play_installs_the_proxy_before_the_execution_boundary():
     """Issue #107: Caddy is what makes the window reachable from outside
     the Host. If the Execution Boundary role fails on a missing sbx login,
